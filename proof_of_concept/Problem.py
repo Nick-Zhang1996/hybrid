@@ -48,16 +48,19 @@ class ParabolaWithSineNoise(Problem):
     def evaluate(self,val):
         ''' evaluate function '''
         self.eval_count += 1
-        assert(np.array(val).shape==()) # single value evaluation
-        return self._evaluate(val)
+        assert(np.array(val).shape==(self.n,)) # single value evaluation
+        return self._evaluate(val).item()
 
     def _evaluate(self,val_vec):
         return self.A*val_vec**2 + self.C*np.sin(self.B*val_vec)
 
-    def visualize(self,val_vec):
+    def visualize(self,val_vec,rollout_cost=None):
         ''' visualize the function '''
         xx = np.linspace(-1,1,1000)
         plt.plot(xx,self._evaluate(xx))
+        if (rollout_cost is None):
+            rollout_cost = self._evaluate(val_vec)
+        plt.plot(val_vec,rollout_cost,'o')
         plt.show()
         return None
 
@@ -76,8 +79,8 @@ class PerlinNoise(Problem):
     def evaluate(self,val):
         ''' evaluate function '''
         self.eval_count += 1
-        assert(np.array(val).shape==(2)) # single value evaluation
-        value = noise.noise2(val * self.scale, val * self.scale, octaves=self.octaves, persistence=self.persistence)
+        assert(np.array(val).shape==(self.n,)) # single value evaluation
+        value = noise.noise2(val[0] * self.scale, val[1] * self.scale, octaves=self.octaves, persistence=self.persistence)
         return value
 
     def _evaluate(self,val_vec):
@@ -85,7 +88,7 @@ class PerlinNoise(Problem):
         value = noise.noise2(val_vec[:,0] * self.scale, val_vec[:,1] * self.scale,grid_mode=False)
         return value
 
-    def visualize(self,val_vec):
+    def visualize(self,val_vec, fun_val=None):
         ''' visualize the function '''
         xx,yy = np.meshgrid(np.linspace(-1,1),np.linspace(-1,1))
         zz = self._evaluate(np.vstack([xx.flatten(), yy.flatten()]).T)
@@ -94,9 +97,13 @@ class PerlinNoise(Problem):
         z_min = np.min(zz.flatten())
         z_max = np.max(zz.flatten())
         #plt.imshow(zz,cmap='RdBu')
-        #ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
         c = ax.pcolormesh(xx,yy,zz, cmap='RdBu', vmin=z_min, vmax=z_max)
         fig.colorbar(c,ax=ax)
+
+        # plot val_vec
+        plt.plot(val_vec[:,0], val_vec[:,1],'o')
+        ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
+
         plt.show()
         return None
 
