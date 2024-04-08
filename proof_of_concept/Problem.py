@@ -157,7 +157,7 @@ class PerlinNoise(Problem):
         # DEBUG visualization
         fig = plt.figure()
         ax = Axes3D(fig)
-        ax.plot_surface(xx,yy,zz)
+        #ax.plot_surface(xx,yy,zz)
         # plot val_vec
         if (val_vec is not None):
             z_vec = self._evaluate(val_vec)
@@ -174,22 +174,25 @@ class PerlinNoise(Problem):
                 else:
                     ax.plot(x_vec,y_vec,'-k')
         # visualize jacobian
-        breakpoint()
-        dir_vec = np.array([[-1,-1],[1,1],[-1,1],[1,-1]])*0.1
-        yy_vec = []
-        xx_vec = []
-        jac_vec = []
         val = val_vec[0]
-        for my_dir in dir_vec:
-            xx_vec.append(val[0]+my_dir[0])
-            yy_vec.append(val[1]+my_dir[1])
-            jac_vec.append(self.evaluate(val+my_dir))
-        ax.plot_surface(np.array(xx_vec).reshape,np.array(yy_vec),np.array(jac_vec))
+        N = 10
+        xx_vec, yy_vec = np.meshgrid(np.linspace(-0.1,0.1,N),np.linspace(-0.1,0.1,N))
+        xx_vec += val[0]
+        yy_vec += val[1]
+        zz_vec = []
+        jac_vec = []
+        J = self.jacobian(val)
+        for x,y in zip(xx_vec.flatten(), yy_vec.flatten()):
+            zz_vec.append(self.evaluate(np.array([x,y])))
+            jac_vec.append(self.evaluate(val)+ J@(np.array([x,y])-val).T)
+
+        ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(zz_vec).reshape(N,N),color=(1.0,0,0))
+        ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(jac_vec).reshape(N,N),color=(0,1.0,0))
 
         plt.show()
         return None
 
-class QuadraticParabolaWithSineNoise(Problem):
+class ParabolaWithSineNoise2D(Problem):
     def __init__(self):
         # dimension of problem
         self.n = 2
@@ -210,7 +213,7 @@ class QuadraticParabolaWithSineNoise(Problem):
     def _evaluate(self,val_vec):
         ''' val_vec.shape = (N,n), return: (N,1) '''
         x = (val_vec[:,0]**2+val_vec[:,1]**2)**0.5
-        return self.A*x**2 + self.C*np.sin(self.B*x)
+        return self.A*x**2 + self.C*np.sin(self.B*val_vec[:,0]) + self.C*np.cos(self.B*val_vec[:,1])
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
@@ -250,7 +253,6 @@ class QuadraticParabolaWithSineNoise(Problem):
                     ax.plot(x_vec.flatten(),y_vec.flatten(),'-k')
                 else:
                     ax.plot(x_vec,y_vec,'-k')
-            
         #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
         #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])

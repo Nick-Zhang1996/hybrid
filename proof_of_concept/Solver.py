@@ -89,9 +89,9 @@ class Newton(Solver):
 if __name__=='__main__':
     #solver = CEM()
     #solver = GradientDescent()
-    problem = PerlinNoise()
+    #problem = PerlinNoise()
     #problem = ParabolaWithSineNoise()
-    #problem = QuadraticParabolaWithSineNoise()
+    problem = ParabolaWithSineNoise2D()
 
     solver = Newton()
     solver.solve(problem)
