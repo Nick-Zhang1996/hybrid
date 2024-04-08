@@ -1,8 +1,9 @@
 import numpy as np
-# differentiate dynamics around nominal state and control
+# x: np.array.shape(n)
+# given fun: f(x): n -> scalar
 # return:f'(x) , where f is a R^n -> R
 def linearizeNumerical(fun,x):
-    epsilon = 1e-2
+    epsilon = 1e-6
     x = np.array(x)
     n = x.shape[0]
 
@@ -20,6 +21,12 @@ def linearizeNumerical(fun,x):
         x_r[i] += epsilon
         x_post_r = fun(x_r)
 
-        A[:,i] += (x_post_r.flatten() - x_post_l.flatten()) / (2*epsilon)
+        A[:,i] += (x_post_r - x_post_l) / (2*epsilon)
 
     return A
+
+# find the directional derivative
+def dirDer(fun,x0,dx):
+    step = dx/np.linalg.norm(dx)*1e-6
+    return (fun(x0+step)-fun(x0))/1e-6
+

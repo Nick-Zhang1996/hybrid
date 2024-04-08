@@ -1,5 +1,6 @@
 import numpy as np
 from Problem import *
+from util import *
 
 # solves for simple problems
 class Solver:
@@ -38,7 +39,7 @@ class GradientDescent(Solver):
         iterations = 10
         guess = np.random.random(problem.n)
         step_size = 0.1
-        decay_factor = 0.5
+        decay_factor = 0.1
 
         for i in range(iterations):
             J = problem.jacobian(guess)
@@ -54,21 +55,44 @@ class GradientDescent(Solver):
 
 
 
-class Netwon(Solver):
+class Newton(Solver):
     def __init__(self):
         return
 
     def solve(self,problem):
         iterations = 10
-        # find gradient
-        # find hessian
-        # normalize in search direction
+        max_step_size = 0.1
+        decay_factor = 0.1
+        guess = np.random.random(problem.n)
+        # DEBUG
+        guess = np.array([0.6,0.6])
+
+        for i in range(iterations):
+            # 1*n
+            J = problem.jacobian(guess)
+            if (np.linalg.norm(J) < 1e-2):
+                break
+            D = dirDer(lambda x:problem.evaluate(x),guess, -J.flatten())
+            step = J/np.abs(D)
+            norm = np.linalg.norm(step)
+            if (D<0 or norm>max_step_size):
+                step = step/norm*max_step_size*np.exp(-i*decay_factor)
+
+            problem.visualize(guess.reshape(1,-1),dir_vec=-step.reshape(1,-1))
+            print(f'guess val = {problem.evaluate(guess)}')
+            print(f'estimated guess val = {problem.evaluate(guess)-J@step.T}')
+
+            guess -= step.flatten()
+        problem.visualize(guess.reshape(1,-1))
 
 
 if __name__=='__main__':
     #solver = CEM()
-    solver = GradientDescent()
-    problem = ParabolaWithSineNoise()
-    #problem = PerlinNoise()
+    #solver = GradientDescent()
+    problem = PerlinNoise()
+    #problem = ParabolaWithSineNoise()
+    #problem = QuadraticParabolaWithSineNoise()
+
+    solver = Newton()
     solver.solve(problem)
 

@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from util import *
 import vnoise
 noise = vnoise.Noise()
@@ -97,11 +98,11 @@ class PerlinNoise(Problem):
         self.eval_count = 0
 
     def evaluate(self,val):
-        ''' evaluate function '''
+        ''' evaluate function val.shape = (n), return: float'''
         self.eval_count += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
         value = noise.noise2(val[0] * self.scale, val[1] * self.scale, octaves=self.octaves, persistence=self.persistence)
-        return value
+        return value.item()
 
     def _evaluate(self,val_vec):
         ''' val_vec.shape = (N,n), return: (N,1) '''
@@ -150,10 +151,111 @@ class PerlinNoise(Problem):
             
         #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
         #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
-
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
+        plt.show()
+
+        # DEBUG visualization
+        fig = plt.figure()
+        ax = Axes3D(fig)
+        ax.plot_surface(xx,yy,zz)
+        # plot val_vec
+        if (val_vec is not None):
+            z_vec = self._evaluate(val_vec)
+            plt.plot(val_vec[:,0], val_vec[:,1],z_vec,'ok')
+            if (dir_vec is not None):
+                x0 = val_vec[:,0]
+                y0 = val_vec[:,1]
+                x1 = val_vec[:,0] + dir_vec[:,0]
+                y1 = val_vec[:,1] + dir_vec[:,1]
+                x_vec = np.vstack([x0,x1]).T
+                y_vec = np.vstack([y0,y1]).T
+                if (x_vec.shape[0]==1):
+                    ax.plot(x_vec.flatten(),y_vec.flatten(),z_vec.flatten(),'-k')
+                else:
+                    ax.plot(x_vec,y_vec,'-k')
+        # visualize jacobian
+        breakpoint()
+        dir_vec = np.array([[-1,-1],[1,1],[-1,1],[1,-1]])*0.1
+        yy_vec = []
+        xx_vec = []
+        jac_vec = []
+        val = val_vec[0]
+        for my_dir in dir_vec:
+            xx_vec.append(val[0]+my_dir[0])
+            yy_vec.append(val[1]+my_dir[1])
+            jac_vec.append(self.evaluate(val+my_dir))
+        ax.plot_surface(np.array(xx_vec).reshape,np.array(yy_vec),np.array(jac_vec))
 
         plt.show()
+        return None
+
+class QuadraticParabolaWithSineNoise(Problem):
+    def __init__(self):
+        # dimension of problem
+        self.n = 2
+        # parameters
+        self.A = 2
+        self.B = 10
+        self.C = 0.4
+
+        # total function evaluations
+        self.eval_count = 0
+
+    def evaluate(self,val):
+        ''' evaluate function '''
+        self.eval_count += 1
+        assert(np.array(val).shape==(self.n,)) # single value evaluation
+        return self._evaluate(val.reshape(-1,self.n)).item()
+
+    def _evaluate(self,val_vec):
+        ''' val_vec.shape = (N,n), return: (N,1) '''
+        x = (val_vec[:,0]**2+val_vec[:,1]**2)**0.5
+        return self.A*x**2 + self.C*np.sin(self.B*x)
+
+    def jacobian(self,val):
+        ''' return jacobian evaluated at val as a row vector '''
+        return linearizeNumerical(lambda x:self.evaluate(x), val)
+
+    def hessian(self,val):
+        ''' return hessian evaluated at val '''
+        return None
+
+    def visualize(self,val_vec=None, fun_val=None,dir_vec=None):
+        ''' visualize the function 
+        val_vec/fun_val values to highlight
+        dir_vec: directions to note for val_vec
+
+        '''
+        xx,yy = np.meshgrid(np.linspace(-1,1,100),np.linspace(-1,1,100))
+        zz = self._evaluate(np.vstack([xx.flatten(), yy.flatten()]).T)
+        zz = zz.reshape(xx.shape)
+        fig, ax = plt.subplots()
+        z_min = np.min(zz.flatten())
+        z_max = np.max(zz.flatten())
+        #plt.imshow(zz,cmap='RdBu')
+        c = ax.pcolormesh(xx,yy,zz, cmap='RdBu', vmin=z_min, vmax=z_max)
+        fig.colorbar(c,ax=ax)
+
+        # plot val_vec
+        if (val_vec is not None):
+            plt.plot(val_vec[:,0], val_vec[:,1],'ok')
+            if (dir_vec is not None):
+                x0 = val_vec[:,0]
+                y0 = val_vec[:,1]
+                x1 = val_vec[:,0] + dir_vec[:,0]
+                y1 = val_vec[:,1] + dir_vec[:,1]
+                x_vec = np.vstack([x0,x1]).T
+                y_vec = np.vstack([y0,y1]).T
+                if (x_vec.shape[0]==1):
+                    ax.plot(x_vec.flatten(),y_vec.flatten(),'-k')
+                else:
+                    ax.plot(x_vec,y_vec,'-k')
+            
+        #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
+        #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
+        ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
+        plt.show()
+
         return None
 
 if __name__=='__main__':
