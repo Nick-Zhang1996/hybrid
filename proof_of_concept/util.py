@@ -3,7 +3,7 @@ import numpy as np
 # given fun: f(x): n -> scalar
 # return:f'(x) , where f is a R^n -> R
 def linearizeNumerical(fun,x):
-    epsilon = 1e-6
+    epsilon = 5e-2
     x = np.array(x)
     n = x.shape[0]
 

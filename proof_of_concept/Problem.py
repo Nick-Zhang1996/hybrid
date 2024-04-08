@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import collections  as mc
 from util import *
 import vnoise
 noise = vnoise.Noise()
@@ -142,18 +143,20 @@ class PerlinNoise(Problem):
                 y0 = val_vec[:,1]
                 x1 = val_vec[:,0] + dir_vec[:,0]
                 y1 = val_vec[:,1] + dir_vec[:,1]
-                x_vec = np.vstack([x0,x1]).T
-                y_vec = np.vstack([y0,y1]).T
-                if (x_vec.shape[0]==1):
+                lines = np.hstack([np.column_stack([x0,y0])[:,np.newaxis,:], np.column_stack([x1,y1])[:,np.newaxis,:]])
+                if (val_vec.shape[0]==1):
+                    x_vec = np.vstack([x0,x1]).T
+                    y_vec = np.vstack([y0,y1]).T
                     ax.plot(x_vec.flatten(),y_vec.flatten(),'-k')
                 else:
-                    ax.plot(x_vec,y_vec,'-k')
-            
-        #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
-        #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
+                    #ax.plot(x_vec,y_vec,'-k')
+                    lc = mc.LineCollection(lines,linewidths=2,color='black')
+
+        ax.add_collection(lc)
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
         plt.show()
 
+        '''
         # DEBUG visualization
         fig = plt.figure()
         ax = Axes3D(fig)
@@ -190,6 +193,7 @@ class PerlinNoise(Problem):
         ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(jac_vec).reshape(N,N),color=(0,1.0,0))
 
         plt.show()
+        '''
         return None
 
 class ParabolaWithSineNoise2D(Problem):

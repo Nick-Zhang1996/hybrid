@@ -85,14 +85,58 @@ class Newton(Solver):
             guess -= step.flatten()
         problem.visualize(guess.reshape(1,-1))
 
+class Hybrid(Solver):
+    def __init__(self):
+        return
+
+    def solve(self,problem):
+        '''Hybrid solver, sample'''
+        iterations = 10
+        mean = np.zeros(problem.n)
+        cov = np.diag([1.0]*problem.n)
+        samples = 100
+        elite_ratio = 0.3
+        max_step_size = 0.1
+        decay_factor = 0.1
+        for i in range(iterations):
+            # sample in param space
+            particles = np.random.multivariate_normal(mean,cov,size=samples)
+            particles = particles.clip(-1,1)
+            # rollout
+            rollout_cost = [problem.evaluate(particle.flatten()) for particle in particles]
+            # NOTE Hybrid step: Newton
+            old_particles = particles.copy()
+            dir_vec = []
+            for guess in particles:
+                J = problem.jacobian(guess)
+                if (np.linalg.norm(J) < 1e-2):
+                    break
+                D = dirDer(lambda x:problem.evaluate(x),guess, -J.flatten())
+                step = J/np.abs(D)
+                norm = np.linalg.norm(step)
+                if (D<0 or norm>max_step_size):
+                    step = step/norm*max_step_size*np.exp(-i*decay_factor)
+                guess -= step.flatten()
+                dir_vec.append(step.flatten())
+            problem.visualize(old_particles, rollout_cost,np.array(dir_vec))
+
+            # select elite samples
+            elite_idx = np.argsort(rollout_cost)[:int(samples*elite_ratio)]
+            mean = np.mean(particles[elite_idx],axis=0)
+            cov = np.cov(particles[elite_idx].T).reshape((problem.n,problem.n))*1.5
+            print(particles[elite_idx[0]])
+            print(rollout_cost[elite_idx[0]])
+
+
 
 if __name__=='__main__':
     #solver = CEM()
     #solver = GradientDescent()
-    #problem = PerlinNoise()
+    problem = PerlinNoise()
     #problem = ParabolaWithSineNoise()
-    problem = ParabolaWithSineNoise2D()
+    #problem = ParabolaWithSineNoise2D()
 
-    solver = Newton()
+    #solver = Newton()
+    solver = Hybrid()
     solver.solve(problem)
 
