@@ -12,19 +12,19 @@ class Problem:
         # dimension of problem
         self.n = 0
         # total function evaluations
-        self.eval_count = 0
+        self.evaluations = 0
 
     def groundTruth(self):
         ''' get ground truth for optimization, (x, fun_x) '''
         return 0,0
 
     def reset(self):
-        ''' reset eval_count etc '''
-        self.eval_count = 0
+        ''' reset evaluations etc '''
+        self.evaluations = 0
 
     def evaluate(self,val):
         ''' evaluate function '''
-        self.eval_count += 1
+        self.evaluations += 1
         return val
 
     def visualize(self,val_vec):
@@ -41,7 +41,7 @@ class ParabolaWithSineNoise(Problem):
         self.C = 0.4
 
         # total function evaluations
-        self.eval_count = 0
+        self.evaluations = 0
 
 
     def groundTruth(self):
@@ -50,7 +50,7 @@ class ParabolaWithSineNoise(Problem):
 
     def evaluate(self,val):
         ''' evaluate function '''
-        self.eval_count += 1
+        self.evaluations += 1
         #assert(np.array(val).shape==(self.n,)) # single value evaluation
         return self._evaluate(val).item()
 
@@ -96,11 +96,11 @@ class PerlinNoise(Problem):
         self.persistence = 0.5
 
         # total function evaluations
-        self.eval_count = 0
+        self.evaluations = 0
 
     def evaluate(self,val):
         ''' evaluate function val.shape = (n), return: float'''
-        self.eval_count += 1
+        self.evaluations += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
         value = noise.noise2(val[0] * self.scale, val[1] * self.scale, octaves=self.octaves, persistence=self.persistence)
         return value.item()
@@ -135,6 +135,13 @@ class PerlinNoise(Problem):
         c = ax.pcolormesh(xx,yy,zz, cmap='RdBu', vmin=z_min, vmax=z_max)
         fig.colorbar(c,ax=ax)
 
+        # DEBUG check min in gridsearch
+        min_idx = np.argmin(zz.flatten())
+        min_x = xx.flatten()[min_idx]
+        min_y = yy.flatten()[min_idx]
+        min_z = zz.flatten()[min_idx]
+        print(f'x={min_x},y={min_y},val={min_z}')
+
         # plot val_vec
         if (val_vec is not None):
             plt.plot(val_vec[:,0], val_vec[:,1],'ok')
@@ -151,8 +158,8 @@ class PerlinNoise(Problem):
                 else:
                     #ax.plot(x_vec,y_vec,'-k')
                     lc = mc.LineCollection(lines,linewidths=2,color='black')
+                    ax.add_collection(lc)
 
-        ax.add_collection(lc)
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
         plt.show()
 
@@ -178,7 +185,7 @@ class PerlinNoise(Problem):
                     ax.plot(x_vec,y_vec,'-k')
         # visualize jacobian
         val = val_vec[0]
-        N = 10
+        N = 50
         xx_vec, yy_vec = np.meshgrid(np.linspace(-0.1,0.1,N),np.linspace(-0.1,0.1,N))
         xx_vec += val[0]
         yy_vec += val[1]
@@ -206,11 +213,11 @@ class ParabolaWithSineNoise2D(Problem):
         self.C = 0.4
 
         # total function evaluations
-        self.eval_count = 0
+        self.evaluations = 0
 
     def evaluate(self,val):
         ''' evaluate function '''
-        self.eval_count += 1
+        self.evaluations += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
         return self._evaluate(val.reshape(-1,self.n)).item()
 
