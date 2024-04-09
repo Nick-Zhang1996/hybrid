@@ -1,6 +1,7 @@
 import numpy as np
 from Problem import *
 from util import *
+import scipy.stats as stats
 
 # solves for simple problems
 class Solver:
@@ -9,9 +10,9 @@ class Solver:
         self.iterations = 5
         self.samples = 50
         return
-    def solve(self):
+    def solve(self,visualize=False):
         for i in range(self.iterations):
-            self.step(i)
+            self.step(i,visualize)
     def step(self,i,visualize=False):
         x = 0
         fun_x = 0
@@ -20,6 +21,7 @@ class Solver:
 class CEM(Solver):
     def __init__(self,problem):
         super().__init__(problem)
+        self.samples *= 3
         self.mean = np.zeros(problem.n)
         self.cov = np.diag([1.0]*problem.n)
         self.elite_ratio = 0.3
@@ -28,6 +30,7 @@ class CEM(Solver):
     def step(self,i,visualize=False):
         # sample in param space
         particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
+        # TODO resample
         particles = particles.clip(-1,1)
         # rollout
         rollout_cost = [self.problem.evaluate(particle.flatten()) for particle in particles]
@@ -106,23 +109,40 @@ class Hybrid(Solver):
 
     def step(self,i,visualize=False):
         # sample in param space
+        # Gaussian
+        #particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
+        #particles = particles.clip(-1,1)
+        # uniform
+        #particles = np.random.uniform(low=-1, high=1,size=self.samples)[:,np.newaxis]
+        # truncated Gaussian
         particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
-        particles = particles.clip(-1,1)
+        mask = np.any(np.logical_or(particles<-1,particles>1),axis=1)
+        while (np.any(mask)):
+            size = np.sum(mask)
+            particles[mask,:] = np.random.multivariate_normal(self.mean,self.cov,size=size)
+            mask = np.any(np.logical_or(particles<-1,particles>1),axis=1)
+
         # rollout
         rollout_cost = [self.problem.evaluate(particle.flatten()) for particle in particles]
-        # NOTE Hybrid step: Newton
         old_particles = particles.copy()
         dir_vec = []
         for guess in particles:
+            # Hybrid step: Newton
+            '''
             J = self.problem.jacobian(guess)
             if (np.linalg.norm(J) < 1e-2):
                 break
-            D = dirDer(lambda x:self.problem.evaluate(x),guess, -J.flatten())
-            step = J/np.abs(D)
+            step = -J
+            '''
+            # Hybrid step: random
+            step = np.random.uniform(size=self.problem.n)
+            D = dirDer(lambda x:self.problem.evaluate(x),guess, step.flatten())
+            step = step/np.abs(D)
+
             norm = np.linalg.norm(step)
             if (D<0 or norm>self.max_step_size):
                 step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
-            guess -= step.flatten()
+            guess += step.flatten()
             dir_vec.append(step.flatten())
         if (visualize):
             self.problem.visualize(old_particles, rollout_cost,np.array(dir_vec))
@@ -140,7 +160,7 @@ if __name__=='__main__':
     #problem = ParabolaWithSineNoise()
     #problem = ParabolaWithSineNoise2D()
 
-    solver = Newton()
-    #solver = Hybrid()
-    solver.solve(problem)
+    solver = Newton(problem)
+    #solver = Hybrid(problem)
+    solver.solve(True)
 

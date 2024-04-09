@@ -136,11 +136,13 @@ class PerlinNoise(Problem):
         fig.colorbar(c,ax=ax)
 
         # DEBUG check min in gridsearch
+        '''
         min_idx = np.argmin(zz.flatten())
         min_x = xx.flatten()[min_idx]
         min_y = yy.flatten()[min_idx]
         min_z = zz.flatten()[min_idx]
         print(f'x={min_x},y={min_y},val={min_z}')
+        '''
 
         # plot val_vec
         if (val_vec is not None):
@@ -198,7 +200,6 @@ class PerlinNoise(Problem):
 
         ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(zz_vec).reshape(N,N),color=(1.0,0,0))
         ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(jac_vec).reshape(N,N),color=(0,1.0,0))
-
         plt.show()
         '''
         return None
@@ -272,8 +273,9 @@ class ParabolaWithSineNoise2D(Problem):
         return None
 
 if __name__=='__main__':
-    problem = ParabolaWithSineNoise()
+    #problem = ParabolaWithSineNoise()
     #problem = PerlinNoise()
+    problem = ParabolaWithSineNoise2D()
     problem.visualize()
 
 

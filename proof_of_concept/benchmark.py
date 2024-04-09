@@ -3,8 +3,8 @@ from Problem import *
 from Solver import *
 
 problem_vec = [ParabolaWithSineNoise,PerlinNoise,ParabolaWithSineNoise2D]
-solver_vec = [CEM, GradientDescent,Newton,Hybrid]
-solver_rerun_vec = [5,200,40,1]
+solver_vec = [CEM,Newton,Hybrid]
+solver_rerun_vec = [1,20,1]
 value_lut = dict()
 evaluation_lut = dict()
 
@@ -12,7 +12,7 @@ for problem_class in problem_vec:
     for solver_class,reruns in zip(solver_vec,solver_rerun_vec):
         value_lut[(problem_class,solver_class)] = []
         evaluation_lut[(problem_class,solver_class)] = []
-        for experiment_idx in range(100):
+        for experiment_idx in range(10):
             values = []
             evaluations = []
             fun_x_min = 1e99
@@ -21,8 +21,8 @@ for problem_class in problem_vec:
                 solver = solver_class(problem)
                 for i in range(solver.iterations):
                     x,fun_x = solver.step(i)
-                    values.append(min(fun_x,fun_x_min))
-                    fun_x_min = min(fun_x)
+                    fun_x_min = min(fun_x,fun_x_min)
+                    values.append(fun_x_min)
                     evaluations.append(problem.evaluations)
             value_lut[(problem_class,solver_class)].append(values)
             evaluation_lut[(problem_class,solver_class)].append(evaluations)
@@ -41,8 +41,9 @@ for problem_class,ax in zip(problem_vec,axes):
         ax.fill_between(evaluation_mean, value_mean-value_std, value_mean+value_std,alpha=0.4)
         xlim = min(evaluation_mean[-1],xlim)
         print(str(problem_class), str(solver_class),evaluation_mean[-1])
+    ax.set_title(str(problem_class))
     #ax.set_xlim([0,xlim])
-    ax.set_xlim([0,2000])
+    #ax.set_xlim([0,1000])
 plt.legend()
 plt.show()
 
