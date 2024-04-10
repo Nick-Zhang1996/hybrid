@@ -2,26 +2,39 @@ import numpy as np
 from Problem import *
 from util import *
 import scipy.stats as stats
+from scipy.optimize import minimize
+from math import exp,log
 
 # solves for simple problems
 class Solver:
     def __init__(self,problem):
         self.problem = problem
-        self.iterations = 5
+        self.iterations = 10
         self.samples = 50
         return
     def solve(self,visualize=False):
         for i in range(self.iterations):
-            self.step(i,visualize)
+            x,fun_x = self.step(i,visualize)
+        return x,fun_x
     def step(self,i,visualize=False):
         x = 0
         fun_x = 0
         return x,fun_x
 
+class Scipy(Solver):
+    def __init__(self,problem):
+        super().__init__(problem)
+        self.guess = np.random.random(self.problem.n)
+
+    def solve(self,visualize=False):
+        res = minimize(lambda x:self.problem.evaluate(x), x0=self.guess)
+        x = res['x']
+        fun_x = res['fun']
+        return x,fun_x
+
 class CEM(Solver):
     def __init__(self,problem):
         super().__init__(problem)
-        self.samples *= 3
         self.mean = np.zeros(problem.n)
         self.cov = np.diag([1.0]*problem.n)
         self.elite_ratio = 0.3
@@ -96,6 +109,83 @@ class Newton(Solver):
         self.guess -= step.flatten()
         return self.guess, self.problem.evaluate(self.guess)
 
+class DualAscent(Solver):
+    def __init__(self,problem):
+        super().__init__(problem)
+        # primal descent
+        self.primal_max_step_size = 0.1
+        _, self.primal_decay_factor = self.findExpCoeff(1.0,0.5,self.iterations)
+        # dual ascent
+        self.dual_step_size, self.dual_decay_factor = self.findExpCoeff(2.0,1.0,self.iterations)
+
+        self.x = np.random.random(problem.n)
+        # list of inequality constraint functions
+        self.hx = []
+        # lagrange multiplier for h(x)
+        self.u = []
+        # list of equality constraint functions
+        self.lx = []
+        # lagrange multiplier for h(x)
+        self.v = []
+        return
+
+    def findExpCoeff(self,s_0,s_f,iterations):
+        ''' 
+        Let learning step size be s(i) = A*exp^(i*B)
+        find A,B such that  s(0) = s_0, s(iterations-1) = s_f
+        '''
+        A = s_0
+        B = log(s_f/A)/(iterations-1)
+        return A,B
+
+    def primalLr(self,i):
+        return exp(i*self.primal_decay_factor)
+    def dualLr(self,i):
+        return self.dual_step_size * exp(i*self.primal_decay_factor)
+
+    def addHx(self,fun):
+        '''  h(x) <= 0 '''
+        self.hx.append(fun)
+        self.u.append(0.0)
+        return
+
+    def addLx(self,fun):
+        '''  l(x) = 0 '''
+        self.lx.append(fun)
+        self.v.append(0.0)
+        return
+
+    def step(self,i,visualize=False):
+        self.u = np.array(self.u)
+        self.v = np.array(self.v)
+        # quadratic penalty for constraint violation
+        p = 100.0 * exp(i)
+        # construct augmented lagrangian
+        Lx = lambda x,u,v: self.problem.evaluate(x) +  sum([uu*hh(x) for (uu,hh) in zip(u, self.hx)]) + 0.5*p*sum([hh(x)**2 if hh(x)>0 else 0 for hh in self.hx]) + sum([uu*ll(x) for (uu,ll) in zip(u, self.lx)]) + 0.5*p*sum([ll(x)**2 if ll(x)>0 else 0 for ll in self.lx])
+        # Primal descent
+        J = linearizeNumerical(lambda x:Lx(x,self.u,self.v), self.x) # 1*n
+        norm = np.linalg.norm(J)
+        if (norm>self.primal_max_step_size):
+            step = -J/norm * self.primal_max_step_size * self.primalLr(i)
+        else:
+            step = -J * self.primalLr(i)
+        self.x += step.flatten()
+        print(f'iter={i} lr={self.primalLr(i):.2f}')
+
+        # Dual ascent
+        if (len(self.u)>0):
+            self.u += self.dualLr(i)*np.array([hh(self.x) for hh in self.hx])
+            self.u[self.u<0] = 0.0
+            print('h',[hh(self.x) for hh in self.hx],'u',self.u)
+
+        if (len(self.v)>0):
+            self.v += self.dualLr(i)*np.array([ll(self.x) for ll in self.lx])
+            print('l',[ll(self.x) for ll in self.lx],'v',self.v)
+
+        if (visualize):
+            self.problem.visualize(self.x.reshape(1,-1),dir_vec=step.reshape(1,-1))
+        return self.x, self.problem.evaluate(self.x)
+
 class Hybrid(Solver):
     '''Hybrid solver, sample'''
     def __init__(self,problem):
@@ -156,9 +246,9 @@ class Hybrid(Solver):
 if __name__=='__main__':
     #solver = CEM()
     #solver = GradientDescent()
-    problem = PerlinNoise()
+    #problem = PerlinNoise()
     #problem = ParabolaWithSineNoise()
-    #problem = ParabolaWithSineNoise2D()
+    problem = ParabolaWithSineNoise2D()
 
     solver = Newton(problem)
     #solver = Hybrid(problem)

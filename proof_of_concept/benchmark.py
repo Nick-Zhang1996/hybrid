@@ -3,8 +3,8 @@ from Problem import *
 from Solver import *
 
 problem_vec = [ParabolaWithSineNoise,PerlinNoise,ParabolaWithSineNoise2D]
-solver_vec = [CEM,Newton,Hybrid]
-solver_rerun_vec = [1,20,1]
+solver_vec = [CEM,Newton,Hybrid,Scipy]
+solver_rerun_vec = [1,20,1,20]
 value_lut = dict()
 evaluation_lut = dict()
 

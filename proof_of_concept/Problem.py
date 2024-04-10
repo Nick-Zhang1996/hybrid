@@ -83,6 +83,7 @@ class ParabolaWithSineNoise(Problem):
         plt.plot(xx,yy)
         '''
 
+
         plt.show()
         return None
 
@@ -268,6 +269,12 @@ class ParabolaWithSineNoise2D(Problem):
         #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
         #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
+
+        # DEBUG plot constraint
+        xx = 0.3*np.cos(np.linspace(0,2*np.pi)) + 0.15
+        yy = 0.3*np.sin(np.linspace(0,2*np.pi)) + 0.05
+        plt.plot(xx,yy)
+
         plt.show()
 
         return None
