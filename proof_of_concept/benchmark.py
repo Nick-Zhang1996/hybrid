@@ -19,11 +19,17 @@ for problem_class in problem_vec:
             problem = problem_class()
             for rerun_idx in range(reruns):
                 solver = solver_class(problem)
-                for i in range(solver.iterations):
-                    x,fun_x = solver.step(i)
+                if (solver_class == Scipy):
+                    x,fun_x = solver.solve()
                     fun_x_min = min(fun_x,fun_x_min)
                     values.append(fun_x_min)
                     evaluations.append(problem.evaluations)
+                else:
+                    for i in range(solver.iterations):
+                        x,fun_x = solver.step(i)
+                        fun_x_min = min(fun_x,fun_x_min)
+                        values.append(fun_x_min)
+                        evaluations.append(problem.evaluations)
             value_lut[(problem_class,solver_class)].append(values)
             evaluation_lut[(problem_class,solver_class)].append(evaluations)
 
@@ -46,5 +52,6 @@ for problem_class,ax in zip(problem_vec,axes):
     #ax.set_xlim([0,1000])
 plt.legend()
 plt.show()
+breakpoint()
 
 
