@@ -110,7 +110,7 @@ class Newton(Solver):
         return self.guess, self.problem.evaluate(self.guess)
 
 class DualAscent(Solver):
-    def __init__(self,problem):
+    def __init__(self,problem,x0=None):
         super().__init__(problem)
         # primal descent
         self.primal_max_step_size = 0.1
@@ -118,7 +118,7 @@ class DualAscent(Solver):
         # dual ascent
         self.dual_step_size, self.dual_decay_factor = self.findExpCoeff(2.0,1.0,self.iterations)
 
-        self.x = np.random.random(problem.n)
+        self.x = np.random.random(problem.n) if x0 is None else x0
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier for h(x)
@@ -195,6 +195,27 @@ class Hybrid(Solver):
         self.elite_ratio = 0.3
         self.max_step_size = 0.1
         self.decay_factor = 0.1
+
+        # list of inequality constraint functions
+        self.hx = []
+        # lagrange multiplier for h(x)
+        self.u = []
+        # list of equality constraint functions
+        self.lx = []
+        # lagrange multiplier for h(x)
+        self.v = []
+        return
+
+    def addHx(self,fun):
+        '''  h(x) <= 0 '''
+        self.hx.append(fun)
+        self.u.append(0.0)
+        return
+
+    def addLx(self,fun):
+        '''  l(x) = 0 '''
+        self.lx.append(fun)
+        self.v.append(0.0)
         return
 
     def step(self,i,visualize=False):
@@ -225,15 +246,32 @@ class Hybrid(Solver):
             step = -J
             '''
             # Hybrid step: random
+            '''
             step = np.random.uniform(size=self.problem.n)
             D = dirDer(lambda x:self.problem.evaluate(x),guess, step.flatten())
             step = step/np.abs(D)
-
+            '''
+            '''
+            # common to Newton/random
             norm = np.linalg.norm(step)
             if (D<0 or norm>self.max_step_size):
                 step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
             guess += step.flatten()
             dir_vec.append(step.flatten())
+            '''
+
+            # Hybrid step: Dual Ascent
+            old_guess = guess
+            da = DualAscent(self.problem,x0=guess)
+            da.hx = self.hx
+            da.lx = self.lx
+            da.u = [0.0]*len(self.hx)
+            da.v = [0.0]*len(self.lx)
+            for i in range(3):
+                guess, _ = da.step(i)
+            step = guess-old_guess
+            dir_vec.append(step.flatten())
+
         if (visualize):
             self.problem.visualize(old_particles, rollout_cost,np.array(dir_vec))
 

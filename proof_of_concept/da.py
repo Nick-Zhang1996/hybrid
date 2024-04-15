@@ -20,8 +20,9 @@ if __name__=='__main__':
     x_vec = []
     fun_x_vec = []
     residual_vec = []
-    for i in range(100):
-        solver = DualAscent(problem)
+    for i in range(10):
+        #solver = DualAscent(problem)
+        solver = Hybrid(problem)
         solver.addHx(lambda x:(x[0]-0.15)**2+(x[1]-0.05)**2-0.3**2)
         x,fun_x = solver.solve(False)
         residual = np.array([hh(x) for hh in solver.hx])
