@@ -12,11 +12,12 @@ class Solver:
         self.iterations = 10
         self.samples = 50
         return
-    def solve(self,visualize=False):
+    def solve(self,visualize=False,save_gif=False):
         for i in range(self.iterations):
-            x,fun_x = self.step(i,visualize)
+            x,fun_x = self.step(i,visualize,save_gif)
+        self.problem.final()
         return x,fun_x
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         x = 0
         fun_x = 0
         return x,fun_x
@@ -26,7 +27,7 @@ class Scipy(Solver):
         super().__init__(problem)
         self.guess = np.random.random(self.problem.n)
 
-    def solve(self,visualize=False):
+    def solve(self,visualize=False,save_gif=False):
         res = minimize(lambda x:self.problem.evaluate(x), x0=self.guess)
         x = res['x']
         fun_x = res['fun']
@@ -40,7 +41,7 @@ class CEM(Solver):
         self.elite_ratio = 0.3
         return
 
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         # sample in param space
         particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
         # TODO resample
@@ -52,8 +53,7 @@ class CEM(Solver):
         self.mean = np.mean(particles[elite_idx],axis=0) 
         self.cov = np.cov(particles[elite_idx].T).reshape((self.problem.n,self.problem.n))*1.5
 
-        if (visualize):
-            self.problem.visualize(particles, rollout_cost)
+        self.problem.visualize(val_vec=particles, fun_val_vec = rollout_cost, visualize = visualize, save_gif = save_gif)
         return particles[elite_idx[0]], rollout_cost[elite_idx[0]]
 
 class GradientDescent(Solver):
@@ -64,21 +64,18 @@ class GradientDescent(Solver):
         self.guess = np.random.random(self.problem.n)
         return
 
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         J = self.problem.jacobian(self.guess)
         '''
         if (np.linalg.norm(J) < 1e-2):
             break
         '''
         step = self.step_size*np.exp(-i*self.decay_factor)*J.flatten()
-        if (visualize):
-            self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-self.step.reshape(1,-1))
+        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-self.step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
         #print(f'guess val = {problem.evaluate(guess)}')
         #print(f'estimated guess val = {problem.evaluate(guess)-J@step}')
 
         self.guess -= step
-        if (visualize):
-            self.problem.visualize(self.guess.reshape(1,-1))
         return self.guess, self.problem.evaluate(self.guess)
 
 
@@ -91,7 +88,7 @@ class Newton(Solver):
         self.guess = np.random.random(problem.n)
         return
 
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         # 1*n
         J = self.problem.jacobian(self.guess)
         '''
@@ -104,8 +101,7 @@ class Newton(Solver):
         if (D<0 or norm>self.max_step_size):
             step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
 
-        if (visualize):
-            self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-step.reshape(1,-1))
+        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
         self.guess -= step.flatten()
         return self.guess, self.problem.evaluate(self.guess)
 
@@ -155,7 +151,7 @@ class DualAscent(Solver):
         self.v.append(0.0)
         return
 
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         self.u = np.array(self.u)
         self.v = np.array(self.v)
         # quadratic penalty for constraint violation
@@ -182,8 +178,7 @@ class DualAscent(Solver):
             self.v += self.dualLr(i)*np.array([ll(self.x) for ll in self.lx])
             print('l',[ll(self.x) for ll in self.lx],'v',self.v)
 
-        if (visualize):
-            self.problem.visualize(self.x.reshape(1,-1),dir_vec=step.reshape(1,-1))
+        self.problem.visualize(self.x.reshape(1,-1),dir_vec=step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
         return self.x, self.problem.evaluate(self.x)
 
 class Hybrid(Solver):
@@ -218,7 +213,7 @@ class Hybrid(Solver):
         self.v.append(0.0)
         return
 
-    def step(self,i,visualize=False):
+    def step(self,i,visualize=False,save_gif=False):
         # sample in param space
         # Gaussian
         #particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
@@ -261,7 +256,7 @@ class Hybrid(Solver):
             '''
 
             # Hybrid step: Dual Ascent
-            old_guess = guess
+            old_guess = guess.copy()
             da = DualAscent(self.problem,x0=guess)
             da.hx = self.hx
             da.lx = self.lx
@@ -272,8 +267,7 @@ class Hybrid(Solver):
             step = guess-old_guess
             dir_vec.append(step.flatten())
 
-        if (visualize):
-            self.problem.visualize(old_particles, rollout_cost,np.array(dir_vec))
+        self.problem.visualize(old_particles, rollout_cost,np.array(dir_vec), visualize = visualize, save_gif = save_gif)
 
         # select elite samples
         elite_idx = np.argsort(rollout_cost)[:int(self.samples*self.elite_ratio)]

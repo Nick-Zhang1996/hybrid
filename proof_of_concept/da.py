@@ -12,7 +12,6 @@ if __name__=='__main__':
     #solver = GradientDescent()
     #problem = PerlinNoise()
     #problem = ParabolaWithSineNoise()
-    problem = ParabolaWithSineNoise2D()
 
     #solver = Newton(problem)
     #solver = Hybrid(problem)
@@ -22,9 +21,10 @@ if __name__=='__main__':
     residual_vec = []
     for i in range(10):
         #solver = DualAscent(problem)
+        problem = ParabolaWithSineNoise2D()
         solver = Hybrid(problem)
         solver.addHx(lambda x:(x[0]-0.15)**2+(x[1]-0.05)**2-0.3**2)
-        x,fun_x = solver.solve(False)
+        x,fun_x = solver.solve(visualize=False,save_gif=True)
         residual = np.array([hh(x) for hh in solver.hx])
         residual = np.sum(residual[residual>0]**2)
         x_vec.append(x)

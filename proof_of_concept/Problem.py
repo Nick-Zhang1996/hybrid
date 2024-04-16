@@ -4,6 +4,9 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import collections  as mc
 from util import *
 import vnoise
+import os
+from PIL import Image
+
 noise = vnoise.Noise()
 
 class Problem:
@@ -13,6 +16,7 @@ class Problem:
         self.n = 0
         # total function evaluations
         self.evaluations = 0
+        self.frame_vec = []
 
     def groundTruth(self):
         ''' get ground truth for optimization, (x, fun_x) '''
@@ -27,12 +31,48 @@ class Problem:
         self.evaluations += 1
         return val
 
-    def visualize(self,val_vec):
-        ''' visualize the function '''
-        return None
+    def visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None,visualize=False,save_gif=False):
+        ''' visualize the function 
+        val_vec: vector of sampled points
+        fun_val_vec: vector of cost for sampled points, usually not used
+        dir_vec: step direction vector for sampled points '''
+        if (not visualize and not save_gif):
+            return
+        else:
+            fig = self._visualize(val_vec, fun_val_vec, dir_vec)
+            if (save_gif):
+                fig.canvas.draw()
+                frame = Image.frombytes('RGB',
+                fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+                self.frame_vec.append(frame)
+            if (visualize):
+                plt.show()
+
+        return
+
+    def resolveLogname(self,):
+        # setup log file
+        # log file will record state of the vehicle for later analysis
+        logFolder = "./gifs/"
+        logPrefix = "iteration"
+        logSuffix = ".gif"
+        no = 1
+        while os.path.isfile(logFolder+logPrefix+str(no)+logSuffix):
+            no += 1
+
+        log_no = no
+        logFilename = logFolder+logPrefix+str(no)+logSuffix
+        return logFilename
+
+    def final(self):
+        if (len(self.frame_vec)>0):
+            gif_filename = self.resolveLogname()
+            self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
+            print(f'GIf saved to {gif_filename}')
 
 class ParabolaWithSineNoise(Problem):
     def __init__(self):
+        Problem.__init__(self)
         # dimension of problem
         self.n = 1
         # parameters
@@ -42,7 +82,6 @@ class ParabolaWithSineNoise(Problem):
 
         # total function evaluations
         self.evaluations = 0
-
 
     def groundTruth(self):
         ''' get ground truth for optimization, (x, fun_x) '''
@@ -66,29 +105,28 @@ class ParabolaWithSineNoise(Problem):
         ''' return hessian evaluated at val '''
         return 2*self.A - self.C*self.B**2*np.sin(self.B*val)
 
-    def visualize(self,val_vec=None,rollout_cost=None,dir_vec=None):
+    def _visualize(self,val_vec=None,fun_val_vec=None,dir_vec=None):
         ''' visualize the function '''
         xx = np.linspace(-1,1,1000)
-        plt.plot(xx,self._evaluate(xx))
+        fig, ax = plt.subplots()
+        ax.plot(xx,self._evaluate(xx))
         if (val_vec is not None):
-            if (rollout_cost is None):
-                rollout_cost = self._evaluate(val_vec)
-            plt.plot(val_vec,rollout_cost,'o')
+            if (fun_val_vec is None):
+                fun_val_vec = self._evaluate(val_vec)
+            ax.plot(val_vec,fun_val_vec,'o')
 
         '''
         # DEBUG check jacobian and hessian
         x = 0.2
         xx = np.linspace(x-0.2,x+0.2)
         yy = self.evaluate(x) + self.jacobian(xx)*(xx-x) + 0.5*self.hessian(xx)*(xx-x)**2
-        plt.plot(xx,yy)
+        ax.plot(xx,yy)
         '''
-
-
-        plt.show()
-        return None
+        return fig
 
 class PerlinNoise(Problem):
     def __init__(self):
+        Problem.__init__(self)
         # dimension of problem
         self.n = 2
         # parameters
@@ -120,9 +158,9 @@ class PerlinNoise(Problem):
         ''' return hessian evaluated at val '''
         return None
 
-    def visualize(self,val_vec=None, fun_val=None,dir_vec=None):
+    def _visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None):
         ''' visualize the function 
-        val_vec/fun_val values to highlight
+        val_vec/fun_val_vec values to highlight
         dir_vec: directions to note for val_vec
 
         '''
@@ -147,7 +185,7 @@ class PerlinNoise(Problem):
 
         # plot val_vec
         if (val_vec is not None):
-            plt.plot(val_vec[:,0], val_vec[:,1],'ok')
+            ax.plot(val_vec[:,0], val_vec[:,1],'ok')
             if (dir_vec is not None):
                 x0 = val_vec[:,0]
                 y0 = val_vec[:,1]
@@ -164,7 +202,6 @@ class PerlinNoise(Problem):
                     ax.add_collection(lc)
 
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
-        plt.show()
 
         '''
         # DEBUG visualization
@@ -203,10 +240,11 @@ class PerlinNoise(Problem):
         ax.plot_surface(np.array(xx_vec),np.array(yy_vec),np.array(jac_vec).reshape(N,N),color=(0,1.0,0))
         plt.show()
         '''
-        return None
+        return fig
 
 class ParabolaWithSineNoise2D(Problem):
     def __init__(self):
+        Problem.__init__(self)
         # dimension of problem
         self.n = 2
         # parameters
@@ -236,9 +274,9 @@ class ParabolaWithSineNoise2D(Problem):
         ''' return hessian evaluated at val '''
         return None
 
-    def visualize(self,val_vec=None, fun_val=None,dir_vec=None):
+    def _visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None):
         ''' visualize the function 
-        val_vec/fun_val values to highlight
+        val_vec/fun_val_vec values to highlight
         dir_vec: directions to note for val_vec
 
         '''
@@ -254,30 +292,29 @@ class ParabolaWithSineNoise2D(Problem):
 
         # plot val_vec
         if (val_vec is not None):
-            plt.plot(val_vec[:,0], val_vec[:,1],'ok')
+            ax.plot(val_vec[:,0], val_vec[:,1],'ok')
             if (dir_vec is not None):
                 x0 = val_vec[:,0]
                 y0 = val_vec[:,1]
                 x1 = val_vec[:,0] + dir_vec[:,0]
                 y1 = val_vec[:,1] + dir_vec[:,1]
-                x_vec = np.vstack([x0,x1]).T
-                y_vec = np.vstack([y0,y1]).T
-                if (x_vec.shape[0]==1):
+                lines = np.hstack([np.column_stack([x0,y0])[:,np.newaxis,:], np.column_stack([x1,y1])[:,np.newaxis,:]])
+                if (val_vec.shape[0]==1):
+                    x_vec = np.vstack([x0,x1]).T
+                    y_vec = np.vstack([y0,y1]).T
                     ax.plot(x_vec.flatten(),y_vec.flatten(),'-k')
                 else:
-                    ax.plot(x_vec,y_vec,'-k')
-        #ax.plot(np.array([[0.1,0.2]]),np.array([[0.1,0.2]]),'-k')
-        #ax.plot(np.array([[0.90022836,0.92629124]]),np.array([[ 0.27586163,-0.72379867]]),'-k')
+                    #ax.plot(x_vec,y_vec,'-k')
+                    lc = mc.LineCollection(lines,linewidths=2,color='black')
+                    ax.add_collection(lc)
+
         ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
 
         # DEBUG plot constraint
         xx = 0.3*np.cos(np.linspace(0,2*np.pi)) + 0.15
         yy = 0.3*np.sin(np.linspace(0,2*np.pi)) + 0.05
-        plt.plot(xx,yy)
-
-        plt.show()
-
-        return None
+        ax.plot(xx,yy)
+        return fig
 
 if __name__=='__main__':
     #problem = ParabolaWithSineNoise()
