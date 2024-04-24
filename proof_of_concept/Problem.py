@@ -29,9 +29,20 @@ class Problem:
         self.evaluations = 0
 
     def evaluate(self,val):
-        ''' evaluate function '''
+        ''' evaluate objective function, 
+        val.shape = (N,1) 
+        type(return): float
+        '''
         self.evaluations += 1
         return val
+
+    def _evaluate(self,val_vec):
+        '''
+        batch evaluation, not counted towards self.evaluations
+        val_vec.shape = (N,n), 
+        return.shape = (N,1) 
+        '''
+        return np.zeros(val_vec.shape[0])
 
     def visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None,visualize=False,save_gif=False):
         ''' visualize the function 
@@ -154,7 +165,7 @@ class PerlinNoise(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return linearizeNumerical(lambda x:self.evaluate(x), val)
+        return jacobianNumerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''
@@ -270,7 +281,7 @@ class ParabolaWithSineNoise2D(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return linearizeNumerical(lambda x:self.evaluate(x), val)
+        return jacobianNumerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''
@@ -362,7 +373,7 @@ class ParabolaWithSineNoise3D(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return linearizeNumerical(lambda x:self.evaluate(x), val)
+        return jacobianNumerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''
