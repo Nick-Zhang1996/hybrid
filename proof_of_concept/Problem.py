@@ -1,4 +1,5 @@
 import numpy as np
+from math import sin,cos
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import collections  as mc
@@ -6,6 +7,7 @@ from util import *
 import vnoise
 import os
 from PIL import Image
+from scipy.optimize import fsolve
 
 noise = vnoise.Noise()
 
@@ -316,10 +318,105 @@ class ParabolaWithSineNoise2D(Problem):
         ax.plot(xx,yy)
         return fig
 
+class ParabolaWithSineNoise3D(Problem):
+    def __init__(self):
+        Problem.__init__(self)
+        # dimension of problem
+        self.n = 3
+        # parameters
+        self.A = 2
+        self.B = 10
+        self.C = 0.4
+
+        # total function evaluations
+        self.evaluations = 0
+
+        # create circle (x-0.2)**2 + (y-0.1)**2 + z**2 = 1**2, in plane sin(x) + y + z = 0
+        theta_vec = np.linspace(0,2*np.pi)
+        x0 = 0.2; y0 = 0.1
+        r_vec = []
+        residual_vec = []
+        for theta in theta_vec:
+            fun = lambda r:(r*cos(theta))**2 + (r*sin(theta))**2 + ((sin(x0+r*cos(theta)) + y0+r*sin(theta)))**2 - 1
+            res = fsolve(fun,1.0)
+            r_vec.append(res.item())
+            residual_vec.append(fun(res.item()))
+        r_vec = np.array(r_vec)
+        self.r_vec = r_vec
+        
+    def getHx(self):
+        return [lambda u: (u[0]-0.2)**2 + (u[1]-0.1)**2 + u[2]**2 - 1.0**2]
+    def getLx(self):
+        return [lambda u: sin(u[0]) + u[1] + u[2]]
+
+    def evaluate(self,val):
+        ''' evaluate function '''
+        self.evaluations += 1
+        assert(np.array(val).shape==(self.n,)) # single value evaluation
+        return self._evaluate(val.reshape(-1,self.n)).item()
+
+    def _evaluate(self,val_vec):
+        ''' val_vec.shape = (N,n), return: (N,1) '''
+        x = (val_vec[:,0]**2+val_vec[:,1]**2)**0.5
+        return self.A*x**2 + self.C*np.sin(self.B*val_vec[:,0]) + self.C*np.cos(self.B*val_vec[:,1]) + (val_vec[:,2]-0.2)**3
+
+    def jacobian(self,val):
+        ''' return jacobian evaluated at val as a row vector '''
+        return linearizeNumerical(lambda x:self.evaluate(x), val)
+
+    def hessian(self,val):
+        ''' return hessian evaluated at val '''
+        return None
+
+    def _visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None):
+        ''' visualize the function 
+        Since this is a 3D function, we visualize the x,y plane subject to constraint sin(x) + y + z = 0
+        val_vec/fun_val_vec values to highlight
+        dir_vec: directions to note for val_vec
+
+        '''
+        xx,yy = np.meshgrid(np.linspace(-1,1,100),np.linspace(-1,1,100))
+        zz = (0 - np.sin(xx) - yy)
+        val_vec = self._evaluate(np.vstack([xx.flatten(), yy.flatten(),zz.flatten()]).T)
+        val_vec = val_vec.reshape(xx.shape)
+
+        fig, ax = plt.subplots()
+        z_min = np.min(val_vec.flatten())
+        z_max = np.max(val_vec.flatten())
+        #plt.imshow(val_vec,cmap='RdBu')
+        c = ax.pcolormesh(xx,yy,val_vec, cmap='RdBu', vmin=z_min, vmax=z_max)
+        fig.colorbar(c,ax=ax)
+
+        # plot val_vec
+        if (val_vec is not None):
+            ax.plot(val_vec[:,0], val_vec[:,1],'ok')
+            if (dir_vec is not None):
+                x0 = val_vec[:,0]
+                y0 = val_vec[:,1]
+                x1 = val_vec[:,0] + dir_vec[:,0]
+                y1 = val_vec[:,1] + dir_vec[:,1]
+                lines = np.hstack([np.column_stack([x0,y0])[:,np.newaxis,:], np.column_stack([x1,y1])[:,np.newaxis,:]])
+                if (val_vec.shape[0]==1):
+                    x_vec = np.vstack([x0,x1]).T
+                    y_vec = np.vstack([y0,y1]).T
+                    ax.plot(x_vec.flatten(),y_vec.flatten(),'-k')
+                else:
+                    #ax.plot(x_vec,y_vec,'-k')
+                    lc = mc.LineCollection(lines,linewidths=2,color='black')
+                    ax.add_collection(lc)
+
+        ax.axis([xx.min(), xx.max(),yy.min(), yy.max()])
+
+        # DEBUG plot constraint
+        xx = self.r_vec*np.cos(np.linspace(0,2*np.pi)) + 0.2
+        yy = self.r_vec*np.sin(np.linspace(0,2*np.pi)) + 0.1
+        ax.plot(xx,yy)
+        return fig
+
 if __name__=='__main__':
     #problem = ParabolaWithSineNoise()
     #problem = PerlinNoise()
-    problem = ParabolaWithSineNoise2D()
-    problem.visualize()
+    problem = ParabolaWithSineNoise3D()
+    problem.visualize(visualize=True)
 
 
