@@ -39,15 +39,39 @@ class CEM(Solver):
         self.mean = np.zeros(problem.n)
         self.cov = np.diag([1.0]*problem.n)
         self.elite_ratio = 0.3
+        # penalty coefficient for constraints
+        self.rho = 10
+
+        # list of inequality constraint functions
+        self.hx = []
+        # list of equality constraint functions
+        self.lx = []
         return
+
+    def addHx(self,fun):
+        '''  h(x) <= 0 '''
+        self.hx.append(fun)
+        return
+
+    def addLx(self,fun):
+        '''  l(x) = 0 '''
+        self.lx.append(fun)
+        return
+    def evaluate(self,x):
+        return self.problem.evaluate(x) + 0.5*self.rho*sum([lx(x)**2 for lx in self.lx]) + 0.5*self.rho*sum([max(0,hx(x))**2 for hx in sehf.lx])
 
     def step(self,i,visualize=False,save_gif=False):
         # sample in param space
         particles = np.random.multivariate_normal(self.mean,self.cov,size=self.samples)
-        # TODO resample
-        particles = particles.clip(-1,1)
+        #particles = particles.clip(-1,1)
+        # resample points out of bounds
+        mask = np.any(np.logical_or(particles<-1,particles>1),axis=1)
+        while (np.any(mask)):
+            size = np.sum(mask)
+            particles[mask,:] = np.random.multivariate_normal(self.mean,self.cov,size=size)
+            mask = np.any(np.logical_or(particles<-1,particles>1),axis=1)
         # rollout
-        rollout_cost = [self.problem.evaluate(particle.flatten()) for particle in particles]
+        rollout_cost = [self.evaluate(particle.flatten()) for particle in particles]
         # select elite samples
         elite_idx = np.argsort(rollout_cost)[:int(self.samples*self.elite_ratio)]
         self.mean = np.mean(particles[elite_idx],axis=0) 
