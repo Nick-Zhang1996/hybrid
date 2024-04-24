@@ -44,6 +44,18 @@ class Problem:
         '''
         return np.zeros(val_vec.shape[0])
 
+    def getLx(self):
+        return []
+    def getHx(self):
+        return []
+
+    def setConstraints(self, solver):
+        for lx in self.getLx():
+            solver.addLx(lx)
+        for hx in self.getHx():
+            solver.addHx(hx)
+        return
+
     def visualize(self,val_vec=None, fun_val_vec=None,dir_vec=None,visualize=False,save_gif=False):
         ''' visualize the function 
         val_vec: vector of sampled points
@@ -359,6 +371,7 @@ class ParabolaWithSineNoise3D(Problem):
         return [lambda u: (u[0]-0.2)**2 + (u[1]-0.1)**2 + u[2]**2 - 1.0**2]
     def getLx(self):
         return [lambda u: sin(u[0]) + u[1] + u[2]]
+
 
     def evaluate(self,val):
         ''' evaluate function '''

@@ -4,6 +4,7 @@ from util import *
 import scipy.stats as stats
 from scipy.optimize import minimize
 from math import exp,log
+from itertools import compress
 
 # solves for simple problems
 class Solver:
@@ -22,6 +23,7 @@ class Solver:
         fun_x = 0
         return x,fun_x
 
+# TODO update this to use barrier function, like CEM
 class Scipy(Solver):
     def __init__(self,problem):
         super().__init__(problem)
@@ -33,6 +35,8 @@ class Scipy(Solver):
         fun_x = res['fun']
         return x,fun_x
 
+# TODO test this with constraints
+# TODO increase rho with schedule
 class CEM(Solver):
     def __init__(self,problem):
         super().__init__(problem)
@@ -80,6 +84,7 @@ class CEM(Solver):
         self.problem.visualize(val_vec=particles, fun_val_vec = rollout_cost, visualize = visualize, save_gif = save_gif)
         return particles[elite_idx[0]], rollout_cost[elite_idx[0]]
 
+# TODO kinda useless now, revisit after Newton method
 class GradientDescent(Solver):
     def __init__(self,problem):
         super().__init__(problem)
@@ -110,9 +115,51 @@ class Newton(Solver):
         self.max_step_size = 0.1
         self.decay_factor = 0.1
         self.guess = np.random.random(problem.n)
+        # list of inequality constraint functions
+        self.hx = []
+        # list of equality constraint functions
+        self.lx = []
+        # parameter in barrier function, larger means more 'strict'
+        self.rho = 2
         return
 
+    def addHx(self,fun):
+        '''  h(x) <= 0 '''
+        self.hx.append(fun)
+        return
+
+    def addLx(self,fun):
+        '''  l(x) = 0 '''
+        self.lx.append(fun)
+        return
+
+    def evaluate(self,x,h_neg):
+        return self.problem.evaluate(x) + -1/self.rho*sum([log(-h(x)) for h in h_neg])
+
     def step(self,i,visualize=False,save_gif=False):
+        # f^: evaluate()
+        # \hat{x}: x0
+        x0 = self.guess
+        h_x0 = np.array([h(x0) for h in self.hx])
+        # identify h- and h+
+        h_pos = list(compress(self.hx, h_x0 > 0))
+        h_neg = list(compress(self.hx, h_x0 <= 0))
+        # assemble l^(x) = [l(x), h+(x)]
+        l_hat = self.lx + h_pos
+        l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
+        # Hessian, Jacobian for f^
+        H = hessianNumerical(lambda x:self.evaluate(x,h_neg), x0)
+        J = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0)
+        J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0)
+        m_l_hat = len(l_hat)
+        # linear system for primal-dual problem: A @ [dx,lambda]^T = B
+        A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
+        B = np.vstack([-J.T, -l_hat_x0])
+        assert(A.shape == n
+        breakpoint()
+
+
+        # TODO increase rho with iterations
         # 1*n
         J = self.problem.jacobian(self.guess)
         '''
@@ -183,7 +230,7 @@ class DualAscent(Solver):
         # construct augmented lagrangian
         Lx = lambda x,u,v: self.problem.evaluate(x) +  sum([uu*hh(x) for (uu,hh) in zip(u, self.hx)]) + 0.5*p*sum([hh(x)**2 if hh(x)>0 else 0 for hh in self.hx]) + sum([uu*ll(x) for (uu,ll) in zip(u, self.lx)]) + 0.5*p*sum([ll(x)**2 if ll(x)>0 else 0 for ll in self.lx])
         # Primal descent
-        J = linearizeNumerical(lambda x:Lx(x,self.u,self.v), self.x) # 1*n
+        J = jacobianNumerical(lambda x:Lx(x,self.u,self.v), self.x) # 1*n
         norm = np.linalg.norm(J)
         if (norm>self.primal_max_step_size):
             step = -J/norm * self.primal_max_step_size * self.primalLr(i)
@@ -305,6 +352,7 @@ if __name__=='__main__':
     #problem = PerlinNoise()
     #problem = ParabolaWithSineNoise()
     problem = ParabolaWithSineNoise2D()
+    breakpoint()
 
     solver = Newton(problem)
     #solver = Hybrid(problem)
