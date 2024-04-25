@@ -6,7 +6,6 @@ from Solver import *
 if __name__=='__main__':
     problem = ParabolaWithSineNoise2D()
     solver = Newton(problem)
-    # TODO put constraints in getHx
     problem.setConstraints(solver)
     x,fun_x = solver.solve(visualize=True,save_gif=False)
     hx = np.array([hh(x) for hh in solver.hx])

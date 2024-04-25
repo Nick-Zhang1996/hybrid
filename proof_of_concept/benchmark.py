@@ -1,3 +1,4 @@
+# test all solvers on all problems, plot cost vs evaluations
 import matplotlib.pyplot as plt
 from Problem import *
 from Solver import *

@@ -189,6 +189,7 @@ class Newton(Solver):
         dx = t*dx
 
         self.problem.visualize(self.guess.reshape(1,-1),dir_vec=dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
+        breakpoint()
         self.guess += dx
         return self.guess, self.problem.evaluate(self.guess)
 
