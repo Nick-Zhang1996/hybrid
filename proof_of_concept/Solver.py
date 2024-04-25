@@ -118,8 +118,11 @@ class Newton(Solver):
         self.guess = np.random.random(problem.n)
         # list of inequality constraint functions
         self.hx = []
+        # lagrange multiplier
+        self.v = []
         # list of equality constraint functions
         self.lx = []
+        self.u = []
         # parameter in barrier function, larger means more 'strict'
         self.rho = 2
 
@@ -132,17 +135,23 @@ class Newton(Solver):
     def addHx(self,fun):
         '''  h(x) <= 0 '''
         self.hx.append(fun)
+        self.v.append(0.0)
         return
 
     def addLx(self,fun):
         '''  l(x) = 0 '''
         self.lx.append(fun)
+        self.u.append(0.0)
         return
 
     def evaluate(self,x,h_neg=[]):
         return self.problem.evaluate(x) + -1/self.rho*sum([log(-h(x)) for h in h_neg])
 
     def step(self,i,visualize=False,save_gif=False):
+        # TODO move to post initialization
+        self.u = np.array(self.u)
+        self.v = np.array(self.v)
+
         # f^: evaluate()
         # \hat{x}: x0
         n = self.problem.n
@@ -156,6 +165,7 @@ class Newton(Solver):
         J = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0)
 
         # If negative hessian, do gradient descent
+        # TODO is this reasonable?
         try:
             np.linalg.cholesky(H)
         except np.linalg.LinAlgError:
@@ -163,13 +173,16 @@ class Newton(Solver):
 
         # assemble l^(x) = [l(x), h+(x)]
         l_hat = self.lx + h_pos
+        # dual variable associated with l_hat, i.e. \lambda
+        u_hat = np.hstack([self.u , self.v[h_x0>0]]).reshape(-1,1)
+
         m_l_hat = len(l_hat)
         if (m_l_hat > 0):
             l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
             J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0)
             # linear system for primal-dual problem: A @ [dx,lambda]^T = B
             A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
-            B = np.vstack([-J.T, -l_hat_x0])
+            B = np.vstack([-J.T-J_l_hat.T @ u_hat, -l_hat_x0])
         else:
             l_hat_x0 = np.zeros((0,0))
             J_l_hat = np.zeros((0,0))
@@ -180,16 +193,37 @@ class Newton(Solver):
         # y: concatenated [dx, lambda]
         y, residuals, rank, s = np.linalg.lstsq(A,B)
         dx = y[:n,:].flatten()
+        du = y[n:,:].flatten()
 
         # backtracking line search
         t = 1 # step size
         f_x0 = self.evaluate(x0)
-        while (self.evaluate(x0+t*dx) > f_x0 + self.bc_a * t * J @ dx):
-            t *= self.bc_b
+        J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
+        J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
+        l_x = np.array([l(x0+t*dx) for l in l_hat])
+        r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
+        r0_norm = np.linalg.norm(r0)
+
+        while True:
+            J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
+            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
+            l_x = np.array([l(x0+t*dx) for l in l_hat])
+            r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
+            r_t_norm = np.linalg.norm(r0)
+            if (r_t_norm > (1-self.bc_a*t)*r0_norm):
+                t *= self.bc_b
+            else:
+                break
+        print(t)
         dx = t*dx
+        du = t*du
 
         self.problem.visualize(self.guess.reshape(1,-1),dir_vec=dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
-        breakpoint()
+        #breakpoint()
+
+
+        self.u += du[:len(self.lx)]
+        self.v[h_x0>0] += du[len(self.lx):]
         self.guess += dx
         return self.guess, self.problem.evaluate(self.guess)
 
