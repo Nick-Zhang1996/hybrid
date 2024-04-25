@@ -85,6 +85,7 @@ class CEM(Solver):
         return particles[elite_idx[0]], rollout_cost[elite_idx[0]]
 
 # TODO kinda useless now, revisit after Newton method
+# TODO add line search, stopping criterion
 class GradientDescent(Solver):
     def __init__(self,problem):
         super().__init__(problem)
@@ -95,16 +96,16 @@ class GradientDescent(Solver):
 
     def step(self,i,visualize=False,save_gif=False):
         J = self.problem.jacobian(self.guess)
-        '''
-        if (np.linalg.norm(J) < 1e-2):
-            break
-        '''
-        step = self.step_size*np.exp(-i*self.decay_factor)*J.flatten()
-        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-self.step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
-        #print(f'guess val = {problem.evaluate(guess)}')
-        #print(f'estimated guess val = {problem.evaluate(guess)-J@step}')
+        D = dirDer(lambda x:self.problem.evaluate(x),self.guess, -J.flatten())
+        step = J/np.abs(D)
+        norm = np.linalg.norm(step)
+        if (D<0 or norm>self.max_step_size):
+            step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
 
-        self.guess -= step
+        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
+        self.guess -= step.flatten()
+
+
         return self.guess, self.problem.evaluate(self.guess)
 
 
@@ -121,6 +122,11 @@ class Newton(Solver):
         self.lx = []
         # parameter in barrier function, larger means more 'strict'
         self.rho = 2
+
+        # backtracking line search param
+        self.bc_a = 0.3 #alpha
+        self.bc_b = 0.5 #beta
+        
         return
 
     def addHx(self,fun):
@@ -133,47 +139,57 @@ class Newton(Solver):
         self.lx.append(fun)
         return
 
-    def evaluate(self,x,h_neg):
+    def evaluate(self,x,h_neg=[]):
         return self.problem.evaluate(x) + -1/self.rho*sum([log(-h(x)) for h in h_neg])
 
     def step(self,i,visualize=False,save_gif=False):
         # f^: evaluate()
         # \hat{x}: x0
+        n = self.problem.n
         x0 = self.guess
         h_x0 = np.array([h(x0) for h in self.hx])
         # identify h- and h+
         h_pos = list(compress(self.hx, h_x0 > 0))
         h_neg = list(compress(self.hx, h_x0 <= 0))
-        # assemble l^(x) = [l(x), h+(x)]
-        l_hat = self.lx + h_pos
-        l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
         # Hessian, Jacobian for f^
         H = hessianNumerical(lambda x:self.evaluate(x,h_neg), x0)
         J = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0)
-        J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0)
+
+        # If negative hessian, do gradient descent
+        try:
+            np.linalg.cholesky(H)
+        except np.linalg.LinAlgError:
+            H = np.eye(n)
+
+        # assemble l^(x) = [l(x), h+(x)]
+        l_hat = self.lx + h_pos
         m_l_hat = len(l_hat)
-        # linear system for primal-dual problem: A @ [dx,lambda]^T = B
-        A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
-        B = np.vstack([-J.T, -l_hat_x0])
-        assert(A.shape == n
-        breakpoint()
+        if (m_l_hat > 0):
+            l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
+            J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0)
+            # linear system for primal-dual problem: A @ [dx,lambda]^T = B
+            A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
+            B = np.vstack([-J.T, -l_hat_x0])
+        else:
+            l_hat_x0 = np.zeros((0,0))
+            J_l_hat = np.zeros((0,0))
+            A = H
+            B = -J.T
+        assert(A.shape == (n+m_l_hat, n+m_l_hat))
+        assert(B.shape == (n+m_l_hat, 1))
+        # y: concatenated [dx, lambda]
+        y, residuals, rank, s = np.linalg.lstsq(A,B)
+        dx = y[:n,:].flatten()
 
+        # backtracking line search
+        t = 1 # step size
+        f_x0 = self.evaluate(x0)
+        while (self.evaluate(x0+t*dx) > f_x0 + self.bc_a * t * J @ dx):
+            t *= self.bc_b
+        dx = t*dx
 
-        # TODO increase rho with iterations
-        # 1*n
-        J = self.problem.jacobian(self.guess)
-        '''
-        if (np.linalg.norm(J) < 1e-2):
-            break
-        '''
-        D = dirDer(lambda x:self.problem.evaluate(x),self.guess, -J.flatten())
-        step = J/np.abs(D)
-        norm = np.linalg.norm(step)
-        if (D<0 or norm>self.max_step_size):
-            step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
-
-        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
-        self.guess -= step.flatten()
+        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
+        self.guess += dx
         return self.guess, self.problem.evaluate(self.guess)
 
 class DualAscent(Solver):
