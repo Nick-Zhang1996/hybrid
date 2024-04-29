@@ -204,27 +204,58 @@ class Newton(Solver):
         r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
         r0_norm = np.linalg.norm(r0)
 
+
         while True:
             J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
             J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
             l_x = np.array([l(x0+t*dx) for l in l_hat])
             r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
-            r_t_norm = np.linalg.norm(r0)
+            r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1-self.bc_a*t)*r0_norm):
                 t *= self.bc_b
             else:
                 break
-        print(t)
-        dx = t*dx
-        du = t*du
 
-        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
-        #breakpoint()
+        line_search_dx = t*dx
+        line_search_du = t*du
+        print(t)
+
+        # DEBUG plot primal and dual residual as a function of t
+        t_vec = []
+        r_primal_vec = []
+        r_dual_vec = []
+        r_norm_vec = []
+        t = 1 # step size
+        while True:
+            J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
+            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
+            l_x = np.array([l(x0+t*dx) for l in l_hat])
+            r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
+            r_t_norm = np.linalg.norm(r_t)
+            t_vec.append(t)
+            r_primal_vec.append(np.linalg.norm(r_t[0,:n]))
+            r_dual_vec.append(  np.linalg.norm(r_t[0,n:]))
+            r_norm_vec.append(  r_t_norm )
+            t *= self.bc_b
+            if (t < 1e-3):
+                break
+
+        self.problem.visualize(self.guess.reshape(1,-1),dir_vec=line_search_dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
+
+        # DEBUG plot
+        tt = np.linspace(0,1,2)
+        plt.plot(t_vec, r_primal_vec, label='primal')
+        plt.plot(t_vec, r_dual_vec, label='dual')
+        plt.plot(t_vec, r_norm_vec, label='total')
+        plt.plot(tt,(1-self.bc_a*tt)*r0_norm)
+        plt.legend()
+        plt.show()
+        breakpoint()
 
 
         self.u += du[:len(self.lx)]
-        self.v[h_x0>0] += du[len(self.lx):]
-        self.guess += dx
+        self.v[h_x0>0] += line_search_du[len(self.lx):]
+        self.guess += line_search_dx
         return self.guess, self.problem.evaluate(self.guess)
 
 class DualAscent(Solver):
