@@ -12,7 +12,7 @@ def jacobianNumerical(fun,x,dim=1):
     n = x.shape[0]
 
     # A = df/dx
-    A = np.zeros((dim,n),dtype=np.float)
+    A = np.zeros((dim,n),dtype=float)
     # find A
     for i in range(n):
         # d x / d x_i, ith row in A
@@ -43,7 +43,7 @@ def hessianNumerical(fun,x):
     epsilon = 1e-5
     x = np.array(x)
     n = x.shape[0]
-    H = np.zeros((n,n),dtype=np.float)
+    H = np.zeros((n,n),dtype=float)
     return jacobianNumerical(lambda val:jacobianNumerical(fun,val),x,dim=n)
 
 # find the directional derivative
@@ -63,7 +63,7 @@ def jacobianNumericalSlow(fun,x):
     n = x.shape[0]
 
     # A = df/dx
-    A = np.zeros((1,n),dtype=np.float)
+    A = np.zeros((1,n),dtype=float)
     I = np.eye(n)
     # find A
     for i in range(n):
