@@ -115,9 +115,7 @@ class Newton(Solver):
         super().__init__(problem)
         self.max_step_size = 0.1
         self.decay_factor = 0.1
-        # FIXME
-        #self.guess = (np.random.random(problem.n) - 0.5 ) * 2
-        self.guess = (np.random.random(problem.n) - 0.5 ) * 0.3
+        self.guess = (np.random.random(problem.n) - 0.5 ) * 2
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier
@@ -127,6 +125,7 @@ class Newton(Solver):
         self.u = []
         # parameter in barrier function, larger means more 'strict'
         self.rho = 2
+        self.rho_b = 1.5 # exponential growth rate for rho
 
         # backtracking line search param
         self.bc_a = 0.3 #alpha
@@ -147,7 +146,7 @@ class Newton(Solver):
         return
 
     def evaluate(self,x,h_neg=[]):
-        return self.problem.evaluate(x) + -1/self.rho*sum([log(-min(h(x),-1e-10)) for h in h_neg])
+        return self.problem.evaluate(x) + -1/self.rho*sum([log(-min(h(x),-1e-100)) for h in h_neg])
 
     def step(self,i,visualize=False,save_gif=False):
         # TODO move to post initialization
@@ -172,6 +171,7 @@ class Newton(Solver):
             np.linalg.cholesky(H)
         except np.linalg.LinAlgError:
             H = np.eye(n)
+            print('negative hessian')
 
         # assemble l^(x) = [l(x), h+(x)]
         l_hat = self.lx + h_pos
@@ -221,8 +221,11 @@ class Newton(Solver):
 
         line_search_dx = t*dx
         line_search_du = t*du
+        primal_res = np.linalg.norm(r_t[:n])
+        dual_res = np.linalg.norm(r_t[n:])
         print(f'dx = {dx}')
         print(f't = {t}')
+        print(f'primal res:{primal_res}, dual res:{dual_res}')
         '''
 
         # DEBUG plot primal and dual residual as a function of t
@@ -265,6 +268,7 @@ class Newton(Solver):
         self.u += du[:len(self.lx)]
         self.v[h_x0>0] += line_search_du[len(self.lx):]
         self.guess += line_search_dx
+        self.rho *= self.rho_b
         return self.guess, self.problem.evaluate(self.guess)
 
 class DualAscent(Solver):
