@@ -115,7 +115,7 @@ class Newton(Solver):
         super().__init__(problem)
         self.max_step_size = 0.1
         self.decay_factor = 0.1
-        self.guess = np.random.random(problem.n)
+        self.guess = (np.random.random(problem.n) - 0.5 ) * 2
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier
@@ -179,7 +179,7 @@ class Newton(Solver):
         m_l_hat = len(l_hat)
         if (m_l_hat > 0):
             l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
-            J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0)
+            J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0,dim=len(l_hat))
             # linear system for primal-dual problem: A @ [dx,lambda]^T = B
             A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
             B = np.vstack([-J.T-J_l_hat.T @ u_hat, -l_hat_x0])
@@ -196,18 +196,18 @@ class Newton(Solver):
         du = y[n:,:].flatten()
 
         # backtracking line search
-        t = 1 # step size
         f_x0 = self.evaluate(x0)
-        J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
-        J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
-        l_x = np.array([l(x0+t*dx) for l in l_hat])
+        J_f = J
+        J_l = J_l_hat
+        l_x = np.array([l(x0) for l in l_hat])
         r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
         r0_norm = np.linalg.norm(r0)
+        t = 1.0 # step size
 
 
-        while True:
+        for i in range(10):
             J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
-            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
+            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx, dim = len(l_hat))
             l_x = np.array([l(x0+t*dx) for l in l_hat])
             r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
             r_t_norm = np.linalg.norm(r_t)
@@ -218,40 +218,46 @@ class Newton(Solver):
 
         line_search_dx = t*dx
         line_search_du = t*du
-        print(t)
+        print(f'dx = {dx}')
+        print(f't = {t}')
+        '''
 
         # DEBUG plot primal and dual residual as a function of t
         t_vec = []
         r_primal_vec = []
         r_dual_vec = []
         r_norm_vec = []
-        t = 1 # step size
+        #t = min(1,0.1/r0_norm) # step size
+        t = 1.0 # step size
         while True:
             J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
-            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx)
+            J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx,dim=len(l_hat))
             l_x = np.array([l(x0+t*dx) for l in l_hat])
             r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
             r_t_norm = np.linalg.norm(r_t)
             t_vec.append(t)
             r_primal_vec.append(np.linalg.norm(r_t[0,:n]))
-            r_dual_vec.append(  np.linalg.norm(r_t[0,n:]))
+            r_dual_vec.append(  np.linalg.norm(l_x))
             r_norm_vec.append(  r_t_norm )
             t *= self.bc_b
-            if (t < 1e-3):
+            if (t < np.linalg.norm(line_search_dx)/np.linalg.norm(dx)):
                 break
 
+        '''
         self.problem.visualize(self.guess.reshape(1,-1),dir_vec=line_search_dx.reshape(1,-1), visualize = visualize, save_gif = save_gif)
+        '''
 
         # DEBUG plot
-        tt = np.linspace(0,1,2)
-        plt.plot(t_vec, r_primal_vec, label='primal')
-        plt.plot(t_vec, r_dual_vec, label='dual')
-        plt.plot(t_vec, r_norm_vec, label='total')
+        t = 1.0
+        tt = np.linspace(0,t,2)
+        plt.plot(t_vec, r_primal_vec,'*', label='primal')
+        plt.plot(t_vec, r_dual_vec,'*', label='dual')
+        plt.plot(t_vec, r_norm_vec,'*', label='total')
         plt.plot(tt,(1-self.bc_a*tt)*r0_norm)
         plt.legend()
         plt.show()
         breakpoint()
-
+        '''
 
         self.u += du[:len(self.lx)]
         self.v[h_x0>0] += line_search_du[len(self.lx):]

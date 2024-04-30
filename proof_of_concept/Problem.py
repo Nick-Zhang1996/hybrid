@@ -280,7 +280,7 @@ class ParabolaWithSineNoise2D(Problem):
         # total function evaluations
         self.evaluations = 0
     def getHx(self):
-        return [lambda x:(x[0]-0.15)**2+(x[1]-0.05)**2-0.3**2]
+        return [lambda x:((x[0]-0.15)**2+(x[1]-0.05)**2-0.3**2)*100]
 
     def evaluate(self,val):
         ''' evaluate function '''

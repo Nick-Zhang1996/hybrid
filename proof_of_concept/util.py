@@ -13,6 +13,9 @@ def jacobianNumerical(fun,x,dim=1):
 
     # A = df/dx
     A = np.zeros((dim,n),dtype=float)
+    # empty function
+    if (dim == 0):
+        return A
     # find A
     for i in range(n):
         # d x / d x_i, ith row in A
