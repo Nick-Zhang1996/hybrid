@@ -115,7 +115,9 @@ class Newton(Solver):
         super().__init__(problem)
         self.max_step_size = 0.1
         self.decay_factor = 0.1
-        self.guess = (np.random.random(problem.n) - 0.5 ) * 2
+        # FIXME
+        #self.guess = (np.random.random(problem.n) - 0.5 ) * 2
+        self.guess = (np.random.random(problem.n) - 0.5 ) * 0.3
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier
@@ -145,7 +147,7 @@ class Newton(Solver):
         return
 
     def evaluate(self,x,h_neg=[]):
-        return self.problem.evaluate(x) + -1/self.rho*sum([log(-h(x)) for h in h_neg])
+        return self.problem.evaluate(x) + -1/self.rho*sum([log(-min(h(x),-1e-10)) for h in h_neg])
 
     def step(self,i,visualize=False,save_gif=False):
         # TODO move to post initialization
@@ -173,10 +175,10 @@ class Newton(Solver):
 
         # assemble l^(x) = [l(x), h+(x)]
         l_hat = self.lx + h_pos
-        # dual variable associated with l_hat, i.e. \lambda
-        u_hat = np.hstack([self.u , self.v[h_x0>0]]).reshape(-1,1)
-
         m_l_hat = len(l_hat)
+        # dual variable associated with l_hat, i.e. \lambda
+        u_hat = np.hstack([self.u , self.v[h_x0>0]]).reshape(m_l_hat,1)
+
         if (m_l_hat > 0):
             l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
             J_l_hat = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0,dim=len(l_hat))
@@ -184,8 +186,9 @@ class Newton(Solver):
             A = np.block([[H,J_l_hat.T],[J_l_hat,np.zeros((m_l_hat,m_l_hat))]])
             B = np.vstack([-J.T-J_l_hat.T @ u_hat, -l_hat_x0])
         else:
-            l_hat_x0 = np.zeros((0,0))
-            J_l_hat = np.zeros((0,0))
+            # TODO maybe we don't need this
+            l_hat_x0 = np.zeros((0,1))
+            J_l_hat = np.zeros((0,n))
             A = H
             B = -J.T
         assert(A.shape == (n+m_l_hat, n+m_l_hat))
@@ -199,7 +202,7 @@ class Newton(Solver):
         f_x0 = self.evaluate(x0)
         J_f = J
         J_l = J_l_hat
-        l_x = np.array([l(x0) for l in l_hat])
+        l_x = np.array([l(x0) for l in l_hat]).reshape(m_l_hat,1)
         r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
         r0_norm = np.linalg.norm(r0)
         t = 1.0 # step size
@@ -208,8 +211,8 @@ class Newton(Solver):
         for i in range(10):
             J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
             J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx, dim = len(l_hat))
-            l_x = np.array([l(x0+t*dx) for l in l_hat])
-            r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
+            l_x = np.array([l(x0+t*dx) for l in l_hat]).reshape(m_l_hat,1)
+            r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du.reshape(m_l_hat,1)),l_x])
             r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1-self.bc_a*t)*r0_norm):
                 t *= self.bc_b
@@ -232,7 +235,7 @@ class Newton(Solver):
         while True:
             J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
             J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx,dim=len(l_hat))
-            l_x = np.array([l(x0+t*dx) for l in l_hat])
+            l_x = np.array([l(x0+t*dx) for l in l_hat]).reshape(m_l_hat,1)
             r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du),l_x])
             r_t_norm = np.linalg.norm(r_t)
             t_vec.append(t)
