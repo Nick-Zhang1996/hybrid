@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from Problem import *
 from Solver import *
 
-problem_vec = [ParabolaWithSineNoise,PerlinNoise,ParabolaWithSineNoise2D]
+problem_vec = [PerlinNoise,ParabolaWithSineNoise2D]
 solver_vec = [CEM,Newton,Hybrid,Scipy]
-solver_rerun_vec = [1,20,1,20]
+solver_rerun_vec = [1,200,1,40]
 value_lut = dict()
 evaluation_lut = dict()
 

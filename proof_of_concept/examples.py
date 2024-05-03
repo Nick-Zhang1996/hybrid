@@ -4,7 +4,7 @@ from Solver import *
 
 
 if __name__=='__main__':
-    problem = ParabolaWithSineNoise2D()
+    problem = ParabolaWithSineNoise3D()
     solver = Newton(problem)
     problem.setConstraints(solver)
     x,fun_x = solver.solve(visualize=True,save_gif=False)
@@ -13,4 +13,5 @@ if __name__=='__main__':
     residual_h = np.sum(hx[hx>0]**2)
     residual_l = np.sum(lx**2)
     print(f' residual h: {residual_h},residual l: {residual_l}')
+    breakpoint()
 

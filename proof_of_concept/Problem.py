@@ -117,6 +117,8 @@ class ParabolaWithSineNoise(Problem):
         self.evaluations += 1
         #assert(np.array(val).shape==(self.n,)) # single value evaluation
         return self._evaluate(val).item()
+    def evaluateNoCount(self,val):
+        return self._evaluate(val).item()
 
     def _evaluate(self,val_vec):
         ''' val_vec.shape = (N,n), return: (N,1) '''
@@ -166,6 +168,9 @@ class PerlinNoise(Problem):
         ''' evaluate function val.shape = (n), return: float'''
         self.evaluations += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
+        value = noise.noise2(val[0] * self.scale, val[1] * self.scale, octaves=self.octaves, persistence=self.persistence)
+        return value.item()
+    def evaluateNoCount(self,val):
         value = noise.noise2(val[0] * self.scale, val[1] * self.scale, octaves=self.octaves, persistence=self.persistence)
         return value.item()
 
@@ -287,6 +292,8 @@ class ParabolaWithSineNoise2D(Problem):
         self.evaluations += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
         return self._evaluate(val.reshape(-1,self.n)).item()
+    def evaluateNoCount(self,val):
+        return self._evaluate(val.reshape(-1,self.n)).item()
 
     def _evaluate(self,val_vec):
         ''' val_vec.shape = (N,n), return: (N,1) '''
@@ -380,6 +387,8 @@ class ParabolaWithSineNoise3D(Problem):
         self.evaluations += 1
         assert(np.array(val).shape==(self.n,)) # single value evaluation
         return self._evaluate(val.reshape(-1,self.n)).item()
+    def evaluateNoCount(self,val):
+        return self._evaluate(val.reshape(-1,self.n)).item()
 
     def _evaluate(self,val_vec):
         ''' val_vec.shape = (N,n), return: (N,1) '''
@@ -403,14 +412,14 @@ class ParabolaWithSineNoise3D(Problem):
         '''
         xx,yy = np.meshgrid(np.linspace(-1,1,100),np.linspace(-1,1,100))
         zz = (0 - np.sin(xx) - yy)
-        val_vec = self._evaluate(np.vstack([xx.flatten(), yy.flatten(),zz.flatten()]).T)
-        val_vec = val_vec.reshape(xx.shape)
+        f_vec = self._evaluate(np.vstack([xx.flatten(), yy.flatten(),zz.flatten()]).T)
+        f_vec = f_vec.reshape(xx.shape)
 
         fig, ax = plt.subplots()
-        z_min = np.min(val_vec.flatten())
-        z_max = np.max(val_vec.flatten())
+        z_min = np.min(f_vec.flatten())
+        z_max = np.max(f_vec.flatten())
         #plt.imshow(val_vec,cmap='RdBu')
-        c = ax.pcolormesh(xx,yy,val_vec, cmap='RdBu', vmin=z_min, vmax=z_max)
+        c = ax.pcolormesh(xx,yy,f_vec, cmap='RdBu', vmin=z_min, vmax=z_max)
         fig.colorbar(c,ax=ax)
 
         # plot val_vec

@@ -62,7 +62,7 @@ class CEM(Solver):
         self.lx.append(fun)
         return
     def evaluate(self,x):
-        return self.problem.evaluate(x) + 0.5*self.rho*sum([lx(x)**2 for lx in self.lx]) + 0.5*self.rho*sum([max(0,hx(x))**2 for hx in sehf.lx])
+        return self.problem.evaluate(x) + 0.5*self.rho*sum([lx(x)**2 for lx in self.lx]) + 0.5*self.rho*sum([max(0,hx(x))**2 for hx in self.lx])
 
     def step(self,i,visualize=False,save_gif=False):
         # sample in param space
@@ -99,23 +99,26 @@ class GradientDescent(Solver):
         D = dirDer(lambda x:self.problem.evaluate(x),self.guess, -J.flatten())
         step = J/np.abs(D)
         norm = np.linalg.norm(step)
-        if (D<0 or norm>self.max_step_size):
-            step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
+        
+        step = step/norm*self.max_step_size*np.exp(-i*self.decay_factor)
 
         self.problem.visualize(self.guess.reshape(1,-1),dir_vec=-step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
         self.guess -= step.flatten()
 
 
-        return self.guess, self.problem.evaluate(self.guess)
+        return self.guess, self.problem.evaluateNoCount(self.guess)
 
 
 
 class Newton(Solver):
-    def __init__(self,problem):
+    def __init__(self,problem,x0=None):
         super().__init__(problem)
         self.max_step_size = 0.1
         self.decay_factor = 0.1
-        self.guess = (np.random.random(problem.n) - 0.5 ) * 2
+        if (x0 is None):
+            self.guess = (np.random.random(problem.n) - 0.5 ) * 2
+        else:
+            self.guess = x0
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier
@@ -147,6 +150,8 @@ class Newton(Solver):
 
     def evaluate(self,x,h_neg=[]):
         return self.problem.evaluate(x) + -1/self.rho*sum([log(-min(h(x),-1e-100)) for h in h_neg])
+    def evaluateNoCount(self,x,h_neg=[]):
+        return self.problem.evaluateNoCount(x) + -1/self.rho*sum([log(-min(h(x),-1e-100)) for h in h_neg])
 
     def step(self,i,visualize=False,save_gif=False):
         # TODO move to post initialization
@@ -162,8 +167,8 @@ class Newton(Solver):
         h_pos = list(compress(self.hx, h_x0 > 0))
         h_neg = list(compress(self.hx, h_x0 <= 0))
         # Hessian, Jacobian for f^
-        H = hessianNumerical(lambda x:self.evaluate(x,h_neg), x0)
-        J = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0)
+        H = hessianNumerical(lambda x:self.evaluateNoCount(x,h_neg), x0)
+        J = jacobianNumerical(lambda x:self.evaluateNoCount(x,h_neg), x0)
 
         # If negative hessian, do gradient descent
         # TODO is this reasonable?
@@ -171,7 +176,7 @@ class Newton(Solver):
             np.linalg.cholesky(H)
         except np.linalg.LinAlgError:
             H = np.eye(n)
-            print('negative hessian')
+            #print('negative hessian')
 
         # assemble l^(x) = [l(x), h+(x)]
         l_hat = self.lx + h_pos
@@ -198,18 +203,20 @@ class Newton(Solver):
         dx = y[:n,:].flatten()
         du = y[n:,:].flatten()
 
-        # backtracking line search
         f_x0 = self.evaluate(x0)
         J_f = J
         J_l = J_l_hat
         l_x = np.array([l(x0) for l in l_hat]).reshape(m_l_hat,1)
         r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
         r0_norm = np.linalg.norm(r0)
+        # stopping criteria
+        if (r0_norm < 1e-4):
+            return x0, f_x0
+
+        # backtracking line search
         t = 1.0 # step size
-
-
         for i in range(10):
-            J_f = jacobianNumerical(lambda x:self.evaluate(x,h_neg), x0 + t*dx)
+            J_f = jacobianNumerical(lambda x:self.evaluateNoCount(x,h_neg), x0 + t*dx)
             J_l = jacobianNumerical(lambda x:np.array([l(x) for l in l_hat]), x0 + t*dx, dim = len(l_hat))
             l_x = np.array([l(x0+t*dx) for l in l_hat]).reshape(m_l_hat,1)
             r_t = np.vstack([J_f.T + J_l.T @ (u_hat+t*du.reshape(m_l_hat,1)),l_x])
@@ -223,9 +230,9 @@ class Newton(Solver):
         line_search_du = t*du
         primal_res = np.linalg.norm(r_t[:n])
         dual_res = np.linalg.norm(r_t[n:])
-        print(f'dx = {dx}')
-        print(f't = {t}')
-        print(f'primal res:{primal_res}, dual res:{dual_res}')
+        #print(f'dx = {dx}')
+        #print(f't = {t}')
+        #print(f'primal res:{primal_res}, dual res:{dual_res}')
         '''
 
         # DEBUG plot primal and dual residual as a function of t
@@ -269,7 +276,7 @@ class Newton(Solver):
         self.v[h_x0>0] += line_search_du[len(self.lx):]
         self.guess += line_search_dx
         self.rho *= self.rho_b
-        return self.guess, self.problem.evaluate(self.guess)
+        return self.guess, self.problem.evaluateNoCount(self.guess)
 
 class DualAscent(Solver):
     def __init__(self,problem,x0=None):
@@ -345,7 +352,7 @@ class DualAscent(Solver):
             print('l',[ll(self.x) for ll in self.lx],'v',self.v)
 
         self.problem.visualize(self.x.reshape(1,-1),dir_vec=step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
-        return self.x, self.problem.evaluate(self.x)
+        return self.x, self.problem.evaluateNoCount(self.x)
 
 class Hybrid(Solver):
     '''Hybrid solver, sample'''
@@ -422,8 +429,22 @@ class Hybrid(Solver):
             '''
 
             # Hybrid step: Dual Ascent
+            '''
             old_guess = guess.copy()
             da = DualAscent(self.problem,x0=guess)
+            da.hx = self.hx
+            da.lx = self.lx
+            da.u = [0.0]*len(self.hx)
+            da.v = [0.0]*len(self.lx)
+            for i in range(3):
+                guess, _ = da.step(i)
+            step = guess-old_guess
+            dir_vec.append(step.flatten())
+            '''
+
+            # Newton step
+            old_guess = guess.copy()
+            da = Newton(self.problem,x0=guess)
             da.hx = self.hx
             da.lx = self.lx
             da.u = [0.0]*len(self.hx)
