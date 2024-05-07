@@ -4,9 +4,10 @@ from Problem import *
 from Solver import *
 
 problem_vec = [ParabolaWithSineNoise2D,ParabolaWithSineNoise3D]
-solver_vec = [CEM,Newton,Hybrid,Scipy,DualAscent]
-solver_rerun_vec = [1,20,1,40,20]
-#solver_rerun_vec = [1,1,1,1,1]
+#solver_vec = [CEM,Newton,Hybrid,DualAscent]
+#solver_rerun_vec = [3,100,1,30]
+solver_vec = [Newton,Hybrid,DualAscent]
+solver_rerun_vec = [50,1,40]
 # minimum function value
 value_lut = dict()
 # number of function evaluations (excluding jacobian/hessian)
@@ -26,28 +27,24 @@ for problem_class in problem_vec:
             values = []
             evaluations = []
             residuals = []
-            fun_x_min = 1e99
+            fun_x_min = 1e1
             problem = problem_class()
             for rerun_idx in range(reruns):
                 print(f'rerun {rerun_idx}')
                 solver = solver_class(problem)
                 problem.setConstraints(solver)
-                if (solver_class == Scipy):
-                    x,fun_x = solver.solve()
-                    fun_x_min = min(fun_x,fun_x_min)
-                    values.append(fun_x_min)
+                for i in range(solver.iterations):
+                    print(f'i{i} ',end='')
+                    retval = solver.step(i)
+                    if retval is not None:
+                        x,fun_x = retval
                     evaluations.append(problem.evaluations)
-                    residuals.append(solver.getResiduals(x))
-                else:
-                    for i in range(solver.iterations):
-                        print(f'i{i} ',end='')
-                        retval = solver.step(i)
-                        if retval is not None:
-                            x,fun_x = retval
+                    residual = solver.getResiduals(x)
+                    residuals.append(residual)
+                    if (residual < 1e-3):
                         fun_x_min = min(fun_x,fun_x_min)
-                        values.append(fun_x_min)
-                        evaluations.append(problem.evaluations)
-                        residuals.append(solver.getResiduals(x))
+                    values.append(fun_x_min)
+
             value_lut[(problem_class,solver_class)].append(values)
             evaluation_lut[(problem_class,solver_class)].append(evaluations)
             residuals_lut[(problem_class,solver_class)].append(residuals)

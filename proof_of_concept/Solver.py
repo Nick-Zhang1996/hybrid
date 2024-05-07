@@ -11,7 +11,7 @@ class Solver:
     def __init__(self,problem):
         self.problem = problem
         self.iterations = 30
-        self.samples = 50
+        self.samples = 20
         return
     def solve(self,visualize=False,save_gif=False):
         for i in range(self.iterations):
@@ -246,7 +246,7 @@ class Newton(Solver):
         r0 = np.vstack([J_f.T + J_l.T @ u_hat,l_x])
         r0_norm = np.linalg.norm(r0)
         # stopping criteria
-        if (r0_norm < 1e-4):
+        if (r0_norm < 1e-5):
             return x0, f_x0
 
         # backtracking line search
@@ -330,11 +330,11 @@ class DualAscent(Solver):
         # list of inequality constraint functions
         self.hx = []
         # lagrange multiplier for h(x)
-        self.u = []
+        self.v = []
         # list of equality constraint functions
         self.lx = []
-        # lagrange multiplier for h(x)
-        self.v = []
+        # lagrange multiplier for l(x)
+        self.u = []
         return
 
     def findExpCoeff(self,s_0,s_f,iterations):
@@ -354,13 +354,13 @@ class DualAscent(Solver):
     def addHx(self,fun):
         '''  h(x) <= 0 '''
         self.hx.append(fun)
-        self.u.append(0.0)
+        self.v.append(0.0)
         return
 
     def addLx(self,fun):
         '''  l(x) = 0 '''
         self.lx.append(fun)
-        self.v.append(0.0)
+        self.u.append(0.0)
         return
 
     def step(self,i,visualize=False,save_gif=False):
@@ -369,7 +369,7 @@ class DualAscent(Solver):
         # quadratic penalty for constraint violation
         p = 100.0 * exp(i)
         # construct augmented lagrangian
-        Lx = lambda x,u,v: self.problem.evaluate(x) +  sum([uu*hh(x) for (uu,hh) in zip(u, self.hx)]) + 0.5*p*sum([hh(x)**2 if hh(x)>0 else 0 for hh in self.hx]) + sum([uu*ll(x) for (uu,ll) in zip(u, self.lx)]) + 0.5*p*sum([ll(x)**2 if ll(x)>0 else 0 for ll in self.lx])
+        Lx = lambda x,u,v: self.problem.evaluate(x) +  sum([vv*hh(x) for (vv,hh) in zip(v, self.hx)]) + 0.5*p*sum([hh(x)**2 if hh(x)>0 else 0 for hh in self.hx]) + sum([uu*ll(x) for (uu,ll) in zip(u, self.lx)]) + 0.5*p*sum([ll(x)**2 if ll(x)>0 else 0 for ll in self.lx])
         # Primal descent
         J = jacobianNumerical(lambda x:Lx(x,self.u,self.v), self.x) # 1*n
         norm = np.linalg.norm(J)
@@ -381,14 +381,14 @@ class DualAscent(Solver):
         print(f'iter={i} lr={self.primalLr(i):.2f}')
 
         # Dual ascent
-        if (len(self.u)>0):
-            self.u += self.dualLr(i)*np.array([hh(self.x) for hh in self.hx])
-            self.u[self.u<0] = 0.0
-            print('h',[hh(self.x) for hh in self.hx],'u',self.u)
-
         if (len(self.v)>0):
-            self.v += self.dualLr(i)*np.array([ll(self.x) for ll in self.lx])
-            print('l',[ll(self.x) for ll in self.lx],'v',self.v)
+            self.v += self.dualLr(i)*np.array([hh(self.x) for hh in self.hx])
+            self.v[self.v<0] = 0.0
+            #print('h',[hh(self.x) for hh in self.hx],'v',self.v)
+
+        if (len(self.u)>0):
+            self.u += self.dualLr(i)*np.array([ll(self.x) for ll in self.lx])
+            #print('l',[ll(self.x) for ll in self.lx],'u',self.u)
 
         self.problem.visualize(self.x.reshape(1,-1),dir_vec=step.reshape(1,-1), visualize = visualize, save_gif = save_gif)
         return self.x, self.problem.evaluateNoCount(self.x)
@@ -469,31 +469,22 @@ class Hybrid(Solver):
             dir_vec.append(step.flatten())
             '''
 
-            # Hybrid step: Dual Ascent
-            '''
+            # Hybrid step: Dual Ascent/Newton
             old_guess = guess.copy()
-            da = DualAscent(self.problem,x0=guess)
-            da.hx = self.hx
-            da.lx = self.lx
-            da.u = [0.0]*len(self.hx)
-            da.v = [0.0]*len(self.lx)
-            for i in range(3):
-                guess, _ = da.step(i)
-            step = guess-old_guess
-            dir_vec.append(step.flatten())
-            '''
-
+            # DA
+            #kernel = DualAscent(self.problem,x0=guess)
             # Newton step
-            old_guess = guess.copy()
-            da = Newton(self.problem,x0=guess)
-            da.hx = self.hx
-            da.lx = self.lx
-            da.v = [0.0]*len(self.hx)
-            da.u = [0.0]*len(self.lx)
-            for i in range(3):
-                guess, _ = da.step(i)
+            kernel = Newton(self.problem,x0=guess)
+
+            kernel.hx = self.hx
+            kernel.lx = self.lx
+            kernel.v = [0.0]*len(self.hx)
+            kernel.u = [0.0]*len(self.lx)
+            for i in range(10):
+                guess, _ = kernel.step(i)
             step = guess-old_guess
             dir_vec.append(step.flatten())
+
 
         self.problem.visualize(old_particles, rollout_cost,np.array(dir_vec), visualize = visualize, save_gif = save_gif)
 
