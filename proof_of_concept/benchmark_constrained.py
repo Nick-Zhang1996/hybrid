@@ -3,39 +3,57 @@ import matplotlib.pyplot as plt
 from Problem import *
 from Solver import *
 
-problem_vec = [PerlinNoise,ParabolaWithSineNoise2D]
-solver_vec = [CEM,Newton,Hybrid,Scipy]
-solver_rerun_vec = [1,200,1,40]
+problem_vec = [ParabolaWithSineNoise2D,ParabolaWithSineNoise3D]
+solver_vec = [CEM,Newton,Hybrid,Scipy,DualAscent]
+solver_rerun_vec = [1,20,1,40,20]
+#solver_rerun_vec = [1,1,1,1,1]
+# minimum function value
 value_lut = dict()
+# number of function evaluations (excluding jacobian/hessian)
 evaluation_lut = dict()
+# Constraint residuals
+residuals_lut = dict()
 
 for problem_class in problem_vec:
     for solver_class,reruns in zip(solver_vec,solver_rerun_vec):
+        print(f'{str(problem_class)}, {str(solver_class)}')
         value_lut[(problem_class,solver_class)] = []
         evaluation_lut[(problem_class,solver_class)] = []
+        residuals_lut[(problem_class,solver_class)] = []
+
         for experiment_idx in range(10):
+            print(f'exp {experiment_idx}')
             values = []
             evaluations = []
+            residuals = []
             fun_x_min = 1e99
             problem = problem_class()
             for rerun_idx in range(reruns):
+                print(f'rerun {rerun_idx}')
                 solver = solver_class(problem)
+                problem.setConstraints(solver)
                 if (solver_class == Scipy):
                     x,fun_x = solver.solve()
                     fun_x_min = min(fun_x,fun_x_min)
                     values.append(fun_x_min)
                     evaluations.append(problem.evaluations)
+                    residuals.append(solver.getResiduals(x))
                 else:
                     for i in range(solver.iterations):
-                        x,fun_x = solver.step(i)
+                        print(f'i{i} ',end='')
+                        retval = solver.step(i)
+                        if retval is not None:
+                            x,fun_x = retval
                         fun_x_min = min(fun_x,fun_x_min)
                         values.append(fun_x_min)
                         evaluations.append(problem.evaluations)
+                        residuals.append(solver.getResiduals(x))
             value_lut[(problem_class,solver_class)].append(values)
             evaluation_lut[(problem_class,solver_class)].append(evaluations)
+            residuals_lut[(problem_class,solver_class)].append(residuals)
 
 # plot results
-fig,axes = plt.subplots(len(problem_vec))
+fig,axes = plt.subplots(len(problem_vec),2)
 for problem_class,ax in zip(problem_vec,axes):
     xlim = 1e99
     for solver_class in solver_vec:
@@ -44,11 +62,19 @@ for problem_class,ax in zip(problem_vec,axes):
         evaluation_mean = np.mean(evaluation_lut[(problem_class,solver_class)], axis=0)
         value_std = np.std(value_lut[(problem_class,solver_class)], axis=0)
         evaluation_std = np.std(evaluation_lut[(problem_class,solver_class)], axis=0)
-        ax.plot(evaluation_mean, value_mean,label=str(solver_class))
-        ax.fill_between(evaluation_mean, value_mean-value_std, value_mean+value_std,alpha=0.4)
+        ax[0].plot(evaluation_mean, value_mean,label=str(solver_class))
+        #ax[0].fill_between(evaluation_mean, value_mean-value_std, value_mean+value_std,alpha=0.4)
         xlim = min(evaluation_mean[-1],xlim)
         print(str(problem_class), str(solver_class),evaluation_mean[-1])
-    ax.set_title(str(problem_class))
+
+        residuals_mean = np.mean(residuals_lut[(problem_class,solver_class)], axis=0)
+        residuals_std = np.std(residuals_lut[(problem_class,solver_class)], axis=0)
+        ax[1].plot(evaluation_mean, residuals_mean,label=str(solver_class))
+        #ax[1].fill_between(evaluation_mean, residuals_mean-residuals_std, residuals_mean+residuals_std,alpha=0.4)
+
+    ax[0].set_title(str(problem_class))
+    ax[1].set_title('constraint residuals')
+    ax[1].set_yscale('log')
     #ax.set_xlim([0,xlim])
     #ax.set_xlim([0,1000])
 plt.legend()
