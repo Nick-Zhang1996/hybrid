@@ -29,7 +29,7 @@ def jacobianNumerical(fun,x,dim=1):
         x_post_r = fun(x_r)
 
         if (dim == 1):
-            A[:,i] += (x_post_r - x_post_l) / (2*epsilon)
+            A[:,i] += (x_post_r.item() - x_post_l.item()) / (2*epsilon)
         else:
             A[:,i] += (x_post_r.flatten() - x_post_l.flatten()) / (2*epsilon)
 
