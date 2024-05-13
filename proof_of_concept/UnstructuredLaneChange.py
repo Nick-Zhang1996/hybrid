@@ -184,6 +184,36 @@ class UnstructuredLaneChange():
             breakpoint()
         return r
 
+    def debug_r_by_category(self,x,u,lamda,mu):
+        T = self.T
+        try:
+            # h(i,i) should not be considered in either h_plus or h_minus
+            # we check it in h_minux
+            # for x 1-T
+            h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
+            for k in range(1,self.T+1):
+                for i in range(self.N):
+                    for j in range(i+1,self.N):
+                        h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = self.h(x[k-1,i],x[k-1,j]) >= 0
+            r_primal = 0; r_dynamics = 0; r_h = 0
+            for i in range(self.N):
+                dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
+                dLL_du = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
+                r_primal += dLL_dx @ dLL_dx.T + dLL_du @ dLL_du.T
+                # dynamics for f(x0,u0) = x1
+                r_dynamics += 100*np.sum((self.f(self.x0[i], u[0,i]) - x[0,i])**2)
+                for k in range(1,self.T):
+                    dual_fx = np.sum((self.f(x[k-1,i], u[k,i]) - x[k,i])**2)
+                    dual_h_plus = np.sum( [ ( self.h(x[k-1,i], x[k-1,j.item()]) )**2 for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
+                    # NOTE large penalty
+                    r_dynamics += 100*dual_fx 
+                    r_h += dual_h_plus
+                # h(x_T_i, x_T_j)
+                r_h += np.sum( [ ( self.h(x[T-1,i], x[T-1,j.item()]) )**2 for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
+        except ValueError:
+            breakpoint()
+        return r_primal, r_dynamics, r_h
+
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t0_step = time()
@@ -205,7 +235,7 @@ class UnstructuredLaneChange():
         # Newton direction
         # line search
         dt_step = time()-t0_step
-        print(f'step: {dt_step}')
+        print(f'step time : {dt_step}s')
 
         # backtracking line search
         t = 1.0 # step size
@@ -218,26 +248,32 @@ class UnstructuredLaneChange():
                 t *= self.bc_b
             else:
                 break
-        #r_t = r_y_fun(y0+t*dy)
-        #r_t_norm = np.linalg.norm(r_t)
+
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
+        r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0))
+        print(f'r_0 r_primal={r_primal}, r_dynamics={r_dynamics}, r_h={r_h} ')
+        r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0+t*dy))
+        print(f'r_t r_primal={r_primal}, r_dynamics={r_dynamics}, r_h={r_h} ')
+
+
         print(f't={t}')
 
         dx,du,dlamda,dmu = split_y(t*dy)
-        print(f'dx norm {np.linalg.norm(dx)}')
-        print(f'du norm {np.linalg.norm(du)}')
-        print(f'dlamda norm {np.linalg.norm(dlamda)}')
-        print(f'dmu norm {np.linalg.norm(dmu)}')
+        print(f'dx norm {np.linalg.norm(dx):.4f}')
+        print(f'du norm {np.linalg.norm(du):.4f}')
+        print(f'dlamda norm {np.linalg.norm(dlamda):.4f}')
+        print(f'dmu norm {np.linalg.norm(dmu):.4f}')
 
         # dynamics residual
         x, u, lamda, mu = split_y(y0)
         dyn_res = self.getDynamicsResiduals(x,u)
-        print(f'old dyn residual {dyn_res}')
+        print(f'old dyn residual {dyn_res:.4f}')
         x, u, lamda, mu = split_y(y0+t*dy)
         dyn_res = self.getDynamicsResiduals(x,u)
-        print(f'new dyn residual {dyn_res}')
+        print(f'new dyn residual {dyn_res:.4f}')
 
-        #self.visualize(u_ref+du)
+        self.visualize(u_ref+du)
+        breakpoint()
         return split_y(y0+t*dy)
 
     def getDynamicsResiduals(self,x, u):
