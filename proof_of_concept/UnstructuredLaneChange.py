@@ -27,7 +27,7 @@ class UnstructuredLaneChange():
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 1
+        self.T = 4
         self.track_width = 5
         self.track_length = 20
         self.dt = 0.5
@@ -44,8 +44,8 @@ class UnstructuredLaneChange():
         self.bc_b = 0.5 #beta
 
         # initial state, stated in unit of car size
-        self.x0 = x0 = np.array([[0,-0.5,2.0,0.0],[0,0.6,2.0,0]])
-        self.target_y = [-1,1]
+        self.x0 = x0 = np.array([[0,-1.0,2.0,0.0],[0,1.0,2.0,0]])
+        self.target_y = [-0.2,0.3]
         self.frame_vec = []
 
 
@@ -125,9 +125,6 @@ class UnstructuredLaneChange():
     def solve(self,save_gif=False,visualize=False):
         T = self.T; N = self.N; n = self.n
         u_ref = np.zeros((T,N,self.m))
-        # FIXME
-        #u_ref[0,0,1] = -0.5*2/0.5**2
-        #u_ref[0,1,1] = 0.4*2/0.5**2
         # x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.rollout(self.x0,u_ref)
         lambda_ref = np.zeros((T,N,self.n))
@@ -140,39 +137,32 @@ class UnstructuredLaneChange():
         print(u_ref)
         print(x_ref)
         self.visualize(u_ref,visualize,save_gif)
-        breakpoint()
 
     def h(self, x_i, x_j):
         ''' car distance larger than 1.0 '''
         return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
 
     def L(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
-        # FIXME
         # feasibility for h>0
-        #h_plus = np.sum( [ mu_k[i,j.item()] * ( self.h(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ])
+        h_plus = np.sum( [ mu_k[i,j.item()] * ( self.h(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ])
         # barrier for h < 0
-        #h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
-        h_plus = 0
-        h_minus = 0
+        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
         dynamics = lamda_k[i].T @ ( self.f(x_k[i],u_k_i) - x_k1_i)
         return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
 
     def LLi(self,x,u,h_plus_mask,lamda,mu,i):
-        # FIXME
         T = self.T
         LLi_val = np.sum( [self.L(x[k-1],u[k,i], x[k,i],h_plus_mask[k-1], lamda[k], mu[k-1],i) for k in range(1,T)] )
         # x0 related terms
         LLi_val += self.J(self.x0[i],u[0,i],i) + lamda[0,i].T @ ( self.f(self.x0[i],u[0,i]) - x[0,i])
         # x_T related terms
-        LLi_val += self.J(x[T-1,i],np.zeros_like(u[0,i]),i) # TODO may not need this
-        #h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
-        #h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_plus_mask[T-1,i])[0] ])
-        h_minus = h_plus = 0
+        LLi_val += self.J(x[T-1,i],np.zeros_like(u[0,i]),i)
+        h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
+        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_plus_mask[T-1,i])[0] ])
         LLi_val += h_plus + h_minus
         return LLi_val
 
     def r(self, x, u, lamda, mu):
-        # FIXME
         T = self.T
         try:
             # h(i,i) should not be considered in either h_plus or h_minus
@@ -191,10 +181,10 @@ class UnstructuredLaneChange():
                 # dynamics for f(x0,u0) = x1
                 r = np.hstack([r,self.f(self.x0[i], u[0,i]) - x[0,i]])
                 for k in range(1,self.T):
-                    r = np.hstack([r,self.f(x[k-1,i], u[k,i]) - x[k,i]])
-                    #dual_h_plus = np.sum( [ ( self.h(x[k-1,i], x[k-1,j.item()]) )**2 for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
+                    r = np.hstack([r,self.f(x[k-1,i], u[k,i]) - x[k,i]]) # dual for dynamics
+                    r = np.hstack([r]+[ self.h(x[k-1,i], x[k-1,j.item()]) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
                 # h(x_T_i, x_T_j)
-                #r += np.sum( [ ( self.h(x[T-1,i], x[T-1,j.item()]) )**2 for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
+                r = np.hstack([r]+[ self.h(x[T-1,i], x[T-1,j.item()]) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
         except ValueError:
             breakpoint()
         return r
