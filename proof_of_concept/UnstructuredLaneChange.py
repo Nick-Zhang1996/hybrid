@@ -7,7 +7,7 @@ import os
 # example: unstructured lane change
 # this version use U as decision variable only
 class UnstructuredLaneChange():
-    def __init__(self,car_count=2):
+    def __init__(self,car_count=3):
         # u_i = [ax,ay] longitudinal, lateral acceleration
         # x_i = [x,y,vx,vy]
         # x+_i = f(x_i,u_i) = [x + vx*dt + 0.5*ax*dt*dt, y + vy*dt + 0.5*ay*dt*dt ]
@@ -44,8 +44,8 @@ class UnstructuredLaneChange():
         self.bc_b = 0.5 #beta
 
         # initial state, stated in unit of car size
-        self.x0 = x0 = np.array([[0,-1.0,2.0,0.0],[0,1.0,2.0,0]])
-        self.target_y = [-0.2,0.3]
+        self.x0 = x0 = np.array([[0,-0.9,2.0,0.5],[0,0.4,2.0,0.2],[0,2.0,2.0,-0.3]])
+        self.target_y = [-1.0,1.0,1.0]
         self.frame_vec = []
 
 
@@ -162,17 +162,9 @@ class UnstructuredLaneChange():
         LLi_val += h_plus + h_minus
         return LLi_val
 
-    def r(self, x, u, lamda, mu):
+    def r(self, x, u, lamda, mu, h_plus_mask):
         T = self.T
         try:
-            # h(i,i) should not be considered in either h_plus or h_minus
-            # we check it in h_minux
-            # for x 1-T
-            h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
-            for k in range(1,self.T+1):
-                for i in range(self.N):
-                    for j in range(i+1,self.N):
-                        h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = self.h(x[k-1,i],x[k-1,j]) >= 0
             r = np.zeros(0)
             for i in range(self.N):
                 dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
@@ -220,18 +212,28 @@ class UnstructuredLaneChange():
             breakpoint()
         return r_primal, r_dynamics, r_h
 
+    def getHplusMask(self,x):
+        # h(i,i) should not be considered in either h_plus or h_minus
+        # we check it in h_minux
+        # for x 1-T
+        h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
+        for k in range(1,self.T+1):
+            for i in range(self.N):
+                for j in range(i+1,self.N):
+                    h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = self.h(x[k-1,i],x[k-1,j]) >= 0
+        return h_plus_mask
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         N = self.N; T = self.T; n = self.n; m = self.m
         # r0 + Dr*dr = 0
-        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref)
+        h_plus_mask = self.getHplusMask(x_ref)
+        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
         print(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
         y0 = np.hstack([x_ref.flatten(), u_ref.flatten(), lambda_ref.flatten(), mu_ref.flatten()])
         # x,u,lamda,mu = split_y(y)
         split_y = lambda y: (y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
-        #r_y_fun = lambda y: self.r(y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
-        r_y_fun = lambda y: self.r(*split_y(y))
+        r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
         Dr = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
         # Newton direction
