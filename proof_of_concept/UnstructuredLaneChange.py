@@ -44,7 +44,7 @@ class UnstructuredLaneChange():
         self.bc_b = 0.5 #beta
 
         # initial state, stated in unit of car size
-        self.x0 = x0 = np.array([[0,-0.9,2.0,0.5],[0,0.4,2.0,0.2],[0,2.0,2.0,-0.3]])
+        self.x0 = x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
         self.target_y = [-1.0,1.0,1.0]
         self.frame_vec = []
 
@@ -224,6 +224,7 @@ class UnstructuredLaneChange():
         return h_plus_mask
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
+        t0 = time()
         N = self.N; T = self.T; n = self.n; m = self.m
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
@@ -234,8 +235,11 @@ class UnstructuredLaneChange():
         # x,u,lamda,mu = split_y(y)
         split_y = lambda y: (y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
         r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
+        print(f't: before Jacobian {time()-t0}')
         Dr = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
+        print(f't: before lsqsq {time()-t0}')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
+        print(f't: after lsqsq {time()-t0}')
         # Newton direction
         # line search
 
@@ -253,6 +257,7 @@ class UnstructuredLaneChange():
 
         print(f't={t}')
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
+        '''
         r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0))
         print(f'r_0 r_primal={r_primal}, r_dynamics={r_dynamics}, r_h={r_h} ')
         r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0+t*dy))
@@ -265,6 +270,7 @@ class UnstructuredLaneChange():
         print(f'du norm {np.linalg.norm(du):.4f}')
         print(f'dlamda norm {np.linalg.norm(dlamda):.4f}')
         print(f'dmu norm {np.linalg.norm(dmu):.4f}')
+        '''
 
         # dynamics residual
         x, u, lamda, mu = split_y(y0)
