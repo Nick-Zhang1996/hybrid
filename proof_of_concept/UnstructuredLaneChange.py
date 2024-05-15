@@ -213,20 +213,22 @@ class UnstructuredLaneChange():
         u.shape (m) u = [ax, ay]
         i: agent id
         '''
-        return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        #return (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
+        return (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
 
     def dJ_dx(self,x,u,i):
-        val =  2* (x-self.J_x_ref(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
+        return  2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
     def dJ_du(self,x,u,i):
-        val =  2* u.T @ self.J_R
+        return  2* u.T @ self.J_R
 
     def f(self,x,u):
+        '''
         return np.array([x[0] + x[2]*self.dt + 0.5*self.dt*self.dt*u[0]/10,
         x[1] + x[3]*self.dt + 0.5*self.dt*self.dt*u[1]/10,
         x[2] + self.dt*u[0]/10,
         x[3] + self.dt*u[1]/10])
-        #return self.A @ x + self.B @ u
+        '''
+        return self.A @ x + self.B @ u
     def df_dx(self,x,u):
         return self.A
     def df_du(self,x,u):
@@ -235,9 +237,9 @@ class UnstructuredLaneChange():
 
     def h(self, x_i, x_j):
         ''' car distance larger than 1.0 '''
-        #return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
-        self.h_Qh = np.diag([-1,-1,0,0])
-        return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
+        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
+        #self.h_Qh = np.diag([-1,-1,0,0])
+        #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
     def dh_dxi(self,x_i,x_j):
         return 2*(x_i-x_j).T @ self.h_Qh
     def dh_dxj(self,x_i,x_j):
@@ -252,7 +254,7 @@ class UnstructuredLaneChange():
         return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # NOTE the behavior of barrier function near boundary may need tuning
-        return self.dJ_dx(x_k[i],u_k_i) + lamda_k[i].T @ self.df_dx(x_k,u_k_i) \
+        return self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i) \
             + np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ]) \
             -1/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) if j != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
 
@@ -283,8 +285,10 @@ class UnstructuredLaneChange():
         submtx_i_k = lambda i,k:der[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n]
         # dLLi_dxi
         for k in range(1,T):
-            submtx_i_k[i,k] = self.dLLi_dx_ik(x[k-1,i],u[k,i],x[k,i],h_plus_mask,lamda[k],mu[k-1],i) -lamda[k-1,i].T
-        submtx_i_k[i,T] = -lamda[T-1,i].T + self.dJ_dx(x[T-1,i],np.zeros(m),i) \
+            sub = submtx_i_k(i,k)
+            sub[:] = self.dL_dx_ik(x[k-1],u[k,i],x[k,i],h_plus_mask,lamda[k],mu[k-1],i) -lamda[k-1,i].T
+        sub = submtx_i_k(i,T)
+        sub[:] = -lamda[T-1,i].T + self.dJ_dx(x[T-1,i],np.zeros(m),i) \
             + np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ]) \
             -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10) if j != i else 0 for j in np.nonzero(~h_plus_mask[T-1,i])[0] ])
         # TODO optimize
@@ -293,7 +297,8 @@ class UnstructuredLaneChange():
             if i==j:
                 continue
             for k in range(1,T):
-                submtx_i_k[j,k] =  mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
+                sub = submtx_i_k(j,k) 
+                sub[:] =  mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
                     -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)
         return der.reshape(1,-1)
 
@@ -307,7 +312,15 @@ class UnstructuredLaneChange():
         try:
             r = np.zeros(0)
             for i in range(self.N):
+                t0 = time()
                 dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
+                dt = time()-t0
+                t0 = time()
+                dLL_dx_alt = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
+                dt2 = time()-t0
+                print(dt,dt2)
+                print(f'err: {np.linalg.norm(dLL_dx-dLL_dx_alt)/np.linalg.norm(dLL_dx)}')
+                breakpoint()
                 dLL_du = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                 r = np.hstack([r,dLL_dx.flatten(), dLL_du.flatten()])
                 # dynamics for f(x0,u0) = x1
@@ -317,7 +330,8 @@ class UnstructuredLaneChange():
                     r = np.hstack([r]+[ self.h(x[k-1,i], x[k-1,j.item()]) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
                 # h(x_T_i, x_T_j)
                 r = np.hstack([r]+[ self.h(x[T-1,i], x[T-1,j.item()]) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
-        except ValueError:
+        except ValueError as e:
+            raise e
             breakpoint()
         return r
 
@@ -339,10 +353,6 @@ class UnstructuredLaneChange():
             for i in range(self.N):
                 #print(f'agent {i}')
                 dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
-                # TODO
-                #dLL_dx_alt = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
-                #print(f'err: {np.linalg.norm(dLL_dx-dLL_dx_alt)/np.linalg.norm(dLL_dx)}')
-                #breakpoint()
                 dLL_du = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                 #print(f'DLL_dx {dLL_dx}')
                 #print(f'DLL_du {dLL_du}')
