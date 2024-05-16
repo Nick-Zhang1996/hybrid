@@ -60,6 +60,9 @@ class UnstructuredLaneChange():
         self.A[1,3] = dt
         self.B = np.array([[0.5*dt**2,0],[0,0.5*dt**2],[dt,0],[0,dt]])
 
+        # collision definition
+        self.h_Qh = np.diag([-1,-1,0,0])
+
     def solve(self,save_gif=False,visualize=False):
         T = self.T; N = self.N; n = self.n
         u_ref = np.zeros((T,N,self.m))
@@ -68,7 +71,7 @@ class UnstructuredLaneChange():
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T,N,N))
-        self.visualize(u_ref)
+        #self.visualize(u_ref)
         for i in range(10):
             x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
             print(f'after iter {i}')
@@ -237,9 +240,11 @@ class UnstructuredLaneChange():
 
     def h(self, x_i, x_j):
         ''' car distance larger than 1.0 '''
-        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
-        #self.h_Qh = np.diag([-1,-1,0,0])
         #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
+        # below is faster
+        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
+
+    # TODO rewrite this to be faster
     def dh_dxi(self,x_i,x_j):
         return 2*(x_i-x_j).T @ self.h_Qh
     def dh_dxj(self,x_i,x_j):
@@ -247,35 +252,54 @@ class UnstructuredLaneChange():
 
     def L(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # feasibility for h>0
-        h_plus = np.sum( [ mu_k[i,j.item()] * ( self.h(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ])
+        h_plus = np.sum( [ mu_k[i,j.item()] * ( self.h(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ],axis=0)
         # barrier for h < 0
-        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
+        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
         dynamics = lamda_k[i].T @ ( self.f(x_k[i],u_k_i) - x_k1_i)
         return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # NOTE the behavior of barrier function near boundary may need tuning
-        return self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i) \
-            + np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ]) \
-            -1/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) if j != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
+        # TODO remove debug code
+        # dJ_dx -- passed
+        num = jacobianNumerical(lambda xx:self.J(xx,u_k_i,i), x_k[i])
+        ana = self.dJ_dx(x_k[i], u_k_i, i)
+        assert (np.linalg.norm(num-ana) < 1e-4)
+        # df_dx -- inconclusive
+        num = jacobianNumerical(lambda uu:self.J(x_k[i],uu,i), u_k_i)
+        ana = self.dJ_du(x_k[i], u_k_i, i)
+        assert (np.linalg.norm(num-ana) < 1e-4)
+        # dh_dxi -- inconclusive
+        for j in np.nonzero(h_k_plus_mask[i])[0]:
+            if i == j:
+                continue
+            ana = self.dh_dxi(x_k[i], x_k[j])
+            num = jacobianNumerical(lambda xx:self.h(xx,x_k[j]),x_k[i])
+            assert (np.linalg.norm(num-ana) < 1e-4)
+
+        val =  self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
+        val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
+        val += -1/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        return val
 
     def dL_dx_ik1(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         ''' dL/dx_i_k+1 '''
         return -lamda_k[i].T
     def dL_dx_jk(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i,j):
+        assert (i!=j)
         # TODO may need cautious check
         return  mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
-            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10)
+            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j])
 
 
     def LLi(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T
-        LLi_val = np.sum( [self.L(x[k-1],u[k,i], x[k,i],h_plus_mask[k-1], lamda[k], mu[k-1],i) for k in range(1,T)] )
+        LLi_val = np.sum( [self.L(x[k-1],u[k,i], x[k,i],h_plus_mask[k-1], lamda[k], mu[k-1],i) for k in range(1,T)] ,axis=0)
         # x0 related terms
         LLi_val += self.J(self.x0[i],u[0,i],i) + lamda[0,i].T @ ( self.f(self.x0[i],u[0,i]) - x[0,i])
         # x_T related terms
         LLi_val += self.J(x[T-1,i],np.zeros_like(u[0,i]),i)
-        h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
-        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) if j != i else 0 for j in np.nonzero(~h_plus_mask[T-1,i])[0] ])
+        h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0)
+        h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
         LLi_val += h_plus + h_minus
         return LLi_val
     def dLLi_dx(self,x,u,h_plus_mask,lamda,mu,i):
@@ -286,20 +310,27 @@ class UnstructuredLaneChange():
         # dLLi_dxi
         for k in range(1,T):
             sub = submtx_i_k(i,k)
-            sub[:] = self.dL_dx_ik(x[k-1],u[k,i],x[k,i],h_plus_mask,lamda[k],mu[k-1],i) -lamda[k-1,i].T
+            # TODO DEBUG
+            num = jacobianNumerical(lambda xx:self.L(xx.reshape(N,n), u[k,i], x[k,i], h_plus_mask[k-1],lamda[k], mu[k-1],i),x[k-1].flatten())
+            num = num[0,i*n:(i+1)*n] - lamda[k-1,i].T
+            sub[:] = self.dL_dx_ik(x[k-1],u[k,i],x[k,i],h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1,i].T
+            assert( np.linalg.norm(num-sub) < 1e-4)
+
+        # dLLi_dxi_T
         sub = submtx_i_k(i,T)
         sub[:] = -lamda[T-1,i].T + self.dJ_dx(x[T-1,i],np.zeros(m),i) \
-            + np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ]) \
-            -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10) if j != i else 0 for j in np.nonzero(~h_plus_mask[T-1,i])[0] ])
+            + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
+            -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
+
         # TODO optimize
         # dLLi_dxj
         for j in range(0,N):
             if i==j:
                 continue
-            for k in range(1,T):
-                sub = submtx_i_k(j,k) 
+            for k in range(1,T+1):
+                sub = submtx_i_k(j,k)
                 sub[:] =  mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
-                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)
+                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j])
         return der.reshape(1,-1)
 
 
@@ -312,6 +343,7 @@ class UnstructuredLaneChange():
         try:
             r = np.zeros(0)
             for i in range(self.N):
+                # TODO DEBUG
                 t0 = time()
                 dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
                 dt = time()-t0
@@ -320,6 +352,7 @@ class UnstructuredLaneChange():
                 dt2 = time()-t0
                 print(dt,dt2)
                 print(f'err: {np.linalg.norm(dLL_dx-dLL_dx_alt)/np.linalg.norm(dLL_dx)}')
+                print(f'{np.abs(dLL_dx-dLL_dx_alt)<1e-4}')
                 breakpoint()
                 dLL_du = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                 r = np.hstack([r,dLL_dx.flatten(), dLL_du.flatten()])
@@ -338,6 +371,7 @@ class UnstructuredLaneChange():
 
 
 
+    # TODO not vetted
     def debug_r_by_category(self,x,u,lamda,mu):
         T = self.T
         try:
