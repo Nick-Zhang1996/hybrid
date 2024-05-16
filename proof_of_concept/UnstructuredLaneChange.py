@@ -83,7 +83,6 @@ class UnstructuredLaneChange():
         self.visualize(u_ref,visualize,save_gif)
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
-        t0 = time()
         N = self.N; T = self.T; n = self.n; m = self.m
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
@@ -94,11 +93,19 @@ class UnstructuredLaneChange():
         # x,u,lamda,mu = split_y(y)
         split_y = lambda y: (y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
         r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
-        print(f't: before Jacobian {time()-t0}')
+
+        t0 = time()
         Dr = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
-        print(f't: before lsqsq {time()-t0}')
+        print(f't: Dr numerical {time()-t0}')
+
+        t0 = time()
+        Dr_alt = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        print(f't: Dr analytical {time()-t0}')
+        print(np.linalg.norm(Dr-Dr_alt))
+        breakpoint()
+
+
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
-        print(f't: after lsqsq {time()-t0}')
         # Newton direction
         # line search
 
@@ -116,22 +123,10 @@ class UnstructuredLaneChange():
 
         print(f't={t}')
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
-        '''
-        r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0))
-        print(f'r_0 r_primal={r_primal}, r_dynamics={r_dynamics}, r_h={r_h} ')
-        r_primal, r_dynamics, r_h = self.debug_r_by_category(*split_y(y0+t*dy))
-        print(f'r_t r_primal={r_primal}, r_dynamics={r_dynamics}, r_h={r_h} ')
-
-        print(f't={t}')
-
-        dx,du,dlamda,dmu = split_y(t*dy)
-        print(f'dx norm {np.linalg.norm(dx):.4f}')
-        print(f'du norm {np.linalg.norm(du):.4f}')
-        print(f'dlamda norm {np.linalg.norm(dlamda):.4f}')
-        print(f'dmu norm {np.linalg.norm(dmu):.4f}')
-        '''
 
         # dynamics residual
+        # TODO check this
+        '''
         x, u, lamda, mu = split_y(y0)
         dyn_res = self.getDynamicsResiduals(x,u)
         print(f'old dyn residual {dyn_res:.4f}')
@@ -141,6 +136,7 @@ class UnstructuredLaneChange():
         #self.visualize(u_ref+du)
         print(f'x_ref {x_ref}')
         print(f'u_ref {u_ref}')
+        '''
         return split_y(y0+t*dy)
 
     def getDynamicsResiduals(self,x, u):
@@ -292,7 +288,6 @@ class UnstructuredLaneChange():
         assert (i!=j)
         return  mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j])
-    # TODO check
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         return self.dJ_du(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
 
@@ -352,6 +347,7 @@ class UnstructuredLaneChange():
         # dLLi_dui_k
         for k in range(1,T):
             sub = submtx_i_k(i,k)
+            # dL_du
             sub[:] = self.dJ_du(x[k-1,i],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i])
         return der
 
@@ -399,49 +395,95 @@ class UnstructuredLaneChange():
             raise e
             breakpoint()
         return r
+
+    # TODO new functions
+    def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
+        T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
+        return jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
+    def dLLi_dudx(self,x,u,h_plus_mask,lamda,mu,i):
+        T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n; dim_u = T*N*m
+        return jacobianNumerical(lambda xx:self.dLLi_du(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_u)
+    def dF_dx(self,x,u,i,k):
+        ''' F(x,u) = f(x_k_i,u_k_i)-x_k+1_i, find dF_dx, note x here is of dim(T*N*n) '''
+        T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
+        dFdx = np.zeros((n,dim_x))
+        dFdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i])
+        dFdx[:,k*N*n+i*n:k*N*n+(i+1)*n] = -np.eye(n)
+        return dFdx
+
+    def dF0_dx(self,x,u,i):
+        ''' F0(x,u) = f(x_0_i,u_0_i)-x_1_i, find dF_dx note x here is of dim(T*N*n)
+            A specialization for dF_dx when k=0, since we need x0
+        '''
+        T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
+        dFdx = np.zeros((n,dim_x))
+        dFdx[:,i*n:(i+1)*n] = -np.eye(n)
+        return dFdx
+
+    def dh_dx(self,x,k,i,j):
+        ''' find d h(x_i,x_j)/ d x note x here is of dim(T*N*n) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = T*N*n
+        dhdx = np.zeros((1,dim_x))
+        dhdx[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.dh_dxi(x[k-1,i],x[k-1,j])
+        dhdx[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n] = self.dh_dxj(x[k-1,i],x[k-1,j])
+        return dhdx
+
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
-        return
+        ''' return: dim(r)*dim(x) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        # TODO move up
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        #TODO change to fill-in style
+
+        drdx = np.zeros((0,dim_x))
+        for i in range(self.N):
+            dLL_dxdx = self.dLLi_dxdx(x,u,h_plus_mask,lamda,mu,i)
+            dLL_dudx = self.dLLi_dudx(x,u,h_plus_mask,lamda,mu,i)
+            dF0dx = self.dF0_dx(x,u,i)
+            # dynamics for f(x0,u0) = x1
+            drdx = np.vstack([drdx,dLL_dxdx, dLL_dudx, dF0dx])
+            for k in range(1,self.T):
+                dFdx = self.dF_dx(x,u,i,k)
+                drdx = np.vstack([drdx,dFdx]+[ self.dh_dx(x,k,i,j.item()) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
+            # h(x_T_i, x_T_j)
+            drdx = np.vstack([drdx]+[ self.dh_dx(x,T,i,j.item()) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
+
+        drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
+        print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+        breakpoint()
+        return drdx
+
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
-        return
+        ''' return: dim(r)*dim(u) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        drdu = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
+        return drdu
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
-        return
+        ''' return: dim(r)*dim(lamda) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        drdlamda = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
+        return drdlamda
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
-        return
+        ''' return: dim(r)*dim(mu) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        drdmu = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
+        return drdmu
 
-
-
-
-    # TODO not vetted
-    def debug_r_by_category(self,x,u,lamda,mu):
-        T = self.T
-        try:
-            # h(i,i) should not be considered in either h_plus or h_minus
-            # we check it in h_minux
-            # for x 1-T
-            h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
-            for k in range(1,self.T+1):
-                for i in range(self.N):
-                    for j in range(i+1,self.N):
-                        h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = self.h(x[k-1,i],x[k-1,j]) >= 0
-            r_primal = 0; r_dynamics = 0; r_h=0
-            for i in range(self.N):
-                #print(f'agent {i}')
-                dLL_dx = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
-                dLL_du = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
-                #print(f'DLL_dx {dLL_dx}')
-                #print(f'DLL_du {dLL_du}')
-                val = self.LLi(x,u,h_plus_mask,lamda,mu,i)
-                #print(f'LLi {val}')
-
-                r_primal += dLL_dx @ dLL_dx.T + dLL_du @ dLL_du.T
-                # dynamics for f(x0,u0) = x1
-                r_dynamics += np.sum((self.f(self.x0[i], u[0,i]) - x[0,i])**2)
-                for k in range(1,self.T):
-                    dual_fx = np.sum((self.f(x[k-1,i], u[k,i]) - x[k,i])**2)
-                    r_dynamics += dual_fx
-        except ValueError:
-            breakpoint()
-        return r_primal, r_dynamics, r_h
+    def dr_dy(self, x, u, lamda, mu, h_plus_mask):
+        drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
+        drdu = self.dr_du(x, u, lamda, mu, h_plus_mask)
+        drdlamda = self.dr_dlamda(x, u, lamda, mu, h_plus_mask)
+        drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
+        Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
+        return Dr
 
     def getHplusMask(self,x):
         # h(i,i) should not be considered in either h_plus or h_minus
