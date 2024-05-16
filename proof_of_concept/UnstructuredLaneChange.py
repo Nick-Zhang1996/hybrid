@@ -94,15 +94,18 @@ class UnstructuredLaneChange():
         split_y = lambda y: (y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
         r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
 
-        t0 = time()
-        Dr = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
-        print(f't: Dr numerical {time()-t0}')
 
         t0 = time()
-        Dr_alt = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        Dr = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         print(f't: Dr analytical {time()-t0}')
-        print(np.linalg.norm(Dr-Dr_alt))
-        breakpoint()
+
+        if (DEBUG):
+            t0 = time()
+            Dr_alt = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
+            print(f't: Dr numerical {time()-t0}')
+            print(np.linalg.norm(Dr-Dr_alt))
+            assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
+            breakpoint()
 
 
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
@@ -450,9 +453,11 @@ class UnstructuredLaneChange():
             # h(x_T_i, x_T_j)
             drdx = np.vstack([drdx]+[ self.dh_dx(x,T,i,j.item()) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
 
-        drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
-        print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
-        breakpoint()
+        if (DEBUG):
+            drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
+            print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            assert(np.linalg.norm(drdx-drdx_num)<1e-4)
+            breakpoint()
         return drdx
 
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
