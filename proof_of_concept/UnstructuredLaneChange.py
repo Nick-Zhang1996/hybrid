@@ -5,7 +5,10 @@ from time import time
 from PIL import Image
 import os
 
+from TimeUtil import TimeUtil
+
 DEBUG = False
+t = TimeUtil(True)
 
 # example: unstructured lane change
 # this version use U as decision variable only
@@ -83,6 +86,9 @@ class UnstructuredLaneChange():
         self.visualize(u_ref,visualize,save_gif)
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
+        global t
+        t.s()
+        t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
@@ -95,6 +101,7 @@ class UnstructuredLaneChange():
         r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
 
 
+        t.e('setup')
         t0 = time()
         Dr = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         print(f't: Dr analytical {time()-t0}')
@@ -105,26 +112,28 @@ class UnstructuredLaneChange():
             print(f't: Dr numerical {time()-t0}')
             print(np.linalg.norm(Dr-Dr_alt))
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
-            breakpoint()
 
 
+        t.s('lsqsq')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
+        t.e('lsqsq')
         # Newton direction
         # line search
 
+        t.s('line search')
         # backtracking line search
-        t = 1.0 # step size
+        step = 1.0 # step size
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
         for i in range(5):
-            r_t = r_y_fun(y0+t*dy)
+            r_t = r_y_fun(y0+step*dy)
             r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1-self.bc_a*t)*r0_norm):
-                t *= self.bc_b
+            if (r_t_norm > (1-self.bc_a*step)*r0_norm):
+                step *= self.bc_b
             else:
                 break
+        t.e('line search')
 
-        print(f't={t}')
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
         # dynamics residual
@@ -133,14 +142,15 @@ class UnstructuredLaneChange():
         x, u, lamda, mu = split_y(y0)
         dyn_res = self.getDynamicsResiduals(x,u)
         print(f'old dyn residual {dyn_res:.4f}')
-        x, u, lamda, mu = split_y(y0+t*dy)
+        x, u, lamda, mu = split_y(y0+step*dy)
         dyn_res = self.getDynamicsResiduals(x,u)
         print(f'new dyn residual {dyn_res:.4f}')
         #self.visualize(u_ref+du)
         print(f'x_ref {x_ref}')
         print(f'u_ref {u_ref}')
         '''
-        return split_y(y0+t*dy)
+        t.e()
+        return split_y(y0+step*dy)
 
     def getDynamicsResiduals(self,x, u):
         r = 0
@@ -457,7 +467,6 @@ class UnstructuredLaneChange():
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
             print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
-            breakpoint()
         return drdx
 
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
@@ -474,19 +483,60 @@ class UnstructuredLaneChange():
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
         drdlamda = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
         return drdlamda
+
+    def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
+        ''' return: dim: dim_x*dim_mu '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_mu = T*N*N
+        dLL_dx_dmu = np.zeros((dim_x,dim_mu))
+        for k in range(1,T+1):
+            for i in range(N):
+                for j in np.nonzero(h_plus_mask[k-1,i])[0]:
+                    dLLi_dxki_duijk = self.dh_dxi(x[k-1,i],x[k-1,j])
+                    dLLi_dxkj_duijk = self.dh_dxj(x[k-1,i],x[k-1,j])
+                    dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_duijk
+                    dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_duijk
+        return dLL_dx_dmu
+
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(mu) '''
         T = self.T; N = self.N; n = self.n; m = self.m
-        dim_x = N*T*n; dim_u = N*T*m
+        dim_x = T*N*n; dim_u = T*N*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
-        drdmu = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
-        return drdmu
+        dim_mu = T*N*N
+
+        dr_dmu = np.zeros((dim_r,dim_mu))
+        index = 0
+        for i in range(self.N):
+            # dmu i,j,k
+            dLL_dx_dmu = self.dLLi_dx_dmu(x,u,h_plus_mask,lamda,mu,i)
+            dr_dmu[index:index+dim_x,:] = dLL_dx_dmu
+            if (DEBUG):
+                dLL_dx_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dx(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
+                assert(np.linalg.norm(dLL_dx_dmu-dLL_dx_dmu_num)<1e-4)
+            index += dim_u
+            index += n*T + np.sum(h_plus_mask[:,i])
+
+        if (DEBUG):
+            dr_dmu_num = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
+            print(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
+            assert(np.linalg.norm(dr_dmu-dr_dmu_num)<1e-4)
+        return dr_dmu
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
+        t.s('drdx')
         drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
+        t.e('drdx')
+        t.s('drdu')
         drdu = self.dr_du(x, u, lamda, mu, h_plus_mask)
+        t.e('drdu')
+        t.s('drdlamda')
         drdlamda = self.dr_dlamda(x, u, lamda, mu, h_plus_mask)
+        t.e('drdlamda')
+        t.s('drdmu')
         drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
+        t.e('drdmu')
         Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
         return Dr
 
@@ -506,6 +556,7 @@ if __name__=="__main__":
     main = UnstructuredLaneChange()
     main.solve(save_gif=True,visualize=True)
     main.final()
+    t.summary()
     #U = np.zeros((main.T,main.N,main.m))
     #U[:,0,0] = 1.0
     #U[:,1,1] = 1.0
