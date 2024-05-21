@@ -235,6 +235,8 @@ class UnstructuredLaneChange():
         return  2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
     def dJ_du(self,x,u,i):
         return  2* u.T @ self.J_R
+    def dJ_dxdx(self,x,u,i):
+        return  2*self.J_Qr + 2*self.J_Q
 
     def f(self,x,u):
         '''
@@ -261,6 +263,14 @@ class UnstructuredLaneChange():
         return 2*(x_i-x_j).T @ self.h_Qh
     def dh_dxj(self,x_i,x_j):
         return 2*(x_j-x_i).T @ self.h_Qh
+    def dh_dxi_dxi(self,x_i,x_j):
+        return 2*self.h_Qh.T
+    def dh_dxj_dxi(self,x_i,x_j):
+        return -2* self.h_Qh.T
+    def dh_dxi_dxj(self,x_i,x_j):
+        return -2*self.h_Qh.T
+    def dh_dxj_dxj(self,x_i,x_j):
+        return 2*self.h_Qh.T
 
     def L(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # feasibility for h>0
@@ -316,6 +326,7 @@ class UnstructuredLaneChange():
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
         LLi_val += h_plus + h_minus
         return LLi_val
+
     def dLLi_dx(self,x,u,h_plus_mask,lamda,mu,i):
         ''' return: 1*dim(x) = 1*(T*N*n) , Note index of x starts with 1'''
         T = self.T; N = self.N; n = self.n; m = self.m
@@ -409,10 +420,53 @@ class UnstructuredLaneChange():
             breakpoint()
         return r
 
+    def dBh_dxi(self,x_i,x_j):
+        # B(h) = -rho^-1 log(-h)
+        #dB(h)/dx = -rho^-1 h^-1 dhdx
+        return -1/(self.rho*h(x_i, x_j))* self.dh_dxi
+    def dBh_dxj(self,x_i,x_j):
+        # B(h) = -rho^-1 log(-h)
+        #dB(h)/dx = -rho^-1 h^-1 dhdx
+        return -1/(self.rho*h(x_i, x_j))* self.dh_dxj
+    def dBh_dxi_dxi(self,x_i,x_j):
+        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxi(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxi_dxi(x_i,x_j))
+    def dBh_dxi_dxj(self,x_i,x_j):
+        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxi(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxj_dxi(x_i,x_j))
+    def dBh_dxj_dxj(self,x_i,x_j):
+        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxj(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxj_dxj(x_i,x_j))
+
+
     # TODO new functions
+    # TODO wip
     def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
-        return jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
+        dLL_dxdx = np.zeros((dim_x,dim_x))
+        submtx = lambda k,i,j: dLL_dxdx[k*N*n+i*n:k*N*n+(i+1)*n,k*N*n+j*n:k*N*n+(j+1)*n]
+        for k in range(1,T+1):
+            #dLLi_dxki_dxki
+            submtx[k,i,i] = self.dJ_dxdx(x[k-1,i],u[k,i]) \
+                + np.sum( [ mu[k-1,i,j.item()] * ( self.dh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) ) for j in np.nonzero(h_plus_mask[k-1,i])[0] ],axis=0) \
+                + np.sum([self.dBh_dxi_dxi(x[k-1,i], x[k-1,j.item()])) * (j.item() != i) for j in np.nonzero(~h_plus_mask[k-1,i])[0] ],axis=0)
+            for j in range(N):
+                if i==j:
+                    continue
+                if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
+                    #dLLi_dxki_dxkj
+                    submtx[k,i,j] = mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    #dLLi_dxkj_dxkj
+                    submtx[k,j,j] = mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+                else:
+                    #dLLi_dxki_dxkj
+                    submtx[k,i,j] = self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    #dLLi_dxkj_dxkj
+                    submtx[k,j,j] = self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+
+        if (not DEBUG):
+            dLL_dxdx_num = jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
+            print(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
+            assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
+        return dLL_dxdx
+
     def dLLi_dudx(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n; dim_u = T*N*m
         return jacobianNumerical(lambda xx:self.dLLi_du(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_u)
@@ -472,17 +526,39 @@ class UnstructuredLaneChange():
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(u) '''
         T = self.T; N = self.N; n = self.n; m = self.m
-        dim_x = N*T*n; dim_u = N*T*m
+        dim_x = T*N*n; dim_u = T*N*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
         drdu = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
         return drdu
+
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(lamda) '''
         T = self.T; N = self.N; n = self.n; m = self.m
-        dim_x = N*T*n; dim_u = N*T*m
+        dim_x = T*N*n; dim_u = T*N*m ; dim_lamda = T*N*n
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
-        drdlamda = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
-        return drdlamda
+        dr_dlamda = np.zeros((dim_r,dim_lamda))
+        index = 0
+        for i in range(N):
+            for k in range(1,T):
+                # dLLi_dxki_dlamda_ki
+                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i]).T
+                # dLLi_dxki_dlamda_k-1,i
+                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+            k = T
+            dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+
+            index += dim_x # skip dLL_dx, index now points at dLLi_du
+            for k in range(0,T):
+                dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(x[k-1,i],u[k,i]).T
+
+            index += dim_u + n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
+
+        if (DEBUG):
+            dr_dlamda_num = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
+            print(f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
+            diff = dr_dlamda_num - dr_dlamda
+            assert(np.linalg.norm(dr_dlamda-dr_dlamda_num)<1e-4)
+        return dr_dlamda
 
     def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
         ''' return: dim: dim_x*dim_mu '''
@@ -499,6 +575,7 @@ class UnstructuredLaneChange():
                     dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_duijk
         return dLL_dx_dmu
 
+    # TODO this is untested
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(mu) '''
         T = self.T; N = self.N; n = self.n; m = self.m
@@ -515,8 +592,7 @@ class UnstructuredLaneChange():
             if (DEBUG):
                 dLL_dx_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dx(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
                 assert(np.linalg.norm(dLL_dx_dmu-dLL_dx_dmu_num)<1e-4)
-            index += dim_u
-            index += n*T + np.sum(h_plus_mask[:,i])
+            index += dim_x + dim_u + n*T + np.sum(h_plus_mask[:,i])
 
         if (DEBUG):
             dr_dmu_num = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
