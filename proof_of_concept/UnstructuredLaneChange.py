@@ -420,56 +420,126 @@ class UnstructuredLaneChange():
             breakpoint()
         return r
 
+    def Bh(self,x_i,x_j):
+        return -1/self.rho * np.log(-min(self.h(x_i, x_j),-1e-100))
+
     def dBh_dxi(self,x_i,x_j):
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
-        return -1/(self.rho*h(x_i, x_j))* self.dh_dxi
+        val = -1/(self.rho*self.h(x_i, x_j))* self.dh_dxi(x_i,x_j)
+        if (DEBUG):
+            val_num = jacobianNumerical(lambda xx:self.Bh(xx.reshape(x_i.shape),x_j), x_i.flatten())
+            assert(np.linalg.norm(val-val_num)<1e-4)
+        return val
+
     def dBh_dxj(self,x_i,x_j):
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
-        return -1/(self.rho*h(x_i, x_j))* self.dh_dxj
+        val = -1/(self.rho*self.h(x_i, x_j))* self.dh_dxj(x_i,x_j)
+        if (DEBUG):
+            val_num = jacobianNumerical(lambda xx:self.Bh(x_i,xx.reshape(x_j.shape)), x_j.flatten())
+            assert(np.linalg.norm(val-val_num)<1e-4)
+        return val
+
     def dBh_dxi_dxi(self,x_i,x_j):
-        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxi(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxi_dxi(x_i,x_j))
+        h = self.h(x_i,x_j)
+        dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
+        val = 1/(self.rho * h) * (-self.dh_dxi_dxi(x_i,x_j) + 1/h * dhdxi.T @ dhdxi )
+        if (DEBUG):
+            val_num = jacobianNumerical(lambda xx:self.dBh_dxi(xx.reshape(x_i.shape),x_j), x_i.flatten(),dim=self.n)
+            assert(np.linalg.norm(val-val_num)<1e-4)
+        return val
+
     def dBh_dxi_dxj(self,x_i,x_j):
-        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxi(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxj_dxi(x_i,x_j))
+        h = self.h(x_i,x_j)
+        dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
+        dhdxj = self.dh_dxj(x_i,x_j).reshape(1,self.n)
+        val = 1/(self.rho * h) * (-self.dh_dxi_dxj(x_i,x_j) + 1/h * dhdxi.T @ dhdxj )
+        if (DEBUG):
+            val_num = jacobianNumerical(lambda xx:self.dBh_dxi(x_i, xx.reshape(x_j.shape)), x_j.flatten(),dim=self.n)
+            assert(np.linalg.norm(val-val_num)<1e-4)
+        return val
+
     def dBh_dxj_dxj(self,x_i,x_j):
-        return -1/self.rho * (-self.h(x_i,x_j)**(-2) * self.dBh_dxj(x_i,x_j) + 1/self.h(x_i,x_j)*self.dh_dxj_dxj(x_i,x_j))
+        h = self.h(x_i,x_j)
+        dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
+        dhdxj = self.dh_dxj(x_i,x_j).reshape(1,self.n)
+        val = 1/(self.rho * h) * (-self.dh_dxj_dxj(x_i,x_j) + 1/h * dhdxj.T @ dhdxj )
+        if (DEBUG):
+            val_num = jacobianNumerical(lambda xx:self.dBh_dxj(x_i, xx.reshape(x_j.shape)), x_j.flatten(),dim=self.n)
+            assert(np.linalg.norm(val-val_num)<1e-4)
+        return val
 
 
-    # TODO new functions
-    # TODO wip
     def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
+
+
         dLL_dxdx = np.zeros((dim_x,dim_x))
-        submtx = lambda k,i,j: dLL_dxdx[k*N*n+i*n:k*N*n+(i+1)*n,k*N*n+j*n:k*N*n+(j+1)*n]
-        for k in range(1,T+1):
+        submtx = lambda k,i,j: dLL_dxdx[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n]
+        submtx_num = lambda k,i,j: dLL_dxdx_num[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n]
+        for k in range(1,T):
             #dLLi_dxki_dxki
-            submtx[k,i,i] = self.dJ_dxdx(x[k-1,i],u[k,i]) \
-                + np.sum( [ mu[k-1,i,j.item()] * ( self.dh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) ) for j in np.nonzero(h_plus_mask[k-1,i])[0] ],axis=0) \
-                + np.sum([self.dBh_dxi_dxi(x[k-1,i], x[k-1,j.item()])) * (j.item() != i) for j in np.nonzero(~h_plus_mask[k-1,i])[0] ],axis=0)
+            mtx = submtx(k,i,i)
+            val1 = self.dJ_dxdx(x[k-1,i],u[k,i],i)
+            val2 = np.sum( [ mu[k-1,i,j.item()] * ( self.dh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) ) for j in np.nonzero(h_plus_mask[k-1,i])[0] ],axis=0)
+            val3 = np.sum([self.dBh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[k-1,i])[0] ],axis=0)
+            mtx[:,:] = val1 + val2 + val3
+
+        #dLLi_dxki_dxki, k=T, u_T is undefined, use 0 to penalize J(x) only
+        mtx = submtx(T,i,i)
+        mtx[:,:] = self.dJ_dxdx(x[T-1,i],np.zeros(m),i) \
+                + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
+                + np.sum([self.dBh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
+        for k in range(1,T+1):
             for j in range(N):
                 if i==j:
                     continue
                 if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
                     #dLLi_dxki_dxkj
-                    submtx[k,i,j] = mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,i,j)
+                    mtx[:,:] = val
+                    mtx = submtx(k,j,i)
+                    mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
-                    submtx[k,j,j] = mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,j,j)
+                    mtx[:,:] = mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
                 else:
                     #dLLi_dxki_dxkj
-                    submtx[k,i,j] = self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,i,j)
+                    mtx[:,:] = val
+                    mtx = submtx(k,j,i)
+                    mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
-                    submtx[k,j,j] = self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,j,j)
+                    mtx[:,:] = self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
 
-        if (not DEBUG):
+
+        if (DEBUG):
+            '''
+            for k in range(1,T+1):
+                for ii in range(N):
+                    for j in range(N):
+                        mtx_num = submtx_num(k,ii,j)
+                        mtx = submtx(k,ii,j)
+                        if(not np.linalg.norm(mtx-mtx_num)<1e-4):
+                            print(f'i = {i} ii={ii},j={j},k={k}')
+                            #breakpoint()
+            '''
             dLL_dxdx_num = jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
             print(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
         return dLL_dxdx
 
+    '''
+    # this derivative is identically zero
     def dLLi_dudx(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n; dim_u = T*N*m
         return jacobianNumerical(lambda xx:self.dLLi_du(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_u)
+    '''
+
     def dF_dx(self,x,u,i,k):
         ''' F(x,u) = f(x_k_i,u_k_i)-x_k+1_i, find dF_dx, note x here is of dim(T*N*n) '''
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
@@ -499,15 +569,14 @@ class UnstructuredLaneChange():
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(x) '''
         T = self.T; N = self.N; n = self.n; m = self.m
-        # TODO move up
         dim_x = N*T*n; dim_u = N*T*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
         #TODO change to fill-in style
-
         drdx = np.zeros((0,dim_x))
         for i in range(self.N):
             dLL_dxdx = self.dLLi_dxdx(x,u,h_plus_mask,lamda,mu,i)
-            dLL_dudx = self.dLLi_dudx(x,u,h_plus_mask,lamda,mu,i)
+            # this item is identically zero
+            dLL_dudx = np.zeros((dim_u,dim_x))
             dF0dx = self.dF0_dx(x,u,i)
             # dynamics for f(x0,u0) = x1
             drdx = np.vstack([drdx,dLL_dxdx, dLL_dudx, dF0dx])
@@ -528,7 +597,22 @@ class UnstructuredLaneChange():
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
-        drdu = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
+
+        drdu = np.zeros((dim_r,dim_u))
+        index = 0
+        for i in range(self.N):
+            index += dim_x
+            for k in range(self.T):
+                dLL_duik_duik = 2*self.J_R
+                drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
+            index += dim_u
+            for k in range(self.T):
+                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i])
+            index += n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
+
+        if (DEBUG):
+            drdu_num = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
+            assert(np.linalg.norm(drdu-drdu_num)<1e-4)
         return drdu
 
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
