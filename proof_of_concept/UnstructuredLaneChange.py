@@ -1,10 +1,13 @@
-import matplotlib.pyplot as plt
+import os
 import numpy as np
-from util import *
 from time import time
 from PIL import Image
-import os
+from scipy import interpolate
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from matplotlib.patches import Rectangle
 
+from util import *
 from TimeUtil import TimeUtil
 
 DEBUG = False
@@ -33,7 +36,7 @@ class UnstructuredLaneChange():
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 4
+        self.T = 8
         self.track_width = 5
         self.track_length = 20
         self.dt = dt = 0.5
@@ -50,8 +53,10 @@ class UnstructuredLaneChange():
         self.bc_b = 0.5 #beta
 
         # initial state, stated in unit of car size
-        self.x0 = x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
+        self.x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
         self.target_y = [-1.0,1.0,1.0]
+        #self.x0 = x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3],[0.3,-0.3,1.3,0.3],[-0.4,0.8,0.4,1.0],[1.0,0.0,0.1,0.3]])
+        #self.target_y = [-2.0,-1.0,1.0,1.4,1.7,2.0]
         self.frame_vec = []
 
         # step cost parameters
@@ -69,7 +74,7 @@ class UnstructuredLaneChange():
         # collision definition
         self.h_Qh = np.diag([-1,-1,0,0])
 
-    def solve(self,save_gif=False,visualize=False):
+    def solve(self,save_gif=False,visualize=False,animate=False):
         T = self.T; N = self.N; n = self.n
         u_ref = np.zeros((T,N,self.m))
         # x_1 .. x_T, NOTE the array index is offset from the math notation
@@ -77,13 +82,16 @@ class UnstructuredLaneChange():
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T,N,N))
-        #self.visualize(u_ref)
+        self.visualize(u_ref,animate=animate)
+        t0 = time()
         for i in range(10):
             x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
             print(f'after iter {i}')
+        t_solve = time()-t0
+        print(f'solve time: {t_solve}')
         print(u_ref)
         print(x_ref)
-        self.visualize(u_ref,visualize,save_gif)
+        self.visualize(u_ref,visualize,save_gif,animate)
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
@@ -174,10 +182,8 @@ class UnstructuredLaneChange():
                 X[k,i] = self.f(X[k-1,i], U[k-1,i])
         return X[1:,:,:]
 
-    def visualize(self,U,visualize=True,save_gif=False):
-        if (not visualize and not save_gif):
-            return
-        else:
+    def visualize(self,U,visualize=True,save_gif=False,animate=False):
+        if (visualize or save_gif):
             fig = self._visualize(U)
             if (save_gif):
                 fig.canvas.draw()
@@ -186,14 +192,18 @@ class UnstructuredLaneChange():
                 self.frame_vec.append(frame)
             if (visualize):
                 plt.show()
+        if (animate):
+            self._animation(U)
 
         return
 
     def final(self):
+        t.summary()
         if (len(self.frame_vec)>0):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
             print(f'GIf saved to {gif_filename}')
+
     def _visualize(self,U):
         X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
@@ -205,6 +215,43 @@ class UnstructuredLaneChange():
             plt.plot(yy,xx,'*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
+
+    def _animation(self,U):
+        ''' build a gif animation'''
+        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        car_pos_vec = []
+        box_vec = []
+        color_vec = ['red','green','blue','black']
+        color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
+        # prepare smoothed animation
+        for i,color in zip(range(self.N),color_vec):
+            tt = np.linspace(0,self.dt*self.T,self.T+1)
+            xx = X[:,i,0]
+            yy = X[:,i,1]
+            xx_fun = interpolate.interp1d(tt,xx)
+            yy_fun = interpolate.interp1d(tt,yy)
+
+            tt = np.linspace(0,self.T*self.dt,50)
+            pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
+            car_pos_vec.append(pos_vec)
+            box_vec.append(plt.Rectangle(pos_vec[0], 1, 1, color=color))
+            print(pos_vec[0], color)
+
+        fig, ax = plt.subplots()
+        ax.set_xlim(-2.5, 2.5)
+        ax.set_ylim(-2, 20)
+        def update(frame):
+            for i in range(self.N):
+                box_vec[i].set_xy(car_pos_vec[i][frame])
+        # Add the boxes to the plot
+        for box in box_vec:
+            ax.add_patch(box)
+        ax.set_aspect('equal', adjustable='box')
+
+        # Create the animation
+        anim = FuncAnimation(fig, update, frames=len(car_pos_vec[0]), blit=True)
+        plt.show()
+
 
     def resolveLogname(self,):
         # setup log file
@@ -401,7 +448,6 @@ class UnstructuredLaneChange():
         try:
             r = np.zeros(0)
             for i in range(self.N):
-                # TODO DEBUG
                 dLL_dx = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
                 dLL_du = self.dLLi_du(x,u,h_plus_mask,lamda,mu,i)
                 if (DEBUG):
@@ -562,8 +608,8 @@ class UnstructuredLaneChange():
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n
         dhdx = np.zeros((1,dim_x))
-        dhdx[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.dh_dxi(x[k-1,i],x[k-1,j])
-        dhdx[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n] = self.dh_dxj(x[k-1,i],x[k-1,j])
+        dhdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.dh_dxi(x[k-1,i],x[k-1,j])
+        dhdx[:,(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n] = self.dh_dxj(x[k-1,i],x[k-1,j])
         return dhdx
 
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
