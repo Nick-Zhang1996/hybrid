@@ -75,23 +75,26 @@ class UnstructuredLaneChange():
         self.h_Qh = np.diag([-1,-1,0,0])
 
     def solve(self,save_gif=False,visualize=False,animate=False):
-        T = self.T; N = self.N; n = self.n
+        N = self.N; T = self.T; n = self.n; m = self.m
+        # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
+        print(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
+
         u_ref = np.zeros((T,N,self.m))
         # x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.rollout(self.x0,u_ref)
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T,N,N))
-        self.visualize(u_ref,animate=animate)
+        self.visualize(u_ref,animate=animate,gif_prefix='before')
         t0 = time()
         for i in range(10):
             x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
             print(f'after iter {i}')
         t_solve = time()-t0
-        print(f'solve time: {t_solve}')
-        print(u_ref)
-        print(x_ref)
-        self.visualize(u_ref,visualize,save_gif,animate)
+        print(f'total solve time: {t_solve}')
+        #print(u_ref)
+        #print(x_ref)
+        self.visualize(u_ref,visualize,save_gif,animate,gif_prefix='after')
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
@@ -101,18 +104,15 @@ class UnstructuredLaneChange():
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
         r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
-        # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
-        print(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
         y0 = np.hstack([x_ref.flatten(), u_ref.flatten(), lambda_ref.flatten(), mu_ref.flatten()])
         # x,u,lamda,mu = split_y(y)
         split_y = lambda y: (y[:T*N*n].reshape(T,N,n), y[T*N*n:T*N*n + T*N*m].reshape(T,N,m), y[T*N*n + T*N*m:T*N*n + T*N*m + N*T*n].reshape(T,N,n), y[T*N*n + T*N*m + N*T*n:].reshape(T,N,N))
         r_y_fun = lambda y: self.r(*split_y(y),h_plus_mask)
 
-
         t.e('setup')
         t0 = time()
         Dr = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        print(f't: Dr analytical {time()-t0}')
+        print(f't: Dr analytical {(time()-t0)*1000:.2f}ms')
 
         if (DEBUG):
             t0 = time()
@@ -133,7 +133,7 @@ class UnstructuredLaneChange():
         step = 1.0 # step size
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
-        for i in range(5):
+        for i in range(10):
             r_t = r_y_fun(y0+step*dy)
             r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1-self.bc_a*step)*r0_norm):
@@ -158,6 +158,22 @@ class UnstructuredLaneChange():
         print(f'u_ref {u_ref}')
         '''
         t.e()
+        # check residuals
+        dim_x = T*N*n
+        dim_u = T*N*m
+        index = 0
+        for i in range(self.N):
+            print(f'agent {i}')
+            dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
+            index += dim_x
+            dLL_du_res = np.linalg.norm(r_t[index:index+dim_u])
+            index += dim_u
+            fx_res = np.linalg.norm(r_t[index:index+n*T])
+            index += n*T
+            h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
+            index += np.sum(h_plus_mask[:,i])
+            print(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+
         return split_y(y0+step*dy)
 
     def getDynamicsResiduals(self,x, u):
@@ -182,7 +198,7 @@ class UnstructuredLaneChange():
                 X[k,i] = self.f(X[k-1,i], U[k-1,i])
         return X[1:,:,:]
 
-    def visualize(self,U,visualize=True,save_gif=False,animate=False):
+    def visualize(self,U,visualize=True,save_gif=False,animate=False,gif_prefix='run'):
         if (visualize or save_gif):
             fig = self._visualize(U)
             if (save_gif):
@@ -193,7 +209,7 @@ class UnstructuredLaneChange():
             if (visualize):
                 plt.show()
         if (animate):
-            self._animation(U)
+            self._animation(U,gif_prefix=gif_prefix)
 
         return
 
@@ -216,7 +232,7 @@ class UnstructuredLaneChange():
         ax.set_aspect('equal', adjustable='box')
         return fig
 
-    def _animation(self,U):
+    def _animation(self,U,gif_prefix=''):
         ''' build a gif animation'''
         X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         car_pos_vec = []
@@ -250,14 +266,15 @@ class UnstructuredLaneChange():
 
         # Create the animation
         anim = FuncAnimation(fig, update, frames=len(car_pos_vec[0]), blit=True)
+        gif_filename = self.resolveLogname(logPrefix=gif_prefix)
+        anim.save(gif_filename, writer='pillow')
         plt.show()
 
 
-    def resolveLogname(self,):
+    def resolveLogname(self,logPrefix='run'):
         # setup log file
         # log file will record state of the vehicle for later analysis
         logFolder = "./gifs/"
-        logPrefix = "lane"
         logSuffix = ".gif"
         no = 1
         while os.path.isfile(logFolder+logPrefix+str(no)+logSuffix):
@@ -328,7 +345,6 @@ class UnstructuredLaneChange():
         return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # NOTE the behavior of barrier function near boundary may need tuning
-        # FIXME DEBUG, test against numerical jacobian
         if (DEBUG):
             # dJ_dx -- passed
             num = jacobianNumerical(lambda xx:self.J(xx,u_k_i,i), x_k[i])
@@ -383,7 +399,6 @@ class UnstructuredLaneChange():
         for k in range(1,T):
             sub = submtx_i_k(i,k)
             sub[:] = self.dL_dx_ik(x[k-1],u[k,i],x[k,i],h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1,i].T
-            # FIXME DEBUG
             if (DEBUG):
                 num = jacobianNumerical(lambda xx:self.L(xx.reshape(N,n), u[k,i], x[k,i], h_plus_mask[k-1],lamda[k], mu[k-1],i),x[k-1].flatten())
                 num = num[0,i*n:(i+1)*n] - lamda[k-1,i].T
@@ -451,13 +466,16 @@ class UnstructuredLaneChange():
                 dLL_dx = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
                 dLL_du = self.dLLi_du(x,u,h_plus_mask,lamda,mu,i)
                 if (DEBUG):
-                    dLL_du_alt = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
-                    assert(np.linalg.norm(dLL_du-dLL_du_alt)<1e-4)
+                    dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
+                    assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
+                    dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
+                    assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
                 r = np.hstack([r,dLL_dx.flatten(), dLL_du.flatten()])
                 # dynamics for f(x0,u0) = x1
                 r = np.hstack([r,self.f(self.x0[i], u[0,i]) - x[0,i]])
                 for k in range(1,self.T):
                     r = np.hstack([r,self.f(x[k-1,i], u[k,i]) - x[k,i]]) # dual for dynamics
+                for k in range(1,self.T):
                     r = np.hstack([r]+[ self.h(x[k-1,i], x[k-1,j.item()]) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
                 # h(x_T_i, x_T_j)
                 r = np.hstack([r]+[ self.h(x[T-1,i], x[T-1,j.item()]) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
@@ -628,7 +646,9 @@ class UnstructuredLaneChange():
             drdx = np.vstack([drdx,dLL_dxdx, dLL_dudx, dF0dx])
             for k in range(1,self.T):
                 dFdx = self.dF_dx(x,u,i,k)
-                drdx = np.vstack([drdx,dFdx]+[ self.dh_dx(x,k,i,j.item()) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
+                drdx = np.vstack([drdx,dFdx])
+            for k in range(1,self.T):
+                drdx = np.vstack([drdx]+[ self.dh_dx(x,k,i,j.item()) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
             # h(x_T_i, x_T_j)
             drdx = np.vstack([drdx]+[ self.dh_dx(x,T,i,j.item()) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
 
@@ -652,13 +672,25 @@ class UnstructuredLaneChange():
                 dLL_duik_duik = 2*self.J_R
                 drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
             index += dim_u
-            for k in range(self.T):
+            k = 0
+            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(self.x0[i],u[k,i])
+            for k in range(1,self.T):
                 drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i])
-            index += n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
+            index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
 
         if (DEBUG):
             drdu_num = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
             assert(np.linalg.norm(drdu-drdu_num)<1e-4)
+            '''
+            if (np.linalg.norm(drdu-drdu_num)>1e-4):
+                for i in range(N):
+                    for k in range(0,T):
+                        val = drdu[:,k*N*m + i*m:k*N*m+i*m+m]
+                        val_num = drdu_num[:,k*N*m + i*m:k*N*m+i*m+m]
+                        if (np.linalg.norm(val - val_num)>1e-4):
+                            print(f'k={k}, i={i},{np.nonzero(val-val_num)}')
+                breakpoint()
+            '''
         return drdu
 
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
@@ -697,12 +729,11 @@ class UnstructuredLaneChange():
         dim_mu = T*N*N
         dLL_dx_dmu = np.zeros((dim_x,dim_mu))
         for k in range(1,T+1):
-            for i in range(N):
-                for j in np.nonzero(h_plus_mask[k-1,i])[0]:
-                    dLLi_dxki_duijk = self.dh_dxi(x[k-1,i],x[k-1,j])
-                    dLLi_dxkj_duijk = self.dh_dxj(x[k-1,i],x[k-1,j])
-                    dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_duijk
-                    dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_duijk
+            for j in np.nonzero(h_plus_mask[k-1,i])[0]:
+                dLLi_dxki_dmuijk = self.dh_dxi(x[k-1,i],x[k-1,j])
+                dLLi_dxkj_dmuijk = self.dh_dxj(x[k-1,i],x[k-1,j])
+                dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
+                dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_dmuijk
         return dLL_dx_dmu
 
     # TODO this is untested
@@ -722,6 +753,7 @@ class UnstructuredLaneChange():
             if (DEBUG):
                 dLL_dx_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dx(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
                 assert(np.linalg.norm(dLL_dx_dmu-dLL_dx_dmu_num)<1e-4)
+
             index += dim_x + dim_u + n*T + np.sum(h_plus_mask[:,i])
 
         if (DEBUG):
