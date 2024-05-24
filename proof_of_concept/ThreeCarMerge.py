@@ -3,19 +3,38 @@ from UnstructuredLaneChange import UnstructuredLaneChange
 
 class ThreeCarMerge(UnstructuredLaneChange):
     def __init__(self):
-        super().__init__(car_count=2)
-        # simplest
+        #super().__init__(car_count=5)
+        # simplest, 3 car
         #self.x0 = np.array([[3.0,0, 2.0, 0], [0.0, 0, 2.0, 0], [1.5, 1.5, 2.0, 0]])
         #self.target_y = [0,0, 0]
+        #super().__init__(car_count=3)
 
-        # merging that require rear car to slow down
+        # merging that require rear car to slow down, 3 car
         #self.x0 = np.array([[3.0,0, 2.1, 0], [1.0, 0, 2.1, 0], [1.5, 1.5, 2.0, 0]])
         #self.target_y = [0,0, 0]
+        #super().__init__(car_count=3)
 
-        # collision resolution, longitudinal
-        self.x0 = np.array([[1.0, 0, 2.3, 0], [1.5, 0, 2.2, 0]])
-        self.target_y = [0, 0]
-        self.J_Qr = np.diag([0,10,0,1])
+        # collision resolution, longitudinal, 2 car Dr 6ms
+        #self.x0 = np.array([[1.0, 0, 2.3, 0], [1.5, 0, 2.2, 0]])
+        #self.target_y = [0, 0]
+        #super().__init__(car_count=2)
+
+        # complicated, zipper merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
+        main_lane_n = 10
+        merge_lane_n = 6
+        super().__init__(car_count=main_lane_n+merge_lane_n)
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*2.5,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 1.0+np.linspace(0,(merge_lane_n-1)*2.5,merge_lane_n) + np.random.random(merge_lane_n)
+        v_main_lane = 2.0 + np.random.random(main_lane_n)
+        v_merge_lane = 2.0 + np.random.random(merge_lane_n)
+        x0_main_lane = np.vstack([x_pos_main_lane,np.zeros(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
+        x0_merge_lane = np.vstack([x_pos_merge_lane,1.5*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
+        self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
+        self.target_y = [0]*(main_lane_n+merge_lane_n)
+        self.J_Qr = np.diag([0,1,0.1,0])
+        self.J_Q = np.diag([0,0,0,0.5])
+
+
 
 if __name__=="__main__":
     main = ThreeCarMerge()

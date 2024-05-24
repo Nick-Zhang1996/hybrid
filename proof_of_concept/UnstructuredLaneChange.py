@@ -92,8 +92,8 @@ class UnstructuredLaneChange():
             print(f'after iter {i}')
         t_solve = time()-t0
         print(f'total solve time: {t_solve}')
-        #print(u_ref)
-        #print(x_ref)
+        print(u_ref)
+        print(x_ref)
         self.visualize(u_ref,visualize,save_gif,animate,gif_prefix='after')
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
@@ -255,7 +255,7 @@ class UnstructuredLaneChange():
 
         fig, ax = plt.subplots()
         ax.set_xlim(-2.5, 2.5)
-        ax.set_ylim(-2, 20)
+        ax.set_ylim(-2, 30)
         def update(frame):
             for i in range(self.N):
                 box_vec[i].set_xy(car_pos_vec[i][frame])
@@ -795,7 +795,3 @@ if __name__=="__main__":
     main.solve(save_gif=True,visualize=True)
     main.final()
     t.summary()
-    #U = np.zeros((main.T,main.N,main.m))
-    #U[:,0,0] = 1.0
-    #U[:,1,1] = 1.0
-    #main.visualize(U)
