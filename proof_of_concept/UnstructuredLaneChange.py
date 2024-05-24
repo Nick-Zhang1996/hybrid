@@ -3,6 +3,7 @@ import numpy as np
 from time import time
 from PIL import Image
 from scipy import interpolate
+import scipy.sparse # sparse matrix operations
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
@@ -39,7 +40,7 @@ class UnstructuredLaneChange():
         self.T = 8
         self.track_width = 5
         self.track_length = 20
-        self.dt = dt = 0.5
+        self.dt = dt = 0.25
 
         self.rho = 10.0
         self.rho_b = 1.5
@@ -92,8 +93,8 @@ class UnstructuredLaneChange():
             print(f'after iter {i}')
         t_solve = time()-t0
         print(f'total solve time: {t_solve}')
-        print(u_ref)
-        print(x_ref)
+        #print(u_ref)
+        #print(x_ref)
         self.visualize(u_ref,visualize,save_gif,animate,gif_prefix='after')
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
@@ -122,9 +123,26 @@ class UnstructuredLaneChange():
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
 
 
-        t.s('lsqsq')
+        '''
+        t.s('lstsq')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
-        t.e('lsqsq')
+        t.e('lstsq')
+        '''
+        t.s('sparse-lstsq')
+        sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
+        dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
+        t.e('sparse-lstsq')
+        '''
+        # DEBUG
+        print(f'sparse solution diff {np.linalg.norm(sparse_dy-dy)}')
+        print(f' dy residual {np.linalg.norm(Dr @ dy + r0)}')
+        print(f' sparse dy residual {np.linalg.norm(sparse_Dr @ sparse_dy + r0)}')
+        '''
+
+
+        total_entries = Dr.shape[0]*Dr.shape[1]
+        nonzero_entries = len(np.nonzero(Dr.flatten())[0])
+        print(f' nonzero entries:  {nonzero_entries/total_entries}')
         # Newton direction
         # line search
 
@@ -247,7 +265,8 @@ class UnstructuredLaneChange():
             xx_fun = interpolate.interp1d(tt,xx)
             yy_fun = interpolate.interp1d(tt,yy)
 
-            tt = np.linspace(0,self.T*self.dt,50)
+            # interpolate for smooth graphics
+            #tt = np.linspace(0,self.T*self.dt,50)
             pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
             car_pos_vec.append(pos_vec)
             box_vec.append(plt.Rectangle(pos_vec[0], 1, 1, color=color))
