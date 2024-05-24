@@ -95,7 +95,8 @@ class UnstructuredLaneChange():
         print(f'total solve time: {t_solve}')
         #print(u_ref)
         #print(x_ref)
-        self.visualize(u_ref,visualize,save_gif,animate,gif_prefix='after')
+        full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+        self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
@@ -216,7 +217,7 @@ class UnstructuredLaneChange():
                 X[k,i] = self.f(X[k-1,i], U[k-1,i])
         return X[1:,:,:]
 
-    def visualize(self,U,visualize=True,save_gif=False,animate=False,gif_prefix='run'):
+    def visualize(self,U,X=None,visualize=True,save_gif=False,animate=False,gif_prefix='run'):
         if (visualize or save_gif):
             fig = self._visualize(U)
             if (save_gif):
@@ -227,7 +228,7 @@ class UnstructuredLaneChange():
             if (visualize):
                 plt.show()
         if (animate):
-            self._animation(U,gif_prefix=gif_prefix)
+            self._animation(U,X,gif_prefix=gif_prefix)
 
         return
 
@@ -250,9 +251,10 @@ class UnstructuredLaneChange():
         ax.set_aspect('equal', adjustable='box')
         return fig
 
-    def _animation(self,U,gif_prefix=''):
+    def _animation(self,U,X=None,gif_prefix=''):
         ''' build a gif animation'''
-        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        if X is None:
+            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         car_pos_vec = []
         box_vec = []
         color_vec = ['red','green','blue','black']
