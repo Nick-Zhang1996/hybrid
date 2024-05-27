@@ -89,8 +89,10 @@ class UnstructuredLaneChange():
         self.visualize(u_ref,animate=animate,gif_prefix='before')
         t0 = time()
         for i in range(10):
-            x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+            x_ref, u_ref, lambda_ref, mu_ref, stopping = self.step(x_ref,u_ref,lambda_ref,mu_ref)
             print(f'after iter {i}')
+            if stopping:
+                break
         t_solve = time()-t0
         print(f'total solve time: {t_solve}')
         #print(u_ref)
@@ -161,6 +163,7 @@ class UnstructuredLaneChange():
                 break
         t.e('line search')
 
+
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
         # dynamics residual
@@ -177,6 +180,7 @@ class UnstructuredLaneChange():
         print(f'u_ref {u_ref}')
         '''
         t.e()
+        h_plus_violations = 0
         # check residuals
         dim_x = T*N*n
         dim_u = T*N*m
@@ -190,10 +194,16 @@ class UnstructuredLaneChange():
             fx_res = np.linalg.norm(r_t[index:index+n*T])
             index += n*T
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
+            h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
             print(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
 
-        return split_y(y0+step*dy)
+        if (np.abs(r_t_norm - r0_norm)<5e-4 and h_plus_violations<1e-3):
+            stopping = True
+        else:
+            stopping = False
+
+        return split_y(y0+step*dy) + (stopping,)
 
     def getDynamicsResiduals(self,x, u):
         r = 0
@@ -652,6 +662,40 @@ class UnstructuredLaneChange():
         return dhdx
 
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
+        ''' return: dim(r)*dim(x) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        drdx = np.zeros((dim_r,dim_x))
+        index = 0
+        for i in range(self.N):
+            dLL_dxdx = self.dLLi_dxdx(x,u,h_plus_mask,lamda,mu,i)
+            # this item is identically zero
+            #dLL_dudx = np.zeros((dim_u,dim_x))
+            dF0dx = self.dF0_dx(x,u,i)
+            # dynamics for f(x0,u0) = x1
+            drdx[index:index+dim_x,:] = dLL_dxdx
+            index += dim_x + dim_u
+            drdx[index:index+n,:] = dF0dx
+            for k in range(1,self.T):
+                dFdx = self.dF_dx(x,u,i,k)
+                drdx[index+k*n:index+(k+1)*n,:] = dFdx
+            index += n*T
+            for k in range(1,self.T+1):
+                indices = np.nonzero(h_plus_mask[k-1,i])[0]
+                if (len(indices) == 0):
+                    continue
+                dhdx = np.vstack([ self.dh_dx(x,k,i,j.item()) for j in indices ])
+                drdx[index:index+dhdx.shape[0],:] = dhdx
+            index += np.sum(h_plus_mask[:,i])
+
+        if (DEBUG):
+            drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
+            print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            assert(np.linalg.norm(drdx-drdx_num)<1e-4)
+        return drdx
+
+    def dr_dx_old(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(x) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = N*T*n; dim_u = N*T*m

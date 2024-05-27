@@ -1,23 +1,23 @@
 import numpy as np
 from UnstructuredLaneChange import UnstructuredLaneChange
 
-class ThreeCarMerge(UnstructuredLaneChange):
+class CarMerge(UnstructuredLaneChange):
     def __init__(self):
         #super().__init__(car_count=5)
         # simplest, 3 car
+        #super().__init__(car_count=3)
         #self.x0 = np.array([[3.0,0, 2.0, 0], [0.0, 0, 2.0, 0], [1.5, 1.5, 2.0, 0]])
         #self.target_y = [0,0, 0]
-        #super().__init__(car_count=3)
 
         # merging that require rear car to slow down, 3 car
+        #super().__init__(car_count=3)
         #self.x0 = np.array([[3.0,0, 2.1, 0], [1.0, 0, 2.1, 0], [1.5, 1.5, 2.0, 0]])
         #self.target_y = [0,0, 0]
-        #super().__init__(car_count=3)
 
         # collision resolution, longitudinal, 2 car Dr 6ms
+        #super().__init__(car_count=2)
         #self.x0 = np.array([[1.0, 0, 2.3, 0], [1.5, 0, 2.2, 0]])
         #self.target_y = [0, 0]
-        #super().__init__(car_count=2)
 
         # complicated, zipper merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
         main_lane_n = 10
@@ -37,7 +37,7 @@ class ThreeCarMerge(UnstructuredLaneChange):
 
 
 if __name__=="__main__":
-    main = ThreeCarMerge()
+    main = CarMerge()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
 
