@@ -15,11 +15,12 @@ class CarMerge(UnstructuredLaneChange):
         #self.target_y = [0,0, 0]
 
         # collision resolution, longitudinal, 2 car Dr 6ms
-        #super().__init__(car_count=2)
-        #self.x0 = np.array([[1.0, 0, 2.3, 0], [1.5, 0, 2.2, 0]])
-        #self.target_y = [0, 0]
+        super().__init__(car_count=2)
+        self.x0 = np.array([[1.0, 0, 2.3, 0], [1.5, 0, 2.2, 0]])
+        self.target_y = [0, 0]
 
         # complicated, zipper merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
+        '''
         main_lane_n = 10
         merge_lane_n = 6
         super().__init__(car_count=main_lane_n+merge_lane_n)
@@ -33,6 +34,7 @@ class CarMerge(UnstructuredLaneChange):
         self.target_y = [0]*(main_lane_n+merge_lane_n)
         self.J_Qr = np.diag([0,1,0.1,0])
         self.J_Q = np.diag([0,0,0,0.5])
+        '''
 
 
 

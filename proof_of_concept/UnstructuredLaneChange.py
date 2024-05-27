@@ -127,14 +127,34 @@ class UnstructuredLaneChange():
 
 
         '''
+        # Dense
         t.s('lstsq')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
         t.e('lstsq')
-        '''
+        # Sparse
         t.s('sparse-lstsq')
         sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
         dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
         t.e('sparse-lstsq')
+        '''
+
+
+        t.s('reduced-sparse-lstsq')
+        nonzero_rows = np.nonzero(np.sum(np.abs(Dr),axis=1))[0]
+        nonzero_cols = np.nonzero(np.sum(np.abs(Dr),axis=0))[0]
+        reduced_Dr = Dr[nonzero_rows,:][:,nonzero_cols]
+        sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
+        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[nonzero_rows])[:4]
+        dy = np.zeros_like(y0)
+        dy[nonzero_cols] = reduced_dy
+        t.e('reduced-sparse-lstsq')
+
+
+        print(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
+        print(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
+
+
+
         '''
         # DEBUG
         print(f'sparse solution diff {np.linalg.norm(sparse_dy-dy)}')
@@ -469,7 +489,7 @@ class UnstructuredLaneChange():
         return der
 
 
-    def r_old(self, x, u, lamda, mu, h_plus_mask):
+    def r_numerical(self, x, u, lamda, mu, h_plus_mask):
         T = self.T
         try:
             r = np.zeros(0)
@@ -510,6 +530,43 @@ class UnstructuredLaneChange():
                     r = np.hstack([r]+[ self.h(x[k-1,i], x[k-1,j.item()]) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
                 # h(x_T_i, x_T_j)
                 r = np.hstack([r]+[ self.h(x[T-1,i], x[T-1,j.item()]) for j in np.nonzero(h_plus_mask[T-1,i])[0] ])
+        except ValueError as e:
+            raise e
+            breakpoint()
+        return r
+
+    def r_fillin(self, x, u, lamda, mu, h_plus_mask):
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = N*T*n; dim_u = N*T*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        try:
+            r = np.zeros(dim_r)
+            index = 0
+            for i in range(self.N):
+                dLL_dx = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
+                dLL_du = self.dLLi_du(x,u,h_plus_mask,lamda,mu,i)
+                if (DEBUG):
+                    dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
+                    assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
+                    dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
+                    assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
+                r[index:index+dim_x] = dLL_dx.flatten()
+                index += dim_x
+                r[index:index+dim_u] = dLL_du.flatten()
+                index += dim_u
+
+                # dynamics for f(x0,u0) = x1
+                r[index: index+n] = self.f(self.x0[i], u[0,i]) - x[0,i]
+                for k in range(1,self.T):
+                    r[index+k*n: index+(k+1)*n] = self.f(x[k-1,i], u[k,i]) - x[k,i] # dual for dynamics
+                index += n*T
+                for k in range(1,self.T+1):
+                    indices = np.nonzero(h_plus_mask[k-1,i])[0]
+                    if (len(indices) == 0):
+                        continue
+                    hh = np.hstack([ self.h(x[k-1,i], x[k-1,j.item()]) for j in indices ])
+                    r[index: index+hh.shape[0]] = hh
+                    index += hh.shape[0]
         except ValueError as e:
             raise e
             breakpoint()
