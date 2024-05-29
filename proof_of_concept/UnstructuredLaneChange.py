@@ -43,7 +43,7 @@ class UnstructuredLaneChange():
         self.dt = dt = 0.25
 
         self.rho = 10.0
-        self.rho_b = 1.5
+        self.rho_b = 2.0
 
         # dimension of u and x for single agent
         self.m = 2
@@ -90,7 +90,7 @@ class UnstructuredLaneChange():
         t0 = time()
         for i in range(10):
             x_ref, u_ref, lambda_ref, mu_ref, stopping = self.step(x_ref,u_ref,lambda_ref,mu_ref)
-            print(f'after iter {i}')
+            print(f'------ iter {i} ------')
             if stopping:
                 break
         t_solve = time()-t0
@@ -105,6 +105,7 @@ class UnstructuredLaneChange():
         t.s()
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
+        dim_x = T*N*n; dim_u = T*N*m
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
         r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
@@ -186,25 +187,13 @@ class UnstructuredLaneChange():
 
         print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
-        # dynamics residual
-        # TODO check this
-        '''
-        x, u, lamda, mu = split_y(y0)
-        dyn_res = self.getDynamicsResiduals(x,u)
-        print(f'old dyn residual {dyn_res:.4f}')
-        x, u, lamda, mu = split_y(y0+step*dy)
-        dyn_res = self.getDynamicsResiduals(x,u)
-        print(f'new dyn residual {dyn_res:.4f}')
-        #self.visualize(u_ref+du)
-        print(f'x_ref {x_ref}')
-        print(f'u_ref {u_ref}')
-        '''
         t.e()
-        h_plus_violations = 0
-        # check residuals
-        dim_x = T*N*n
-        dim_u = T*N*m
+
+        # check residuals, with rho = infty
+        original_rho = self.rho
+        self.rho = 1e4
         index = 0
+        h_plus_violations = 0
         for i in range(self.N):
             print(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
@@ -217,11 +206,14 @@ class UnstructuredLaneChange():
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
             print(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+        self.rho = original_rho
 
         if (np.abs(r_t_norm - r0_norm)<5e-4 and h_plus_violations<1e-3):
             stopping = True
         else:
             stopping = False
+
+        self.rho *= self.rho_b
 
         return split_y(y0+step*dy) + (stopping,)
 
@@ -302,7 +294,6 @@ class UnstructuredLaneChange():
             pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
             car_pos_vec.append(pos_vec)
             box_vec.append(plt.Rectangle(pos_vec[0], 1, 1, color=color))
-            print(pos_vec[0], color)
 
         fig, ax = plt.subplots()
         ax.set_xlim(-2.5, 2.5)
