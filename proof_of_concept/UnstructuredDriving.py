@@ -16,7 +16,7 @@ t = TimeUtil(True)
 
 # example: unstructured lane change
 # this version use U as decision variable only
-class UnstructuredLaneChange():
+class UnstructuredDriving():
     def __init__(self,car_count=3):
         # u_i = [ax,ay] longitudinal, lateral acceleration
         # x_i = [x,y,vx,vy]
@@ -52,6 +52,11 @@ class UnstructuredLaneChange():
         # backtracking line search param
         self.bc_a = 0.1 #alpha
         self.bc_b = 0.5 #beta
+
+
+        # bounds for visualization
+        self.visual_x_lim = [-2.5,2.5]
+        self.visual_y_lim = [-2,30]
 
         # initial state, stated in unit of car size
         self.x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
@@ -296,8 +301,8 @@ class UnstructuredLaneChange():
             box_vec.append(plt.Rectangle(pos_vec[0], 1, 1, color=color))
 
         fig, ax = plt.subplots()
-        ax.set_xlim(-2.5, 2.5)
-        ax.set_ylim(-2, 30)
+        ax.set_xlim(*self.visual_x_lim)
+        ax.set_ylim(*self.visual_y_lim)
         def update(frame):
             for i in range(self.N):
                 box_vec[i].set_xy(car_pos_vec[i][frame])

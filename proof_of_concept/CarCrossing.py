@@ -1,0 +1,64 @@
+import numpy as np
+from UnstructuredDriving import UnstructuredDriving
+import matplotlib.pyplot as plt
+
+class CarCrossing(UnstructuredDriving):
+    def __init__(self):
+        # TODO: need adaptation
+        # visualization
+        # cost objective
+        super().__init__(car_count=4)
+        # x,y,vx,vy
+        self.x0 = np.vstack([[ -3.0, 0, 2.0, 0],[ -1.0, 0, 2.0, 0],[ 0, -2.0, 0, 2],[ 0, -5.0, 0, 2]])
+        # vx, vy
+        self.target_v = np.vstack([[2.0,0],[2.0,0], [0,2.0], [0,2.0]])
+        # v_cars go in x direction, y is target lane
+        self.v_cars = [0,1]
+        self.target_y = [0,0,0,0]
+        self.h_cars = [2,3]
+        self.target_x = [0,0,0,0]
+
+        self.visual_x_lim = [-10,10]
+        self.visual_y_lim = [-10,10]
+
+        # FIXME
+        self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0]) if i in self.v_cars else np.array([self.target_x[i],0,0,2.0])
+        self.J_Qr_fun = lambda i :np.diag([0,1,1,0]) if i in self.v_cars else np.diag([1,0,0,1])
+        self.J_Q_fun  = lambda i :np.diag([0,0,0,1e-2]) if i in self.v_cars else np.diag([0,0,1e-2,0])
+        self.J_R = np.eye(self.m)*1e-2
+        #(x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+
+    def _visualize(self,U):
+        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        fig, ax = plt.subplots()
+        #ax.vlines(x=-self.track_width/2,ymin=-1,ymax=self.track_length)
+        #ax.vlines(x=self.track_width/2,ymin=-1,ymax=self.track_length)
+        for i in range(self.N):
+            xx = X[:,i,0]
+            yy = X[:,i,1]
+            plt.plot(yy,xx,'*-')
+        ax.set_aspect('equal', adjustable='box')
+        return fig
+
+    def J(self,x,u,i):
+        ''' 
+        step cost for an agent, given x,u 
+        x.shape (n) x = [x,y,vx,vy]
+        u.shape (m) u = [ax, ay]
+        i: agent id
+        '''
+        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
+        return (x-self.J_x_ref_fun(i)).T @ self.J_Qr_fun(i) @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q_fun(i) @ x + u.T @ self.J_R @ u
+
+    def dJ_dx(self,x,u,i):
+        return  2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr_fun(i) + 2*x.T @ self.J_Q_fun(i)
+    def dJ_du(self,x,u,i):
+        return  2* u.T @ self.J_R
+    def dJ_dxdx(self,x,u,i):
+        return  2*self.J_Qr_fun(i) + 2*self.J_Q_fun(i)
+
+if __name__=="__main__":
+    main = CarCrossing()
+    main.solve(save_gif=False,visualize=True,animate=True)
+    main.final()
+

@@ -1,7 +1,7 @@
 import numpy as np
-from UnstructuredLaneChange import UnstructuredLaneChange
+from UnstructuredDriving import UnstructuredDriving
 
-class CarMerge(UnstructuredLaneChange):
+class CarMerge(UnstructuredDriving):
     def __init__(self):
         #super().__init__(car_count=5)
         # simplest, 3 car
