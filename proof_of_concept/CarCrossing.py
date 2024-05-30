@@ -8,6 +8,7 @@ class CarCrossing(UnstructuredDriving):
         # visualization
         # cost objective
         super().__init__(car_count=4)
+        self.T = 15
         # x,y,vx,vy
         self.x0 = np.vstack([[ -3.0, 0, 2.0, 0],[ -1.0, 0, 2.0, 0],[ 0, -2.0, 0, 2],[ 0, -5.0, 0, 2]])
         # vx, vy
@@ -21,7 +22,6 @@ class CarCrossing(UnstructuredDriving):
         self.visual_x_lim = [-10,10]
         self.visual_y_lim = [-10,10]
 
-        # FIXME
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0]) if i in self.v_cars else np.array([self.target_x[i],0,0,2.0])
         self.J_Qr_fun = lambda i :np.diag([0,1,1,0]) if i in self.v_cars else np.diag([1,0,0,1])
         self.J_Q_fun  = lambda i :np.diag([0,0,0,1e-2]) if i in self.v_cars else np.diag([0,0,1e-2,0])

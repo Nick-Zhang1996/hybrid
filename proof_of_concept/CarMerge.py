@@ -2,7 +2,7 @@ import numpy as np
 from UnstructuredDriving import UnstructuredDriving
 
 class CarMerge(UnstructuredDriving):
-    def __init__(self):
+    def __init__(self, car_count=8):
         #super().__init__(car_count=5)
         # simplest, 3 car
         #super().__init__(car_count=3)
@@ -20,8 +20,8 @@ class CarMerge(UnstructuredDriving):
         #self.target_y = [0, 0]
 
         # complicated, zipper merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        main_lane_n = 10
-        merge_lane_n = 6
+        main_lane_n = min(int(0.65*car_count),car_count-1)
+        merge_lane_n = car_count - main_lane_n
         super().__init__(car_count=main_lane_n+merge_lane_n)
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*2.5,main_lane_n) + np.random.random(main_lane_n)
         x_pos_merge_lane = 1.0+np.linspace(0,(merge_lane_n-1)*2.5,merge_lane_n) + np.random.random(merge_lane_n)
@@ -38,7 +38,7 @@ class CarMerge(UnstructuredDriving):
 
 
 if __name__=="__main__":
-    main = CarMerge()
+    main = CarMerge(8)
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
 

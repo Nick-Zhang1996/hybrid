@@ -13,6 +13,10 @@ from TimeUtil import TimeUtil
 
 DEBUG = False
 t = TimeUtil(True)
+PRINT = False
+def ifprint(*objects):
+    if (PRINT):
+        ifprint(*objects)
 
 # example: unstructured lane change
 # this version use U as decision variable only
@@ -80,10 +84,13 @@ class UnstructuredDriving():
         # collision definition
         self.h_Qh = np.diag([-1,-1,0,0])
 
+        self.residuals = None
+        self.violations = None
+
     def solve(self,save_gif=False,visualize=False,animate=False):
         N = self.N; T = self.T; n = self.n; m = self.m
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
-        print(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
+        ifprint(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
 
         u_ref = np.zeros((T,N,self.m))
         # x_1 .. x_T, NOTE the array index is offset from the math notation
@@ -95,13 +102,13 @@ class UnstructuredDriving():
         t0 = time()
         for i in range(10):
             x_ref, u_ref, lambda_ref, mu_ref, stopping = self.step(x_ref,u_ref,lambda_ref,mu_ref)
-            print(f'------ iter {i} ------')
+            ifprint(f'------ iter {i} ------')
             if stopping:
                 break
         t_solve = time()-t0
-        print(f'total solve time: {t_solve}')
-        #print(u_ref)
-        #print(x_ref)
+        ifprint(f'total solve time: {t_solve}')
+        #ifprint(u_ref)
+        #ifprint(x_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
@@ -122,13 +129,13 @@ class UnstructuredDriving():
         t.e('setup')
         t0 = time()
         Dr = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        print(f't: Dr analytical {(time()-t0)*1000:.2f}ms')
+        ifprint(f't: Dr analytical {(time()-t0)*1000:.2f}ms')
 
         if (DEBUG):
             t0 = time()
             Dr_alt = jacobianNumerical(r_y_fun,y0,dim=r0.shape[0])
-            print(f't: Dr numerical {time()-t0}')
-            print(np.linalg.norm(Dr-Dr_alt))
+            ifprint(f't: Dr numerical {time()-t0}')
+            ifprint(np.linalg.norm(Dr-Dr_alt))
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
 
 
@@ -156,22 +163,22 @@ class UnstructuredDriving():
         t.e('reduced-sparse-lstsq')
 
 
-        print(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
-        print(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
+        ifprint(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
+        ifprint(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
 
 
 
         '''
         # DEBUG
-        print(f'sparse solution diff {np.linalg.norm(sparse_dy-dy)}')
-        print(f' dy residual {np.linalg.norm(Dr @ dy + r0)}')
-        print(f' sparse dy residual {np.linalg.norm(sparse_Dr @ sparse_dy + r0)}')
+        ifprint(f'sparse solution diff {np.linalg.norm(sparse_dy-dy)}')
+        ifprint(f' dy residual {np.linalg.norm(Dr @ dy + r0)}')
+        ifprint(f' sparse dy residual {np.linalg.norm(sparse_Dr @ sparse_dy + r0)}')
         '''
 
 
         total_entries = Dr.shape[0]*Dr.shape[1]
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
-        print(f' nonzero entries:  {nonzero_entries/total_entries}')
+        ifprint(f' nonzero entries:  {nonzero_entries/total_entries}')
         # Newton direction
         # line search
 
@@ -190,17 +197,18 @@ class UnstructuredDriving():
         t.e('line search')
 
 
-        print(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
+        ifprint(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
         t.e()
 
         # check residuals, with rho = infty
+        '''
         original_rho = self.rho
         self.rho = 1e4
         index = 0
         h_plus_violations = 0
         for i in range(self.N):
-            print(f'agent {i}')
+            ifprint(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
             index += dim_x
             dLL_du_res = np.linalg.norm(r_t[index:index+dim_u])
@@ -210,17 +218,22 @@ class UnstructuredDriving():
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            print(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            ifprint(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
         self.rho = original_rho
+        '''
+        self.residuals = r_t_norm
+        self.violations = np.sum(h_plus_mask)/2
 
-        if (np.abs(r_t_norm - r0_norm)<5e-4 and h_plus_violations<1e-3):
+        if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
             stopping = True
         else:
             stopping = False
 
         self.rho *= self.rho_b
 
+
         return split_y(y0+step*dy) + (stopping,)
+
 
     def getDynamicsResiduals(self,x, u):
         r = 0
@@ -244,7 +257,7 @@ class UnstructuredDriving():
                 X[k,i] = self.f(X[k-1,i], U[k-1,i])
         return X[1:,:,:]
 
-    def visualize(self,U,X=None,visualize=True,save_gif=False,animate=False,gif_prefix='run'):
+    def visualize(self,U,X=None,visualize=False,save_gif=False,animate=False,gif_prefix='run'):
         if (visualize or save_gif):
             fig = self._visualize(U)
             if (save_gif):
@@ -264,7 +277,7 @@ class UnstructuredDriving():
         if (len(self.frame_vec)>0):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
-            print(f'GIf saved to {gif_filename}')
+            ifprint(f'GIf saved to {gif_filename}')
 
     def _visualize(self,U):
         X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
@@ -367,7 +380,8 @@ class UnstructuredDriving():
         ''' car distance larger than 1.0 '''
         #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
         # below is faster
-        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
+        #return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
+        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.2**2
 
     # TODO rewrite this to be faster
     def dh_dxi(self,x_i,x_j):
@@ -673,11 +687,11 @@ class UnstructuredDriving():
                         mtx_num = submtx_num(k,ii,j)
                         mtx = submtx(k,ii,j)
                         if(not np.linalg.norm(mtx-mtx_num)<1e-4):
-                            print(f'i = {i} ii={ii},j={j},k={k}')
+                            ifprint(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
             dLL_dxdx_num = jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
-            print(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
+            ifprint(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
         return dLL_dxdx
 
@@ -744,7 +758,7 @@ class UnstructuredDriving():
 
         if (DEBUG):
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
-            print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            ifprint(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
         return drdx
 
@@ -772,7 +786,7 @@ class UnstructuredDriving():
 
         if (DEBUG):
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
-            print(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            ifprint(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
         return drdx
 
@@ -806,7 +820,7 @@ class UnstructuredDriving():
                         val = drdu[:,k*N*m + i*m:k*N*m+i*m+m]
                         val_num = drdu_num[:,k*N*m + i*m:k*N*m+i*m+m]
                         if (np.linalg.norm(val - val_num)>1e-4):
-                            print(f'k={k}, i={i},{np.nonzero(val-val_num)}')
+                            ifprint(f'k={k}, i={i},{np.nonzero(val-val_num)}')
                 breakpoint()
             '''
         return drdu
@@ -835,7 +849,7 @@ class UnstructuredDriving():
 
         if (DEBUG):
             dr_dlamda_num = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
-            print(f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
+            ifprint(f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
             diff = dr_dlamda_num - dr_dlamda
             assert(np.linalg.norm(dr_dlamda-dr_dlamda_num)<1e-4)
         return dr_dlamda
@@ -876,7 +890,7 @@ class UnstructuredDriving():
 
         if (DEBUG):
             dr_dmu_num = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
-            print(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
+            ifprint(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
             assert(np.linalg.norm(dr_dmu-dr_dmu_num)<1e-4)
         return dr_dmu
 
