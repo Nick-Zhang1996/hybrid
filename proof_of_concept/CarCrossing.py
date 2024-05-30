@@ -1,23 +1,36 @@
 import numpy as np
+from time import time
 from UnstructuredDriving import UnstructuredDriving
 import matplotlib.pyplot as plt
 
 class CarCrossing(UnstructuredDriving):
-    def __init__(self):
+    def __init__(self,car_count=4):
         # TODO: need adaptation
         # visualization
         # cost objective
-        super().__init__(car_count=4)
+        super().__init__(car_count=car_count)
         self.T = 15
+        v_car_count = int(car_count/2)
+        h_car_count = car_count - v_car_count
         # x,y,vx,vy
         self.x0 = np.vstack([[ -3.0, 0, 2.0, 0],[ -1.0, 0, 2.0, 0],[ 0, -2.0, 0, 2],[ 0, -5.0, 0, 2]])
         # vx, vy
-        self.target_v = np.vstack([[2.0,0],[2.0,0], [0,2.0], [0,2.0]])
+        self.target_v = np.vstack([[2.0,0]*v_car_count + [0,2.0]*h_car_count])
+
+
+        x_pos_v_car = np.linspace(-(v_car_count-1)*2.5,-2,v_car_count) + np.random.random(v_car_count)
+        y_pos_h_car = np.linspace(-(h_car_count-1)*2.5,-2,h_car_count) + np.random.random(h_car_count)
+        vel_v_car  = 2.0 + np.random.random(v_car_count)/2
+        vel_h_car = 2.0 + np.random.random(h_car_count)/2
+        x0_v_car = np.vstack([x_pos_v_car,np.zeros(v_car_count),vel_v_car, np.zeros(v_car_count)]).T
+        x0_h_car = np.vstack([np.zeros(h_car_count), y_pos_h_car, np.zeros(h_car_count),vel_h_car]).T
+        self.x0 = np.vstack([x0_v_car, x0_h_car])
+
         # v_cars go in x direction, y is target lane
-        self.v_cars = [0,1]
-        self.target_y = [0,0,0,0]
-        self.h_cars = [2,3]
-        self.target_x = [0,0,0,0]
+        self.v_cars = list(range(car_count))[:v_car_count]
+        self.target_y = [0]*car_count
+        self.h_cars = list(range(car_count))[v_car_count:]
+        self.target_x = [0]*car_count
 
         self.visual_x_lim = [-10,10]
         self.visual_y_lim = [-10,10]
@@ -58,7 +71,10 @@ class CarCrossing(UnstructuredDriving):
         return  2*self.J_Qr_fun(i) + 2*self.J_Q_fun(i)
 
 if __name__=="__main__":
-    main = CarCrossing()
-    main.solve(save_gif=False,visualize=True,animate=True)
+    main = CarCrossing(10)
+    t0 = time()
+    main.solve(save_gif=True,visualize=True,animate=True)
+    print(f'solution time: {time()-t0}')
+    print(f'collisions: {main.violations}')
     main.final()
 
