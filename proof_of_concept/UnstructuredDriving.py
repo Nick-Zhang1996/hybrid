@@ -13,10 +13,10 @@ from TimeUtil import TimeUtil
 
 DEBUG = False
 t = TimeUtil(True)
-PRINT = False
+PRINT = True
 def ifprint(*objects):
     if (PRINT):
-        ifprint(*objects)
+        print(*objects)
 
 # example: unstructured lane change
 # this version use U as decision variable only
@@ -176,9 +176,11 @@ class UnstructuredDriving():
         '''
 
 
+        '''
         total_entries = Dr.shape[0]*Dr.shape[1]
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
         ifprint(f' nonzero entries:  {nonzero_entries/total_entries}')
+        '''
         # Newton direction
         # line search
 
@@ -907,7 +909,9 @@ class UnstructuredDriving():
         t.s('drdmu')
         drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
         t.e('drdmu')
+        t.s('stack')
         Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
+        t.e('stack')
         return Dr
 
     def getHplusMask(self,x):
