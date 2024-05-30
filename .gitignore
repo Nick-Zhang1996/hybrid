@@ -1,1 +1,6 @@
 gifs/
+*.swp
+__pycache__/
+*.pyc
+build/
+
