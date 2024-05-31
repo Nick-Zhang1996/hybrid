@@ -23,8 +23,22 @@ PYBIND11_MODULE(particle_game,m)
 {
   m.doc() = "pybind11 interface for c++/Eigen particle_game";
   py::class_<ParticleGame>(m,"ParticleGame")
-      .def(py::init())
+      .def(py::init<int,int,int,int, float,float,float,float,float, np_array,np_array,np_array,np_array,np_array,np_array,np_array>())
       .def("set_A", &ParticleGame::set_A)
       .def("set_B", &ParticleGame::set_B)
-      .def("f", &ParticleGame::f);
+      .def("f", &ParticleGame::f)
+      .def("df_dx", &ParticleGame::df_dx)
+      .def("df_du", &ParticleGame::df_du)
+      .def("h", &ParticleGame::h)
+      .def("dh_dxi", &ParticleGame::dh_dxi)
+      .def("dh_dxj", &ParticleGame::dh_dxj)
+      .def("dh_dxi_dxi", &ParticleGame::dh_dxi_dxi)
+      .def("dh_dxi_dxj", &ParticleGame::dh_dxi_dxj)
+      .def("dh_dxj_dxi", &ParticleGame::dh_dxj_dxi)
+      .def("dh_dxj_dxj", &ParticleGame::dh_dxj_dxj)
+      .def("J", &ParticleGame::J)
+      .def("dJ_dx", &ParticleGame::dJ_dx)
+      .def("dJ_du", &ParticleGame::dJ_du)
+      .def("dJ_dxdx", &ParticleGame::dJ_dxdx)
+      .def("print_dim", &ParticleGame::print_dim);
 }
