@@ -11,7 +11,7 @@ u = np.array([7,8]).reshape((-1,1))
 def f(x,u):
     return A @ x + B @ u
 
-game = build.particle_game.ParticleGame(1,1,1,1, 0.1,0.1,0.1,0.1,0.1, A,A,A,A,B,A)
+game = build.particle_game.ParticleGame(1,1,1,1, 0.1,0.1,0.1,0.1,0.1, A,A,A,A,B,A,A)
 t0 = time()
 
 t0 = time()
@@ -24,15 +24,9 @@ result = f(x,u)
 print(result.shape)
 print(time()-t0)
 
-a = np.ones(10)
-print(a.shape)
-game.print_dim(a)
-b = np.ones((10,11))
-print(b.shape)
-game.print_dim(b)
-c = np.ones((10,11,12))
-print(c.shape)
-game.print_dim(c)
-
-
+a = np.linspace(0,19,20).reshape(4,5)
+b = a > 3
+print(a)
+retval = game.test_bool_array(a,b)
+print(retval)
 

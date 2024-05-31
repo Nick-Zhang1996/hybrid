@@ -40,5 +40,6 @@ PYBIND11_MODULE(particle_game,m)
       .def("dJ_dx", &ParticleGame::dJ_dx)
       .def("dJ_du", &ParticleGame::dJ_du)
       .def("dJ_dxdx", &ParticleGame::dJ_dxdx)
-      .def("print_dim", &ParticleGame::print_dim);
+      .def("print_dim", &ParticleGame::print_dim)
+      .def("test_bool_array",&ParticleGame::test_bool_array);
 }

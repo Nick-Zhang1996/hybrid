@@ -68,7 +68,7 @@ class ParticleGame {
         }
 
         np_array J_x_ref_fun(int i){
-            Eigen::Matrix mtx(n,1);
+            Eigen::MatrixXd mtx(n,1);
             (mtx << 0,target_y.coeff(i,0), 2.0, 0.0 ).finished();
             return mtx;
         }
@@ -90,10 +90,15 @@ class ParticleGame {
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }
         np_array test_bool_array(const np_array val, const np_array mask){
-            Eigen::MatrixXd
-
-
-
+            Eigen::MatrixXd output(val);
+            for (int i=0; i<val.rows(); i++){
+                for (int j=0; j<val.cols(); j++){
+                    if (!mask(i,j)){
+                        output(i,j) = 0;
+                    }
+                }
+            }
+            return output;
         }
         /*
 
