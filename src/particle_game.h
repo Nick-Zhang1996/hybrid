@@ -142,33 +142,329 @@ class ParticleGame {
             }
             return der;
         }
-        /*
-    def dLLi_du(self,x,u,h_plus_mask,lamda,mu,i):
-    def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
-    def dLLi_dudx(self,x,u,h_plus_mask,lamda,mu,i):
 
-    def r(self, x, u, lamda, mu, h_plus_mask):
+        // TODO remember to set x0
+        np_array dLLi_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const int i) {
+            np_array der(1, T * N* m); // Initialize derivative vector as row vector
+            der.setZero(); // Ensure all items are properly zero-initialized
 
-    def dBh_dxi(self,x_i,x_j):
-    def dBh_dxj(self,x_i,x_j):
-    def dBh_dxi_dxi(self,x_i,x_j):
-    def dBh_dxi_dxj(self,x_i,x_j):
-    def dBh_dxj_dxj(self,x_i,x_j):
+            // dLLi_dui_0
+            der.block(0, i * m, 1, m) = dJ_du(x0.row(i).transpose(), u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose());
 
-    def dF_dx(self,x,u,i,k):
-    def dF0_dx(self,x,u,i):
+            // dLLi_dui_k
+            for (int k = 1; k < T; ++k) {
+                der.block(0, i * m + k * N * m, 1, m) = dJ_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+            }
 
-    def dh_dx(self,x,k,i,j):
+            return der;
+        }
 
-    def dr_dx(self, x, u, lamda, mu, h_plus_mask):
-    def dr_du(self, x, u, lamda, mu, h_plus_mask):
-    def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
+np_array dBh_dxi(const np_array& x_i, const np_array& x_j) {
+    // Calculate dBh/dxi
+    return -1.0 / (rho * h(x_i, x_j)) * dh_dxi(x_i, x_j);
+}
 
-    def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
-    def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
-    def dr_dy(self, x, u, lamda, mu, h_plus_mask):
+np_array dBh_dxj(const np_array& x_i, const np_array& x_j) {
+    // Calculate dBh/dxj
+    return -1.0 / (rho * h(x_i, x_j)) * dh_dxj(x_i, x_j);
 
-    def getHplusMask(self,x):
+}
+np_array dBh_dxi_dxi(const np_array& x_i, const np_array& x_j) {
+    // Calculate h, dh/dxi, and dhdxi_dxi
+    np_array h = h(x_i, x_j);
+    np_array dhdxi = dh_dxi(x_i, x_j);
+    np_array dhdxi_dxi = dh_dxi_dxi(x_i, x_j);
+
+    // Calculate dBh/dxi_dxi
+    np_array val = 1.0 / (rho * h) * (-dhdxi_dxi + 1.0 / h * dhdxi.transpose() * dhdxi);
+    return val;
+}
+np_array dBh_dxi_dxj(const np_array& x_i, const np_array& x_j) {
+    // Calculate h, dh/dxi, and dhdxi_dxi
+    np_array h = h(x_i, x_j);
+    np_array dhdxi = dh_dxi(x_i, x_j);
+    np_array dhdxi_dxj = dh_dxi_dxj(x_i, x_j);
+
+    // Calculate dBh/dxi_dxi
+    np_array val = 1.0 / (rho * h) * (-dhdxi_dxj + 1.0 / h * dhdxi.transpose() * dhdxi);
+    return val;
+}
+np_array dBh_dxj_dxj(const np_array& x_i, const np_array& x_j) {
+    // Calculate h, dh/dxi, and dhdxi_dxi
+    np_array h = h(x_i, x_j);
+    np_array dhdxj = dh_dxj(x_i, x_j);
+    np_array dhdxj_dxj = dh_dxj_dxj(x_i, x_j);
+
+    // Calculate dBh/dxi_dxi
+    np_array val = 1.0 / (rho * h) * (-dhdxj_dxj + 1.0 / h * dhdxj.transpose() * dhdxi);
+    return val;
+}
+np_array dF_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const int i, const int k) {
+    // Initialize dF_dx matrix
+    np_array dFdx = np_array::Zero(n, T * N * n);
+
+    // Calculate indices for insertion
+    int start_idx_1 = (k - 1) * N * n + i * n;
+    int start_idx_2 = k * N * n + i * n;
+
+    // Assign values to dF_dx
+    dFdx.block(0, start_idx_1, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+    dFdx.block(0, start_idx_2, n, n) = -np_array::Identity(n, n);
+
+    return dFdx;
+}
+
+np_array dF0_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const int i) {
+    // Initialize dF_dx matrix
+    np_array dFdx = np_array::Zero(n, T * N * n);
+    dFdx.block(0, i*n, n, n) = -np_array::Identity(n, n);
+
+    return dFdx;
+}
+
+np_array dh_dx(const std::vector<np_array>& x, const int k, const int i, const int j) {
+    // Initialize dh_dx matrix
+    np_array dhdx = np_array::Zero(1, T * N * n);
+
+    // Calculate indices for insertion
+    int start_idx_1 = (k - 1) * N * n + i * n;
+    int start_idx_2 = (k - 1) * N * n + j * n;
+
+    // Assign values to dh_dx
+    dhdx.block(0, start_idx_1, 1, n) = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+    dhdx.block(0, start_idx_2, 1, n) = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+
+    return dhdx;
+}
+
+
+np_array dLLi_dxdx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const int i) {
+    np_array dLL_dxdx = np_array::Zero(T*N*n, T*N*n);
+
+    auto submtx = [&](int k, int i, int j) {
+        return dLL_dxdx.block((k - 1) * N * n + i * n, (k - 1) * N * n + j * n, n, n);
+    };
+
+    for (int k = 1; k < T; ++k) {
+        auto mtx = submtx(k, i, i);
+        mtx = dJ_dxdx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(), i);
+        for (int j=0; j<N; ++j){
+            if (i==j){continue;}
+            if (h_plus_mask[k-1](i,j)){
+                mtx += mu[k - 1](i,j) * dh_dxi_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+            } else {
+                mtx += dBh_dxi_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+            }
+        }
+    }
+
+    auto mtx = submtx(T, i, i);
+    mtx = dJ_dxdx(x[T - 1].row(i).transpose(), np_array::Zero(m,1), i);
+
+    for (int j=0; j<N; ++j){
+        if (i==j){continue;}
+        if (h_plus_mask[T-1](i,j)){
+            mtx += mu[T - 1](i,j) * dh_dxi_dxi(x[T - 1].row(i).transpose(), x[T - 1].row(j).transpose());
+        } else {
+            mtx += dBh_dxi_dxi(x[T - 1].row(i).transpose(), x[T - 1].row(j).transpose());
+        }
+    }
+
+    for (int k = 1; k <= T; ++k) {
+        for (int j = 0; j < N; ++j) {
+            if (i == j) {
+                continue;
+            }
+            auto val = np_array::Zero(n, n);
+            if (h_plus_mask[k-1](i,j)){
+                val = mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                submtx(k,j,j) = mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+            } else {
+                val = dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                submtx(k,j,j) = dBh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+            }
+            submtx(k,i,j) = val;
+            submtx(k,j,i) = val.transpose();
+        }
+    }
+    return dLL_dxdx;
+}
+
+np_array dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+    // Calculate dimensions
+    int dim_x = N * T * n;
+    int dim_u = N * T * m;
+    int h_plus_sum = 0;
+    for (const auto& mask: h_plus_mask){
+        h_plus_sum += mask.count();
+    }
+    int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+
+    // Initialize dr_dx matrix
+    np_array drdx = np_array::Zero(dim_r, dim_x);
+
+    // Initialize index
+    int index = 0;
+
+    for (int i = 0; i < N; ++i) {
+        // Calculate dLL_dxdx
+        np_array dLL_dxdx = dLLi_dxdx(x, u, h_plus_mask, lamda, mu, i);
+        drdx.block(index, 0, dim_x, dim_x) = dLL_dxdx;
+        index += dim_x + dim_u;
+
+        np_array dF0dx = dF0_dx(x, u, i);
+        drdx.block(index, 0, n, dim_x) = dF0dx;
+
+        for (int k = 1; k < T; ++k) {
+            np_array dFdx = dF_dx(x, u, i, k);
+            drdx.block(index + n * k, 0, n, dim_x) = dFdx;
+        }
+        index += n*T;
+
+        for (int k = 1; k <= T; ++k) {
+            np_array dhdx = np_array::Zero(h_plus_mask[k-1].row(i).count(), dim_x);
+            int dh_dx_idx = 0;
+            for (int j = 0; j < N; ++j) {
+                if (h_plus_mask[k-1](i,j)){
+                    dhdx.row(dh_dx_idx) = dh_dx(x, k, i, j);
+                    dh_dx_idx++;
+                }
+            }
+            drdx.block(index, 0, dhdx.rows(), dim_x) = dhdx;
+            index += dhdx.rows();
+        }
+    }
+    return drdx;
+}
+
+
+
+
+/*
+    np_array dr_du( x, u, lamda, mu, h_plus_mask){
+        ''' return: dim(r)*dim(u) '''
+        T = T; N = N; n = n; m = m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+
+        drdu = np.zeros((dim_r,dim_u))
+        index = 0
+        for i in range(N):
+            index += dim_x
+            for k in range(T):
+                dLL_duik_duik = 2*J_R
+                drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
+            index += dim_u
+            k = 0
+            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = df_du(x0[i],u[k,i])
+            for k in range(1,T):
+                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = df_du(x[k-1,i],u[k,i])
+            index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
+
+        return drdu
+
+    }
+    np_array dr_dlamda( x, u, lamda, mu, h_plus_mask){
+        ''' return: dim(r)*dim(lamda) '''
+        T = T; N = N; n = n; m = m
+        dim_x = T*N*n; dim_u = T*N*m ; dim_lamda = T*N*n
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dr_dlamda = np.zeros((dim_r,dim_lamda))
+        index = 0
+        for i in range(N):
+            for k in range(1,T):
+                # dLLi_dxki_dlamda_ki
+                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,k*N*n+i*n:k*N*n+(i+1)*n] = df_dx(x[k-1,i],u[k,i]).T
+                # dLLi_dxki_dlamda_k-1,i
+                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+            k = T
+            dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+
+            index += dim_x # skip dLL_dx, index now points at dLLi_du
+            for k in range(0,T):
+                dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = df_du(x[k-1,i],u[k,i]).T
+
+            index += dim_u + n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
+
+        if (DEBUG):
+            dr_dlamda_num = jacobianNumerical(lambda ll:r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
+            ifprint(f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
+            diff = dr_dlamda_num - dr_dlamda
+            assert(np.linalg.norm(dr_dlamda-dr_dlamda_num)<1e-4)
+        return dr_dlamda
+
+    }
+    np_array dLLi_dx_dmu(x,u,h_plus_mask,lamda,mu,i){
+        ''' return: dim: dim_x*dim_mu '''
+        T = T; N = N; n = n; m = m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_mu = T*N*N
+        dLL_dx_dmu = np.zeros((dim_x,dim_mu))
+        for k in range(1,T+1):
+            for j in np.nonzero(h_plus_mask[k-1,i])[0]:
+                dLLi_dxki_dmuijk = dh_dxi(x[k-1,i],x[k-1,j])
+                dLLi_dxkj_dmuijk = dh_dxj(x[k-1,i],x[k-1,j])
+                dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
+                dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_dmuijk
+        return dLL_dx_dmu
+
+    # TODO this is untested
+    }
+    np_array dr_dmu( x, u, lamda, mu, h_plus_mask){
+        ''' return: dim(r)*dim(mu) '''
+        T = T; N = N; n = n; m = m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dim_mu = T*N*N
+
+        dr_dmu = np.zeros((dim_r,dim_mu))
+        index = 0
+        for i in range(N):
+            # dmu i,j,k
+            dLL_dx_dmu = dLLi_dx_dmu(x,u,h_plus_mask,lamda,mu,i)
+            dr_dmu[index:index+dim_x,:] = dLL_dx_dmu
+            if (DEBUG):
+                dLL_dx_dmu_num = jacobianNumerical(lambda mm:dLLi_dx(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
+                assert(np.linalg.norm(dLL_dx_dmu-dLL_dx_dmu_num)<1e-4)
+
+            index += dim_x + dim_u + n*T + np.sum(h_plus_mask[:,i])
+
+        if (DEBUG):
+            dr_dmu_num = jacobianNumerical(lambda mm:r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
+            ifprint(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
+            assert(np.linalg.norm(dr_dmu-dr_dmu_num)<1e-4)
+        return dr_dmu
+
+    }
+    np_array dr_dy( x, u, lamda, mu, h_plus_mask){
+        t.s('drdx')
+        drdx = dr_dx(x, u, lamda, mu, h_plus_mask)
+        t.e('drdx')
+        t.s('drdu')
+        drdu = dr_du(x, u, lamda, mu, h_plus_mask)
+        t.e('drdu')
+        t.s('drdlamda')
+        drdlamda = dr_dlamda(x, u, lamda, mu, h_plus_mask)
+        t.e('drdlamda')
+        t.s('drdmu')
+        drdmu = dr_dmu(x, u, lamda, mu, h_plus_mask)
+        t.e('drdmu')
+        t.s('stack')
+        Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
+        t.e('stack')
+        return Dr
+
+    }
+    np_array getHplusMask(x){
+        # h(i,i) should not be considered in either h_plus or h_minus
+        # we check it in h_minux
+        # for x 1-T, NOTE index start from 1
+        h_plus_mask = np.zeros((T,N,N),dtype=bool)
+        for k in range(1,T+1):
+            for i in range(N):
+                for j in range(i+1,N):
+                    h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = h(x[k-1,i],x[k-1,j]) >= 0
+        return h_plus_mask
        */
 
         // TODO move to end
