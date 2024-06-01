@@ -10,10 +10,13 @@ from matplotlib.patches import Rectangle
 
 from util import *
 from TimeUtil import TimeUtil
+from src.build.particle_game import ParticleGame
 
-DEBUG = False
+DEBUG = True
 t = TimeUtil(True)
 PRINT = True
+USE_CPP = True
+CPP_DEBUG = True
 def ifprint(*objects):
     if (PRINT):
         print(*objects)
@@ -49,9 +52,9 @@ class UnstructuredDriving():
         self.rho = 10.0
         self.rho_b = 2.0
 
-        # dimension of u and x for single agent
-        self.m = 2
+        # dimension of x and u for single agent
         self.n = 4
+        self.m = 2
 
         # backtracking line search param
         self.bc_a = 0.1 #alpha
@@ -70,6 +73,7 @@ class UnstructuredDriving():
         self.frame_vec = []
 
         # step cost parameters
+        # NOTE this lambda fun needs to be implemented in c++
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
         self.J_Qr = np.diag([0,1,1,0])
         self.J_Q = np.diag([0,0,0,1e-2])
@@ -86,6 +90,8 @@ class UnstructuredDriving():
 
         self.residuals = None
         self.violations = None
+        if (USE_CPP):
+            self.cpp = ParticleGame(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
 
     def solve(self,save_gif=False,visualize=False,animate=False):
         N = self.N; T = self.T; n = self.n; m = self.m
@@ -355,14 +361,22 @@ class UnstructuredDriving():
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        return (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+        val = (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+        if (CPP_DEBUG):
+            alt = self.cpp.J(x,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
 
     def dJ_dx(self,x,u,i):
-        return  2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
+        val = 2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
+        return val
     def dJ_du(self,x,u,i):
-        return  2* u.T @ self.J_R
+        val = 2* u.T @ self.J_R
+        return val
     def dJ_dxdx(self,x,u,i):
-        return  2*self.J_Qr + 2*self.J_Q
+        val = 2*self.J_Qr + 2*self.J_Q
+        return val
 
     def f(self,x,u):
         '''
@@ -383,25 +397,67 @@ class UnstructuredDriving():
         #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
         # below is faster
         #return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
-        return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.2**2
+        val = -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.2**2
+        if (CPP_DEBUG):
+            alt = self.cpp.h(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
 
     # TODO rewrite this to be faster
     def dh_dxi(self,x_i,x_j):
-        return 2*(x_i-x_j).T @ self.h_Qh
+        val =  2*(x_i-x_j).T @ self.h_Qh
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
     def dh_dxj(self,x_i,x_j):
-        return 2*(x_j-x_i).T @ self.h_Qh
+        val = 2*(x_j-x_i).T @ self.h_Qh
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxj(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
     def dh_dxi_dxi(self,x_i,x_j):
-        return 2*self.h_Qh.T
+        val =  2*self.h_Qh.T
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxi_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
     def dh_dxj_dxi(self,x_i,x_j):
-        return -2* self.h_Qh.T
+        val = -2* self.h_Qh.T
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxj_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
     def dh_dxi_dxj(self,x_i,x_j):
-        return -2*self.h_Qh.T
+        val = -2*self.h_Qh.T
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxi_dxj(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
     def dh_dxj_dxj(self,x_i,x_j):
-        return 2*self.h_Qh.T
+        val = 2*self.h_Qh.T
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dxj_dxj(x_i,x_j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
 
     def L(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         # feasibility for h>0
         h_plus = np.sum( [ mu_k[i,j.item()] * ( self.h(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ],axis=0)
+        if (CPP_DEBUG):
+            for j in np.nonzero(h_k_plus_mask[i])[0]:
+                val = self.h(x_k[i], x_k[j.item()])
+                val_cpp = self.cpp.h(x_k[i], x_k[j.item()])
+                if (np.linalg.norm(val-val_cpp)>1e-4):
+                    breakpoint()
+
         # barrier for h < 0
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
         dynamics = lamda_k[i].T @ ( self.f(x_k[i],u_k_i) - x_k1_i)
@@ -428,6 +484,11 @@ class UnstructuredDriving():
         val =  self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
         val += -1/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+
+        if (CPP_DEBUG):
+            alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
+            if (np.linalg.norm(val-alt)>1e-4):
+                breakpoint()
         return val
 
     def dL_dx_ik1(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
@@ -438,7 +499,12 @@ class UnstructuredDriving():
         return  mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j])
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
-        return self.dJ_du(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
+        val = self.dJ_du(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
+        if (CPP_DEBUG):
+            alt = self.cpp.dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
 
 
     def LLi(self,x,u,h_plus_mask,lamda,mu,i):
@@ -482,7 +548,12 @@ class UnstructuredDriving():
                 sub = submtx_i_k(j,k)
                 sub[:] =  mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
                     -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j])
-        return der.reshape(1,-1)
+        val = der.reshape(1,-1)
+        if (CPP_DEBUG):
+            alt = self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
 
     # TODO check
     def dLLi_du(self,x,u,h_plus_mask,lamda,mu,i):
@@ -927,7 +998,7 @@ class UnstructuredDriving():
 
 
 if __name__=="__main__":
-    main = UnstructuredLaneChange()
-    main.solve(save_gif=True,visualize=True)
+    main = UnstructuredDriving()
+    main.solve(save_gif=False,visualize=True)
     main.final()
     t.summary()

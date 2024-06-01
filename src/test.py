@@ -24,9 +24,9 @@ result = f(x,u)
 print(result.shape)
 print(time()-t0)
 
-a = np.linspace(0,19,20).reshape(4,5)
-b = a > 3
-print(a)
-retval = game.test_bool_array(a,b)
-print(retval)
+a = np.random.random((4,3,2))
+
+print(a[1])
+print(game.three_dim([aa for aa in a]))
+
 
