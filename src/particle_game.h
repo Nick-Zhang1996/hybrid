@@ -487,8 +487,47 @@ class ParticleGame {
             return h_plus_mask;
         }
 
+        np_array r(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+            const int dim_x = N * T * n;
+            const int dim_u = N * T * m;
+            int h_plus_sum = 0;
+            for (const auto& mask : h_plus_mask) {
+                h_plus_sum += mask.count();
+            }
+            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
-        // TODO move to end
+            np_array r = np_array::Zero(dim_r,1);
+            int index = 0;
+            for (int i = 0; i < N; ++i) {
+                np_array dLL_dx = dLLi_dx(x, u, h_plus_mask, lamda, mu, i).transpose();
+                np_array dLL_du = dLLi_du(x, u, h_plus_mask, lamda, mu, i).transpose();
+                r.block(index, 0, dim_x, 1) = dLL_dx;
+                index += dim_x;
+                r.block(index, 0, dim_u, 1) = dLL_du;
+                index += dim_u;
+
+                // Dynamics for f(x0,u0) = x1
+                r.block(index, 0, n, 1) = f(x0.row(i).transpose(), u[0].row(i).transpose()) - x[0].row(i).transpose();
+
+                for (int k = 1; k < T+1; ++k) {
+                    r.block(index+k*n,0,n,1) = f(x[k - 1].row(i).transpose(), u[k].row(i).transpose()) - x[k].row(i).transpose();
+                }
+                index += n * T;
+
+                for (int k = 1; k < T+1; ++k) {
+                    int h_idx = 0;
+                    for (int j=0; j<N; ++j){
+                        if (h_plus_mask[k-1](i,j)){
+                            r(index,0) = h(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                            h_idx++;
+                        }
+                    }
+                    index += h_idx;
+                }
+            }
+            return r;
+        }
+
         void print_dim(const np_array val){
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }

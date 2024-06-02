@@ -90,10 +90,12 @@ class UnstructuredDriving():
 
         self.residuals = None
         self.violations = None
-        if (USE_CPP):
-            self.cpp = ParticleGame(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
 
     def solve(self,save_gif=False,visualize=False,animate=False):
+        if (USE_CPP):
+            self.cpp = ParticleGame(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
+            self.cpp.set_x0(self.x0)
+
         N = self.N; T = self.T; n = self.n; m = self.m
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
         ifprint(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
@@ -370,12 +372,24 @@ class UnstructuredDriving():
 
     def dJ_dx(self,x,u,i):
         val = 2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
+        if (CPP_DEBUG):
+            alt = self.cpp.dJ_dx(x,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
         return val
     def dJ_du(self,x,u,i):
         val = 2* u.T @ self.J_R
+        if (CPP_DEBUG):
+            alt = self.cpp.dJ_du(x,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
         return val
     def dJ_dxdx(self,x,u,i):
         val = 2*self.J_Qr + 2*self.J_Q
+        if (CPP_DEBUG):
+            alt = self.cpp.dJ_dxdx(x,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
         return val
 
     def f(self,x,u):
@@ -794,7 +808,7 @@ class UnstructuredDriving():
             ifprint(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
         if (CPP_DEBUG):
-            alt = self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i):
+            alt = self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
             if (np.linalg.norm(alt-dLL_dxdx)>1e-4):
                 breakpoint()
         return dLL_dxdx
@@ -812,6 +826,10 @@ class UnstructuredDriving():
         dFdx = np.zeros((n,dim_x))
         dFdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i])
         dFdx[:,k*N*n+i*n:k*N*n+(i+1)*n] = -np.eye(n)
+        if (CPP_DEBUG):
+            alt = self.cpp.dF_dx([xx for xx in x],[uu for uu in u],i,k)
+            if (np.linalg.norm(alt-dFdx)>1e-4):
+                breakpoint()
         return dFdx
 
     def dF0_dx(self,x,u,i):
@@ -821,6 +839,10 @@ class UnstructuredDriving():
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
         dFdx = np.zeros((n,dim_x))
         dFdx[:,i*n:(i+1)*n] = -np.eye(n)
+        if (CPP_DEBUG):
+            alt = self.cpp.dF0_dx([xx for xx in x],[uu for uu in u],i,k)
+            if (np.linalg.norm(alt-dFdx)>1e-4):
+                breakpoint()
         return dFdx
 
     def dh_dx(self,x,k,i,j):
@@ -830,6 +852,10 @@ class UnstructuredDriving():
         dhdx = np.zeros((1,dim_x))
         dhdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.dh_dxi(x[k-1,i],x[k-1,j])
         dhdx[:,(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n] = self.dh_dxj(x[k-1,i],x[k-1,j])
+        if (CPP_DEBUG):
+            alt = self.cpp.dh_dx([xx for xx in x],k,i,j)
+            if (np.linalg.norm(alt-dhdx)>1e-4):
+                breakpoint()
         return dhdx
 
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
@@ -864,6 +890,10 @@ class UnstructuredDriving():
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
             ifprint(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
+        if (CPP_DEBUG):
+            alt = self.cpp.dr_dx([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
+            if (np.linalg.norm(alt-dhdx)>1e-4):
+                breakpoint()
         return drdx
 
     def dr_dx_old(self, x, u, lamda, mu, h_plus_mask):
@@ -927,6 +957,10 @@ class UnstructuredDriving():
                             ifprint(f'k={k}, i={i},{np.nonzero(val-val_num)}')
                 breakpoint()
             '''
+        if (CPP_DEBUG):
+            alt = self.cpp.dr_du([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
+            if (np.linalg.norm(alt-drdu)>1e-4):
+                breakpoint()
         return drdu
 
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
@@ -958,6 +992,10 @@ class UnstructuredDriving():
             ifprint(f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
             diff = dr_dlamda_num - dr_dlamda
             assert(np.linalg.norm(dr_dlamda-dr_dlamda_num)<1e-4)
+        if (CPP_DEBUG):
+            alt = self.cpp.dr_dlamda_num([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
+            if (np.linalg.norm(alt-dr_dlamda)>1e-4):
+                breakpoint()
         return dr_dlamda
 
     def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
@@ -972,6 +1010,10 @@ class UnstructuredDriving():
                 dLLi_dxkj_dmuijk = self.dh_dxj(x[k-1,i],x[k-1,j])
                 dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
                 dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_dmuijk
+        if (CPP_DEBUG):
+            alt = self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-dLL_dx_dmu)>1e-4):
+                breakpoint()
         return dLL_dx_dmu
 
     # TODO this is untested
@@ -998,6 +1040,10 @@ class UnstructuredDriving():
             dr_dmu_num = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
             ifprint(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
             assert(np.linalg.norm(dr_dmu-dr_dmu_num)<1e-4)
+        if (CPP_DEBUG):
+            alt = self.cpp.dr_dmu([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
+            if (np.linalg.norm(alt-dr_dmu)>1e-4):
+                breakpoint()
         return dr_dmu
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
