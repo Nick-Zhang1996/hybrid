@@ -6,7 +6,7 @@ using std::endl;
 using std::cout;
 using std::min;
 
-typedef Eigen::MatrixXd np_array;
+typedef Eigen::MatrixXf np_array;
 
 inline float sqr(const float a){
     return a*a;
@@ -14,7 +14,7 @@ inline float sqr(const float a){
 
 class ParticleGame {
     private:
-        np_array A,B,J_Qr,J_Q,J_R,h_Qh,target_y;
+        np_array A,B,J_Qr,J_Q,J_R,h_Qh,target_y,x0;
         int N,T,n,m;
         float dt,rho,rho_b,bc_a,bc_b;
 
@@ -25,15 +25,18 @@ class ParticleGame {
                 const np_array _J_Qr, const np_array _J_Q, const np_array _J_R, const np_array _A, const np_array _B, const np_array _h_Qh, const np_array _target_y):
             N(_N), T(_T), n(_n), m(_m),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
-            J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y) {
+            J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y),x0() {
         }
         // TODO unnecessary copy
         // TODO fixed dimension arrays
-        void set_A(const Eigen::MatrixXd &val){
+        void set_A(const Eigen::MatrixXf &val){
             A = np_array(val);
         }
-        void set_B(const Eigen::MatrixXd &val){
+        void set_B(const Eigen::MatrixXf &val){
             B = np_array(val);
+        }
+        void set_x0(const Eigen::MatrixXf &val){
+            x0 = np_array(val);
         }
 
         np_array f(const np_array x, const np_array u){
@@ -70,7 +73,7 @@ class ParticleGame {
         }
 
         np_array J_x_ref_fun(int i){
-            Eigen::MatrixXd mtx(n,1);
+            Eigen::MatrixXf mtx(n,1);
             (mtx << 0,target_y(i,0), 2.0, 0.0 ).finished();
             return mtx;
         }
@@ -113,14 +116,14 @@ class ParticleGame {
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
         np_array dLLi_dx(const std::vector<np_array> x,const std::vector<np_array> u,const std::vector<np_array> h_plus_mask,const std::vector<np_array> lamda,const std::vector<np_array> mu,const int i){
             // TODO is this the best approach?
-            Eigen::MatrixXd der(1,T*N*n);
+            Eigen::MatrixXf der(1,T*N*n);
             der.setZero();
             // dLLi_dxi
             for (int k=1; k<T; k++){
                 der.block(0,(k-1)*N*n+i*n,1,n) = dL_dx_ik(x[k-1],u[k,i],x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
             }
             // dLLi_dxi_T
-            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJ_dx(x[T-1].row(i).transpose(),Eigen::MatrixXd::Zero(m,1),i);
+            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJ_dx(x[T-1].row(i).transpose(),Eigen::MatrixXf::Zero(m,1),i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_plus_mask[T-1](i,j)){
@@ -171,32 +174,32 @@ class ParticleGame {
         }
         np_array dBh_dxi_dxi(const np_array& x_i, const np_array& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            np_array h = h(x_i, x_j);
+            float h_val = h(x_i, x_j);
             np_array dhdxi = dh_dxi(x_i, x_j);
             np_array dhdxi_dxi = dh_dxi_dxi(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h) * (-dhdxi_dxi + 1.0 / h * dhdxi.transpose() * dhdxi);
+            np_array val = 1.0 / (rho * h_val) * (-dhdxi_dxi + 1.0 / h_val * dhdxi.transpose() * dhdxi);
             return val;
         }
         np_array dBh_dxi_dxj(const np_array& x_i, const np_array& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            np_array h = h(x_i, x_j);
+            float h_val = h(x_i, x_j);
             np_array dhdxi = dh_dxi(x_i, x_j);
             np_array dhdxi_dxj = dh_dxi_dxj(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h) * (-dhdxi_dxj + 1.0 / h * dhdxi.transpose() * dhdxi);
+            np_array val = 1.0 / (rho * h_val) * (-dhdxi_dxj + 1.0 / h_val * dhdxi.transpose() * dhdxi);
             return val;
         }
         np_array dBh_dxj_dxj(const np_array& x_i, const np_array& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            np_array h = h(x_i, x_j);
+            float h_val = h(x_i, x_j);
             np_array dhdxj = dh_dxj(x_i, x_j);
             np_array dhdxj_dxj = dh_dxj_dxj(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h) * (-dhdxj_dxj + 1.0 / h * dhdxj.transpose() * dhdxi);
+            np_array val = 1.0 / (rho * h_val) * (-dhdxj_dxj + 1.0 / h_val * dhdxj.transpose() * dhdxj);
             return val;
         }
         np_array dF_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const int i, const int k) {
@@ -275,7 +278,7 @@ class ParticleGame {
                     if (i == j) {
                         continue;
                     }
-                    auto val = np_array::Zero(n, n);
+                    np_array val = np_array::Zero(n, n);
                     if (h_plus_mask[k-1](i,j)){
                         val = mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
                         submtx(k,j,j) = mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
@@ -468,7 +471,7 @@ class ParticleGame {
             return dr_dmu;
         }
 
-        np_array getHplusMask(const std::vector<np_array>& x) {
+        std::vector<np_array> getHplusMask(const std::vector<np_array>& x) {
              std::vector<np_array> h_plus_mask(T);
              for (int i=0; i<T; i++){
                  h_plus_mask[i]= np_array::Zero(N, N);
@@ -490,7 +493,7 @@ class ParticleGame {
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }
         np_array test_bool_array(const np_array val, const np_array mask){
-            Eigen::MatrixXd output(val);
+            Eigen::MatrixXf output(val);
             for (int i=0; i<val.rows(); i++){
                 for (int j=0; j<val.cols(); j++){
                     if (!mask(i,j)){

@@ -26,6 +26,8 @@ PYBIND11_MODULE(particle_game,m)
       .def(py::init<int,int,int,int, float,float,float,float,float, np_array,np_array,np_array,np_array,np_array,np_array,np_array>())
       .def("set_A", &ParticleGame::set_A)
       .def("set_B", &ParticleGame::set_B)
+      .def("set_x0", &ParticleGame::set_x0)
+
       .def("f", &ParticleGame::f)
       .def("df_dx", &ParticleGame::df_dx)
       .def("df_du", &ParticleGame::df_du)
