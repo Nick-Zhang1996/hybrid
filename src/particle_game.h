@@ -75,6 +75,7 @@ class ParticleGame {
             return 2*h_Qh.transpose();
         }
 
+        // NOTE this is dependent upon the car
         np_array J_x_ref_fun(int i){
             np_array mtx(n,1);
             (mtx << 0,target_y(i,0), 2.0, 0.0 ).finished();
@@ -332,11 +333,13 @@ class ParticleGame {
                     np_array dhdx = np_array::Zero(h_plus_mask[k-1].row(i).count(), dim_x);
                     int dh_dx_idx = 0;
                     for (int j = 0; j < N; ++j) {
+                        //if (i==j){continue;}
                         if (h_plus_mask[k-1](i,j)){
                             dhdx.row(dh_dx_idx) = dh_dx(x, k, i, j);
                             dh_dx_idx++;
                         }
                     }
+                    // TODO we could set the original matrix directly to avoid copying
                     drdx.block(index, 0, dhdx.rows(), dim_x) = dhdx;
                     index += dhdx.rows();
                 }
@@ -371,7 +374,7 @@ class ParticleGame {
                 }
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
-                for (int k = 1; k < T; ++k) {
+                for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
                 index += n * T + skip_count;
@@ -412,7 +415,7 @@ class ParticleGame {
 
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
-                for (int k = 1; k < T; ++k) {
+                for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
                 index += dim_u + n * T + skip_count;
@@ -430,14 +433,14 @@ class ParticleGame {
             // Initialize dLL_dx_dmu matrix
             np_array dLL_dx_dmu = np_array::Zero(dim_x, dim_mu);
 
-            for (int k = 1; k <= T; ++k) {
+            for (int k = 1; k < T+1; ++k) {
                 for (int j=0; j<N; j++) {
                     if (h_plus_mask[k-1](i,j)){
                         np_array dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
                         np_array dLLi_dxkj_dmuijk = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
 
-                        dLL_dx_dmu.block((k - 1) * N * n + i * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxki_dmuijk;
-                        dLL_dx_dmu.block((k - 1) * N * n + j * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxkj_dmuijk;
+                        dLL_dx_dmu.block((k - 1) * N * n + i * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxki_dmuijk.transpose();
+                        dLL_dx_dmu.block((k - 1) * N * n + j * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxkj_dmuijk.transpose();
                     }
                 }
             }
@@ -466,7 +469,7 @@ class ParticleGame {
                 dr_dmu.block(index, 0, dim_x, dim_mu) = dLL_dx_dmu;
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
-                for (int k = 1; k < T; ++k) {
+                for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
                 index += dim_x + dim_u + n * T + skip_count;

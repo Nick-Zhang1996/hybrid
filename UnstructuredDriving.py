@@ -15,8 +15,8 @@ from src.build.particle_game import ParticleGame
 DEBUG = False
 t = TimeUtil(True)
 PRINT = True
-USE_CPP = True
-CPP_DEBUG = True
+USE_CPP = False
+CPP_DEBUG = False
 def ifprint(*objects):
     if (PRINT):
         print(*objects)
@@ -498,13 +498,13 @@ class UnstructuredDriving():
                 assert (np.linalg.norm(num-ana) < 1e-4)
 
         val =  self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
-        print(val)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
-        print(val)
         val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
-        print(val)
 
         if (CPP_DEBUG):
+            alt = self.cpp.dJ_dx(x_k[i], u_k_i, i)
+            if (np.linalg.norm(self.dJ_dx(x_k[i],u_k_i,i)-alt)>1e-4):
+                breakpoint()
             alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
             if (np.linalg.norm(val-alt)>1e-4):
                 breakpoint()
@@ -884,7 +884,7 @@ class UnstructuredDriving():
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
         ''' return: dim(r)*dim(x) '''
         T = self.T; N = self.N; n = self.n; m = self.m
-        dim_x = N*T*n; dim_u = N*T*m
+        dim_x = T*N*n; dim_u = N*T*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
         drdx = np.zeros((dim_r,dim_x))
         index = 0
@@ -907,7 +907,7 @@ class UnstructuredDriving():
                     continue
                 dhdx = np.vstack([ self.dh_dx(x,k,i,j.item()) for j in indices ])
                 drdx[index:index+dhdx.shape[0],:] = dhdx
-            index += np.sum(h_plus_mask[:,i])
+                index += len(indices)
 
         if (DEBUG):
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
@@ -953,6 +953,7 @@ class UnstructuredDriving():
         dim_x = T*N*n; dim_u = T*N*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
 
+
         drdu = np.zeros((dim_r,dim_u))
         index = 0
         for i in range(self.N):
@@ -963,6 +964,7 @@ class UnstructuredDriving():
             index += dim_u
             k = 0
             drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(self.x0[i],u[k,i])
+
             for k in range(1,self.T):
                 drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i])
             index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
