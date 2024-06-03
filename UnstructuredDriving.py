@@ -12,7 +12,7 @@ from util import *
 from TimeUtil import TimeUtil
 from src.build.particle_game import ParticleGame
 
-DEBUG = True
+DEBUG = False
 t = TimeUtil(True)
 PRINT = True
 USE_CPP = True
@@ -240,6 +240,8 @@ class UnstructuredDriving():
             stopping = False
 
         self.rho *= self.rho_b
+        if (USE_CPP):
+            self.cpp.post_step_update()
 
 
         return split_y(y0+step*dy) + (stopping,)
@@ -496,8 +498,11 @@ class UnstructuredDriving():
                 assert (np.linalg.norm(num-ana) < 1e-4)
 
         val =  self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
+        print(val)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
-        val += -1/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        print(val)
+        val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        print(val)
 
         if (CPP_DEBUG):
             alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
@@ -637,7 +642,7 @@ class UnstructuredDriving():
 
         if (CPP_DEBUG):
             alt = self.cpp.r([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
-            if (np.linalg.norm(alt-r)>1e-4):
+            if (np.linalg.norm(alt.flatten()-r)>1e-4):
                 breakpoint()
         return r
 
@@ -715,9 +720,20 @@ class UnstructuredDriving():
             val_num = jacobianNumerical(lambda xx:self.dBh_dxi(xx.reshape(x_i.shape),x_j), x_i.flatten(),dim=self.n)
             assert(np.linalg.norm(val-val_num)<1e-4)
         if (CPP_DEBUG):
+            alt = self.cpp.h(x_i,x_j)
+            if (np.linalg.norm(alt-h)>1e-4):
+                breakpoint()
+            alt = self.cpp.dh_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-dhdxi)>1e-4):
+                breakpoint()
+            dhii = self.dh_dxi_dxi(x_i,x_j)
+            alt = self.cpp.dh_dxi_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-dhii)>1e-4):
+                breakpoint()
             alt = self.cpp.dBh_dxi_dxi(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+
         return val
 
     def dBh_dxi_dxj(self,x_i,x_j):
@@ -729,9 +745,16 @@ class UnstructuredDriving():
             val_num = jacobianNumerical(lambda xx:self.dBh_dxi(x_i, xx.reshape(x_j.shape)), x_j.flatten(),dim=self.n)
             assert(np.linalg.norm(val-val_num)<1e-4)
         if (CPP_DEBUG):
+            alt = self.cpp.dh_dxi(x_i,x_j)
+            if (np.linalg.norm(alt-dhdxi)>1e-4):
+                breakpoint()
+            alt = self.cpp.dh_dxj(x_i,x_j)
+            if (np.linalg.norm(alt-dhdxj)>1e-4):
+                breakpoint()
             alt = self.cpp.dBh_dxi_dxj(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+
         return val
 
     def dBh_dxj_dxj(self,x_i,x_j):
@@ -807,7 +830,7 @@ class UnstructuredDriving():
             dLL_dxdx_num = jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
             ifprint(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
-        if (CPP_DEBUG):
+        if (CPP_DEBUG): 
             alt = self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
             if (np.linalg.norm(alt-dLL_dxdx)>1e-4):
                 breakpoint()
@@ -840,7 +863,7 @@ class UnstructuredDriving():
         dFdx = np.zeros((n,dim_x))
         dFdx[:,i*n:(i+1)*n] = -np.eye(n)
         if (CPP_DEBUG):
-            alt = self.cpp.dF0_dx([xx for xx in x],[uu for uu in u],i,k)
+            alt = self.cpp.dF0_dx([xx for xx in x],[uu for uu in u],i)
             if (np.linalg.norm(alt-dFdx)>1e-4):
                 breakpoint()
         return dFdx
@@ -892,7 +915,7 @@ class UnstructuredDriving():
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
         if (CPP_DEBUG):
             alt = self.cpp.dr_dx([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
-            if (np.linalg.norm(alt-dhdx)>1e-4):
+            if (np.linalg.norm(alt-drdx)>1e-4):
                 breakpoint()
         return drdx
 
@@ -993,7 +1016,7 @@ class UnstructuredDriving():
             diff = dr_dlamda_num - dr_dlamda
             assert(np.linalg.norm(dr_dlamda-dr_dlamda_num)<1e-4)
         if (CPP_DEBUG):
-            alt = self.cpp.dr_dlamda_num([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
+            alt = self.cpp.dr_dlamda([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
             if (np.linalg.norm(alt-dr_dlamda)>1e-4):
                 breakpoint()
         return dr_dlamda
@@ -1073,6 +1096,11 @@ class UnstructuredDriving():
             for i in range(self.N):
                 for j in range(i+1,self.N):
                     h_plus_mask[k-1,i,j] = h_plus_mask[k-1,j,i] = self.h(x[k-1,i],x[k-1,j]) >= 0
+        if (CPP_DEBUG):
+            alt = self.cpp.getHplusMask([xx for xx in x])
+            if (np.linalg.norm(alt-h_plus_mask)>1e-4):
+                breakpoint()
+
         return h_plus_mask
 
 
