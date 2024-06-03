@@ -15,7 +15,7 @@ from src.build.particle_game import ParticleGame
 DEBUG = False
 t = TimeUtil(True)
 PRINT = True
-USE_CPP = False
+USE_CPP = True
 CPP_DEBUG = False
 def ifprint(*objects):
     if (PRINT):
@@ -92,7 +92,7 @@ class UnstructuredDriving():
         self.violations = None
 
     def solve(self,save_gif=False,visualize=False,animate=False):
-        if (USE_CPP):
+        if (USE_CPP or CPP_DEBUG):
             self.cpp = ParticleGame(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
@@ -365,6 +365,8 @@ class UnstructuredDriving():
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
+        if (USE_CPP):
+            return self.cpp.J(x,u,i)
         val = (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
         if (CPP_DEBUG):
             alt = self.cpp.J(x,u,i)
@@ -373,6 +375,8 @@ class UnstructuredDriving():
         return val
 
     def dJ_dx(self,x,u,i):
+        if (USE_CPP):
+            return self.cpp.dJ_dx(x,u,i)
         val = 2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
         if (CPP_DEBUG):
             alt = self.cpp.dJ_dx(x,u,i)
@@ -380,6 +384,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dJ_du(self,x,u,i):
+        if (USE_CPP):
+            return self.cpp.dJ_du(x,u,i)
         val = 2* u.T @ self.J_R
         if (CPP_DEBUG):
             alt = self.cpp.dJ_du(x,u,i)
@@ -387,6 +393,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dJ_dxdx(self,x,u,i):
+        if (USE_CPP):
+            return self.cpp.dJ_dxdx(x,u,i)
         val = 2*self.J_Qr + 2*self.J_Q
         if (CPP_DEBUG):
             alt = self.cpp.dJ_dxdx(x,u,i)
@@ -410,6 +418,8 @@ class UnstructuredDriving():
 
     def h(self, x_i, x_j):
         ''' car distance larger than 1.0 '''
+        if (USE_CPP):
+            return self.cpp.h(x_i,x_j)
         #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
         # below is faster
         #return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
@@ -422,6 +432,8 @@ class UnstructuredDriving():
 
     # TODO rewrite this to be faster
     def dh_dxi(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxi(x_i,x_j)
         val =  2*(x_i-x_j).T @ self.h_Qh
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxi(x_i,x_j)
@@ -429,6 +441,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dh_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxj(x_i,x_j)
         val = 2*(x_j-x_i).T @ self.h_Qh
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxj(x_i,x_j)
@@ -436,6 +450,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dh_dxi_dxi(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxi_dxi(x_i,x_j)
         val =  2*self.h_Qh.T
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxi(x_i,x_j)
@@ -443,6 +459,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dh_dxj_dxi(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxj_dxi(x_i,x_j)
         val = -2* self.h_Qh.T
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxi(x_i,x_j)
@@ -450,6 +468,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dh_dxi_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxi_dxj(x_i,x_j)
         val = -2*self.h_Qh.T
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxj(x_i,x_j)
@@ -457,6 +477,8 @@ class UnstructuredDriving():
                 breakpoint()
         return val
     def dh_dxj_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dh_dxj_dxj(x_i,x_j)
         val = 2*self.h_Qh.T
         if (CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxj(x_i,x_j)
@@ -478,7 +500,10 @@ class UnstructuredDriving():
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
         dynamics = lamda_k[i].T @ ( self.f(x_k[i],u_k_i) - x_k1_i)
         return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
+
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
+        if (USE_CPP):
+            return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
         # NOTE the behavior of barrier function near boundary may need tuning
         if (DEBUG):
             # dJ_dx -- passed
@@ -519,10 +544,6 @@ class UnstructuredDriving():
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j])
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         val = self.dJ_du(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
-        if (CPP_DEBUG):
-            alt = self.cpp.dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
         return val
 
 
@@ -539,6 +560,8 @@ class UnstructuredDriving():
         return LLi_val
 
     def dLLi_dx(self,x,u,h_plus_mask,lamda,mu,i):
+        if (USE_CPP):
+            return self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
         ''' return: 1*dim(x) = 1*(T*N*n) , Note index of x starts with 1'''
         T = self.T; N = self.N; n = self.n; m = self.m
         der = np.zeros(T*N*n)
@@ -576,6 +599,8 @@ class UnstructuredDriving():
 
     # TODO check
     def dLLi_du(self,x,u,h_plus_mask,lamda,mu,i):
+        if (USE_CPP):
+            return self.cpp.dLLi_du([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
         ''' return: 1*dim(u) = 1*(T*N*m) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         der = np.zeros(T*N*m)
@@ -616,6 +641,8 @@ class UnstructuredDriving():
         return r
 
     def r(self, x, u, lamda, mu, h_plus_mask):
+        if (USE_CPP):
+            return self.cpp.r([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
         T = self.T
         try:
             r = np.zeros(0)
@@ -687,6 +714,8 @@ class UnstructuredDriving():
         return -1/self.rho * np.log(-min(self.h(x_i, x_j),-1e-100))
 
     def dBh_dxi(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dBh_dxi(x_i,x_j)
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1/(self.rho*self.h(x_i, x_j))* self.dh_dxi(x_i,x_j)
@@ -700,6 +729,8 @@ class UnstructuredDriving():
         return val
 
     def dBh_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dBh_dxj(x_i,x_j)
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1/(self.rho*self.h(x_i, x_j))* self.dh_dxj(x_i,x_j)
@@ -713,6 +744,8 @@ class UnstructuredDriving():
         return val
 
     def dBh_dxi_dxi(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dBh_dxi_dxi(x_i,x_j)
         h = self.h(x_i,x_j)
         dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
         val = 1/(self.rho * h) * (-self.dh_dxi_dxi(x_i,x_j) + 1/h * dhdxi.T @ dhdxi )
@@ -737,6 +770,8 @@ class UnstructuredDriving():
         return val
 
     def dBh_dxi_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dBh_dxi_dxj(x_i,x_j)
         h = self.h(x_i,x_j)
         dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
         dhdxj = self.dh_dxj(x_i,x_j).reshape(1,self.n)
@@ -758,6 +793,8 @@ class UnstructuredDriving():
         return val
 
     def dBh_dxj_dxj(self,x_i,x_j):
+        if (USE_CPP):
+            return self.cpp.dBh_dxj_dxj(x_i,x_j)
         h = self.h(x_i,x_j)
         dhdxi = self.dh_dxi(x_i,x_j).reshape(1,self.n)
         dhdxj = self.dh_dxj(x_i,x_j).reshape(1,self.n)
@@ -773,6 +810,8 @@ class UnstructuredDriving():
 
 
     def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
+        if (USE_CPP):
+            return self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
         dLL_dxdx = np.zeros((dim_x,dim_x))
         submtx = lambda k,i,j: dLL_dxdx[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n]
@@ -844,6 +883,8 @@ class UnstructuredDriving():
     '''
 
     def dF_dx(self,x,u,i,k):
+        if (USE_CPP):
+            return self.cpp.dF_dx([xx for xx in x],[uu for uu in u],i,k)
         ''' F(x,u) = f(x_k_i,u_k_i)-x_k+1_i, find dF_dx, note x here is of dim(T*N*n) '''
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
         dFdx = np.zeros((n,dim_x))
@@ -856,6 +897,8 @@ class UnstructuredDriving():
         return dFdx
 
     def dF0_dx(self,x,u,i):
+        if (USE_CPP):
+            return self.cpp.dF0_dx([xx for xx in x],[uu for uu in u],i)
         ''' F0(x,u) = f(x_0_i,u_0_i)-x_1_i, find dF_dx note x here is of dim(T*N*n)
             A specialization for dF_dx when k=0, since we need x0
         '''
@@ -869,6 +912,8 @@ class UnstructuredDriving():
         return dFdx
 
     def dh_dx(self,x,k,i,j):
+        if (USE_CPP):
+            return self.cpp.dh_dx([xx for xx in x],k,i,j)
         ''' find d h(x_i,x_j)/ d x note x here is of dim(T*N*n) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n
@@ -882,6 +927,8 @@ class UnstructuredDriving():
         return dhdx
 
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
+        if (USE_CPP):
+            return self.cpp.dr_dx([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
         ''' return: dim(r)*dim(x) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = N*T*m
@@ -948,6 +995,8 @@ class UnstructuredDriving():
         return drdx
 
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
+        if (USE_CPP):
+            return self.cpp.dr_du([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
         ''' return: dim(r)*dim(u) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
@@ -989,6 +1038,8 @@ class UnstructuredDriving():
         return drdu
 
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
+        if (USE_CPP):
+            return self.cpp.dr_dlamda([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
         ''' return: dim(r)*dim(lamda) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m ; dim_lamda = T*N*n
@@ -1024,6 +1075,8 @@ class UnstructuredDriving():
         return dr_dlamda
 
     def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
+        if (USE_CPP):
+            return self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
         ''' return: dim: dim_x*dim_mu '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
@@ -1043,6 +1096,8 @@ class UnstructuredDriving():
 
     # TODO this is untested
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
+        if (USE_CPP):
+            return self.cpp.dr_dmu([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
         ''' return: dim(r)*dim(mu) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
@@ -1072,18 +1127,32 @@ class UnstructuredDriving():
         return dr_dmu
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
-        t.s('drdx')
-        drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
-        t.e('drdx')
-        t.s('drdu')
-        drdu = self.dr_du(x, u, lamda, mu, h_plus_mask)
-        t.e('drdu')
-        t.s('drdlamda')
-        drdlamda = self.dr_dlamda(x, u, lamda, mu, h_plus_mask)
-        t.e('drdlamda')
-        t.s('drdmu')
-        drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
-        t.e('drdmu')
+        if (USE_CPP):
+            t.s('drdx')
+            drdx = self.cpp.dr_dx(x, u, lamda, mu, h_plus_mask)
+            t.e('drdx')
+            t.s('drdu')
+            drdu = self.cpp.dr_du(x, u, lamda, mu, h_plus_mask)
+            t.e('drdu')
+            t.s('drdlamda')
+            drdlamda = self.cpp.dr_dlamda(x, u, lamda, mu, h_plus_mask)
+            t.e('drdlamda')
+            t.s('drdmu')
+            drdmu = self.cpp.dr_dmu(x, u, lamda, mu, h_plus_mask)
+            t.e('drdmu')
+        else:
+            t.s('drdx')
+            drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
+            t.e('drdx')
+            t.s('drdu')
+            drdu = self.dr_du(x, u, lamda, mu, h_plus_mask)
+            t.e('drdu')
+            t.s('drdlamda')
+            drdlamda = self.dr_dlamda(x, u, lamda, mu, h_plus_mask)
+            t.e('drdlamda')
+            t.s('drdmu')
+            drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
+            t.e('drdmu')
         t.s('stack')
         Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
         t.e('stack')
