@@ -1,12 +1,24 @@
 #pragma once
+//#define EIGEN_RUNTIME_NO_MALLOC 
+//Eigen::internal::set_is_malloc_allowed(false);
 
 #include <iostream>
 #include <pybind11/stl.h>
+#include <Eigen/Core>
+#include <Eigen/LU>
 using std::endl;
 using std::cout;
 using std::min;
+// TODO fix h_plus_sum re-calculation
+// TODO add fill-in style api
+// TODO use template size for n,m, T,N
+// TODO add step
+// TODO add solve
+// TODO make program self-independent
+// TODO block
 
 typedef Eigen::MatrixXd np_array;
+using Eigen::MatrixBase;
 
 inline double sqr(const double a){
     return a*a;
@@ -298,19 +310,35 @@ class ParticleGame {
             return dLL_dxdx;
         }
 
-        np_array dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        np_array dLLi_dx_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, int i) {
             // Calculate dimensions
+            const int dim_x = T * N * n;
+            const int dim_u = T * N * m;
+            const int dim_mu = T * N * N;
+
+            // Initialize dLL_dx_dmu matrix
+            np_array dLL_dx_dmu = np_array::Zero(dim_x, dim_mu);
+
+            for (int k = 1; k < T+1; ++k) {
+                for (int j=0; j<N; j++) {
+                    if (h_plus_mask[k-1](i,j)){
+                        np_array dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        np_array dLLi_dxkj_dmuijk = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+
+                        dLL_dx_dmu.block((k - 1) * N * n + i * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxki_dmuijk.transpose();
+                        dLL_dx_dmu.block((k - 1) * N * n + j * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxkj_dmuijk.transpose();
+                    }
+                }
+            }
+
+            return dLL_dx_dmu;
+        }
+
+        template<typename Derived>
+        void dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             int dim_x = N * T * n;
             int dim_u = N * T * m;
-            int h_plus_sum = 0;
-            for (const auto& mask: h_plus_mask){
-                h_plus_sum += mask.count();
-            }
-            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
-
-            // Initialize dr_dx matrix
-            np_array drdx = np_array::Zero(dim_r, dim_x);
-
+            auto& drdx = const_cast<MatrixBase<Derived>&>(mtx);
             // Initialize index
             int index = 0;
 
@@ -344,20 +372,29 @@ class ParticleGame {
                     index += dhdx.rows();
                 }
             }
-            return drdx;
         }
 
-        np_array dr_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        np_array dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = N * T * n;
-            int dim_u = T * N * m;
+            int dim_u = N * T * m;
             int h_plus_sum = 0;
-            for (const auto& mask : h_plus_mask) {
+            for (const auto& mask: h_plus_mask){
                 h_plus_sum += mask.count();
             }
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
-            np_array drdu = np_array::Zero(dim_r, dim_u);
 
+            // Initialize dr_dx matrix
+            np_array drdx = np_array::Zero(dim_r, dim_x);
+            dr_dx(x, u, lamda, mu, h_plus_mask, drdx);
+            return drdx;
+        }
+
+        template<typename Derived>
+        void dr_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+            auto& drdu = const_cast<MatrixBase<Derived>&>(mtx);
+            int dim_x = N * T * n;
+            int dim_u = N * T * m;
             int index = 0;
             for (int i = 0; i < N; ++i) {
                 index += dim_x;
@@ -379,8 +416,54 @@ class ParticleGame {
                 }
                 index += n * T + skip_count;
             }
+        }
 
+        np_array dr_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+            // Calculate dimensions
+            int dim_x = N * T * n;
+            int dim_u = T * N * m;
+            int h_plus_sum = 0;
+            for (const auto& mask : h_plus_mask) {
+                h_plus_sum += mask.count();
+            }
+            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            np_array drdu = np_array::Zero(dim_r, dim_u);
+            dr_du(x, u, lamda, mu, h_plus_mask, drdu);
             return drdu;
+        }
+
+        template<typename Derived>
+        void dr_dlamda(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+            auto& drdlamda = const_cast<MatrixBase<Derived>&>(mtx);
+            int dim_x = T * N * n;
+            int dim_u = T * N * m;
+            int index = 0;
+            for (int i = 0; i < N; ++i) {
+                for (int k = 1; k < T; ++k) {
+                    // dLLi_dxki_dlamda_ki
+                    drdlamda.block(index + (k - 1) * N * n + i * n, k * N * n + i * n, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose()).transpose();
+                    // dLLi_dxki_dlamda_k-1,i
+                    drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
+                }
+
+                const int k = T;
+                drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
+                // skip dLL_dx, index now points at dLLi_du
+                index += dim_x;
+
+                drdlamda.block(index + 0 * N * m + i * m, 0 * N * n + i * n, m, n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose()).transpose();
+                for (int k = 1; k < T; ++k) {
+                    drdlamda.block(index + k * N * m + i * m, k * N * n + i * n, m, n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose()).transpose();
+                }
+
+                // skip count for h_plus_mask[all k, i, all j]
+                int skip_count = 0;
+                for (int k = 1; k < T+1; ++k) {
+                    skip_count +=h_plus_mask[k-1].row(i).count();
+                }
+                index += dim_u + n * T + skip_count;
+            }
+
         }
         np_array dr_dlamda(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
             // Calculate dimensions
@@ -392,62 +475,32 @@ class ParticleGame {
                 h_plus_sum += mask.count();
             }
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
-            np_array dr_dlamda = np_array::Zero(dim_r, dim_lamda);
+            np_array drdlamda = np_array::Zero(dim_r, dim_lamda);
+            dr_dlamda(x, u, lamda, mu, h_plus_mask, drdlamda);
+            return drdlamda;
+        }
 
+
+        template<typename Derived>
+        void dr_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+            auto& drdmu = const_cast<MatrixBase<Derived>&>(mtx);
+            const int dim_x = T * N * n;
+            const int dim_u = T * N * m;
+            const int dim_mu = T * N * N;
             int index = 0;
             for (int i = 0; i < N; ++i) {
-                for (int k = 1; k < T; ++k) {
-                    // dLLi_dxki_dlamda_ki
-                    dr_dlamda.block(index + (k - 1) * N * n + i * n, k * N * n + i * n, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose()).transpose();
-                    // dLLi_dxki_dlamda_k-1,i
-                    dr_dlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
-                }
-
-                const int k = T;
-                dr_dlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
-                // skip dLL_dx, index now points at dLLi_du
-                index += dim_x;
-
-                dr_dlamda.block(index + 0 * N * m + i * m, 0 * N * n + i * n, m, n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose()).transpose();
-                for (int k = 1; k < T; ++k) {
-                    dr_dlamda.block(index + k * N * m + i * m, k * N * n + i * n, m, n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose()).transpose();
-                }
-
+                // Calculate dLL_dx_dmu
+                np_array dLL_dx_dmu = dLLi_dx_dmu(x, u, h_plus_mask, lamda, mu, i);
+                drdmu.block(index, 0, dim_x, dim_mu) = dLL_dx_dmu;
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
                 for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
-                index += dim_u + n * T + skip_count;
+                index += dim_x + dim_u + n * T + skip_count;
             }
 
-            return dr_dlamda;
         }
-
-        np_array dLLi_dx_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, int i) {
-            // Calculate dimensions
-            const int dim_x = T * N * n;
-            const int dim_u = T * N * m;
-            const int dim_mu = T * N * N;
-
-            // Initialize dLL_dx_dmu matrix
-            np_array dLL_dx_dmu = np_array::Zero(dim_x, dim_mu);
-
-            for (int k = 1; k < T+1; ++k) {
-                for (int j=0; j<N; j++) {
-                    if (h_plus_mask[k-1](i,j)){
-                        np_array dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
-                        np_array dLLi_dxkj_dmuijk = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
-
-                        dLL_dx_dmu.block((k - 1) * N * n + i * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxki_dmuijk.transpose();
-                        dLL_dx_dmu.block((k - 1) * N * n + j * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxkj_dmuijk.transpose();
-                    }
-                }
-            }
-
-            return dLL_dx_dmu;
-        }
-
         np_array dr_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
             // Calculate dimensions
             const int dim_x = T * N * n;
@@ -460,22 +513,9 @@ class ParticleGame {
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
             // Initialize dr_dmu matrix
-            np_array dr_dmu = np_array::Zero(dim_r, dim_mu);
-
-            int index = 0;
-            for (int i = 0; i < N; ++i) {
-                // Calculate dLL_dx_dmu
-                np_array dLL_dx_dmu = dLLi_dx_dmu(x, u, h_plus_mask, lamda, mu, i);
-                dr_dmu.block(index, 0, dim_x, dim_mu) = dLL_dx_dmu;
-                // skip count for h_plus_mask[all k, i, all j]
-                int skip_count = 0;
-                for (int k = 1; k < T+1; ++k) {
-                    skip_count +=h_plus_mask[k-1].row(i).count();
-                }
-                index += dim_x + dim_u + n * T + skip_count;
-            }
-
-            return dr_dmu;
+            np_array drdmu = np_array::Zero(dim_r, dim_mu);
+            dr_dmu(x, u, lamda, mu, h_plus_mask, drdmu);
+            return drdmu;
         }
 
         std::vector<np_array> getHplusMask(const std::vector<np_array>& x) {
@@ -535,6 +575,29 @@ class ParticleGame {
             return r;
         }
 
+        np_array dr_dy(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+            int h_plus_sum = 0;
+            for (const auto& mask : h_plus_mask) {
+                h_plus_sum += mask.count();
+            }
+            const int dim_x = N * T * n;
+            const int dim_u = N * T * m;
+            const int dim_lamda = T * N * n;
+            const int dim_mu = T * N * N;
+            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+
+            const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
+            np_array Dr(dim_r,dim_y);
+            Dr.setZero();
+
+            dr_dx(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_r,dim_x));
+            dr_du(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x,dim_r,dim_u));
+            dr_dlamda(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u,dim_r,dim_lamda));
+            dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_x+dim_u+dim_lamda,dim_mu));
+            return Dr;
+        }
+
+        // --- helper function, to be removed ---
         void print_dim(const np_array val){
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }

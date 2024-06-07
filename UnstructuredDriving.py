@@ -14,7 +14,7 @@ from src.build.particle_game import ParticleGame
 
 DEBUG = False
 t = TimeUtil(True)
-PRINT = True
+PRINT = False
 USE_CPP = True
 CPP_DEBUG = False
 def ifprint(*objects):
