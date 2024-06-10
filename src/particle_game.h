@@ -6,6 +6,13 @@
 #include <pybind11/stl.h>
 #include <Eigen/Core>
 #include <Eigen/LU>
+#include <Eigen/SparseCore>
+
+// sparse solvers
+#include <Eigen/OrderingMethods>
+#include <Eigen/SparseQR>
+using SolverClassName = Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>>;
+
 using std::endl;
 using std::cout;
 using std::min;
@@ -19,8 +26,11 @@ using std::min;
 
 typedef Eigen::MatrixXd np_array;
 using Eigen::MatrixBase;
+using Eigen::SparseMatrix;
+// TODO change all double 
+using Scalar = double;
 
-inline double sqr(const double a){
+inline double sqr(const Scalar a){
     return a*a;
 }
 
@@ -593,8 +603,97 @@ class ParticleGame {
             dr_dx(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_r,dim_x));
             dr_du(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x,dim_r,dim_u));
             dr_dlamda(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u,dim_r,dim_lamda));
-            dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_x+dim_u+dim_lamda,dim_mu));
+            dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u+dim_lamda,dim_r,dim_mu));
             return Dr;
+        }
+
+        std::vector<std::vector<np_array>> step(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu) {
+            const auto h_plus_mask = getHplusMask(x);
+            int h_plus_sum = 0;
+            for (const auto& mask : h_plus_mask) {
+                h_plus_sum += mask.count();
+            }
+
+
+            const int dim_x = N * T * n;
+            const int dim_u = N * T * m;
+            const int dim_lamda = T * N * n;
+            const int dim_mu = T * N * N;
+            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+
+            auto r0 = r(x, u, lamda, mu, h_plus_mask);
+            const auto Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
+            // TODO get nonzero terms, reduce matrix dimension
+            // print dimension of everything
+
+            auto Dr_sparse = Dr.sparseView();
+            SolverClassName solver;
+            // solve r0 + Dr* dy = 0 least square
+            solver.compute(Dr_sparse);
+            if (solver.info() != Eigen::Success){
+                cout << " solver initialization failed" << endl;
+                return std::vector<np_array>();
+            }
+            auto dy_sparse = solver.solve(-r0);
+            if (solver.info() != Eigen::Success){
+                cout << " solver solve failed" << endl;
+                return std::vector<np_array>();
+            }
+            np_array dy{dy_sparse};
+            return std::vector<np_array>{dy};
+
+            // line search
+            Scalar step = 1.0; // step size
+            Scalar r0_norm = r0.norm();
+            Scalar rt_norm = r0_norm;
+            auto split_y = [&](const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const np_array& dy, Scalar my_step){
+                const auto x_size = x.size();
+                std::vector<np_array> xx(x_size);
+                for (int i=0; i<x_size; i++){
+                    xx.at(i) = x.at(i) + my_step * dy.block(0,0,dim_x,1);
+                }
+                const auto u_size = u.size();
+                std::vector<np_array> uu(x_size);
+                for (int i=0; i<u_size; i++){
+                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x,0,dim_u,1);
+                }
+                const auto lamda_size = lamda.size();
+                std::vector<np_array> ll(lamda_size);
+                for (int i=0; i<lamda_size; i++){
+                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u,0,dim_lamda,1);
+                }
+                const auto mu_size = mu.size();
+                std::vector<np_array> mm(mu_size);
+                for (int i=0; i<mu_size; i++){
+                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda,0,dim_mu,1);
+                }
+                return std::tuple{xx, uu, ll, mm};
+            };
+
+
+            auto r_t_norm = [&](Scalar my_step){
+                auto y_tuple = split_y(x, u, lamda, mu, dy, my_step);
+                return r(std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple), h_plus_mask).norm();
+            };
+
+            for (int i=0; i<10; i++){
+                rt_norm = r_t_norm(step);
+                if (rt_norm > (1-bc_a*step)*r0_norm){
+                    step *= bc_b;
+                } else {
+                    break;
+                }
+            }
+
+            // stopping criteria
+            auto y_tuple = split_y(x, u, lamda, mu, dy, step);
+            if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
+                // stopping
+                return std::vector<np_array>();
+            } else {
+                std::vector<std::vector<np_array>> retval{std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple)};
+                return retval;
+            }
         }
 
         // --- helper function, to be removed ---
@@ -614,5 +713,13 @@ class ParticleGame {
         }
         np_array three_dim(const std::vector<np_array> mtx_vec){
             return mtx_vec[1];
+        }
+        // doesn't work unfortunately
+        void pass_by_ref(std::vector<np_array>& array){
+            // multiply the first array value by 2
+            array[0] *= 2;
+            // multiply the first array value by 0.5
+            array[1] *= 0.5;
+            return;
         }
 };

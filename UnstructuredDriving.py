@@ -14,7 +14,7 @@ from src.build.particle_game import ParticleGame
 
 DEBUG = False
 t = TimeUtil(True)
-PRINT = False
+PRINT = True
 USE_CPP = True
 CPP_DEBUG = False
 def ifprint(*objects):
@@ -122,6 +122,17 @@ class UnstructuredDriving():
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
+        if (USE_CPP):
+            t.s()
+            retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            self.cpp.post_step_update()
+            t.e()
+            if (len(retval) == 0):
+                stopping = True
+                return (x_ref, u_ref, lambda_ref, mu_ref, stopping)
+            else:
+                stopping = False
+                return tuple(retval) + (stopping,)
         t.s()
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
@@ -169,6 +180,7 @@ class UnstructuredDriving():
         dy = np.zeros_like(y0)
         dy[nonzero_cols] = reduced_dy
         t.e('reduced-sparse-lstsq')
+        ifprint(f'iter: {istop}, {itn}')
 
 
         ifprint(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
@@ -1128,18 +1140,18 @@ class UnstructuredDriving():
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         if (USE_CPP):
-            t.s('drdx')
+            '''
+            t.s('drdy-stacked')
             drdx = self.cpp.dr_dx(x, u, lamda, mu, h_plus_mask)
-            t.e('drdx')
-            t.s('drdu')
             drdu = self.cpp.dr_du(x, u, lamda, mu, h_plus_mask)
-            t.e('drdu')
-            t.s('drdlamda')
             drdlamda = self.cpp.dr_dlamda(x, u, lamda, mu, h_plus_mask)
-            t.e('drdlamda')
-            t.s('drdmu')
             drdmu = self.cpp.dr_dmu(x, u, lamda, mu, h_plus_mask)
-            t.e('drdmu')
+            Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
+            t.e('drdy-stacked')
+            '''
+            t.s('drdy-cpp')
+            Dr = self.cpp.dr_dy(x, u, lamda, mu, h_plus_mask)
+            t.e('drdy-cpp')
         else:
             t.s('drdx')
             drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
@@ -1153,9 +1165,9 @@ class UnstructuredDriving():
             t.s('drdmu')
             drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
             t.e('drdmu')
-        t.s('stack')
-        Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
-        t.e('stack')
+            t.s('stack')
+            Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
+            t.e('stack')
         return Dr
 
     def getHplusMask(self,x):

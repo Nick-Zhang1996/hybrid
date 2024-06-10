@@ -63,11 +63,14 @@ PYBIND11_MODULE(particle_game,m)
       .def("dr_dlamda", static_cast<np_array (ParticleGame::*)(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask)>(&ParticleGame::dr_dlamda) )
       .def("dr_dmu", static_cast<np_array (ParticleGame::*)(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask)>(&ParticleGame::dr_dmu) )
       .def("r", &ParticleGame::r)
+      .def("dr_dy", &ParticleGame::dr_dy)
       .def("getHplusMask", &ParticleGame::getHplusMask)
+      .def("step", &ParticleGame::step)
       
 
       .def("print_dim", &ParticleGame::print_dim)
       .def("test_bool_array",&ParticleGame::test_bool_array)
       .def("three_dim", &ParticleGame::three_dim)
+      .def("pass_by_ref", &ParticleGame::pass_by_ref)
       ;
 }
