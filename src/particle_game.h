@@ -632,15 +632,15 @@ class ParticleGame {
             solver.compute(Dr_sparse);
             if (solver.info() != Eigen::Success){
                 cout << " solver initialization failed" << endl;
-                return std::vector<np_array>();
+                return std::vector<std::vector<np_array>>();
             }
+
             auto dy_sparse = solver.solve(-r0);
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
-                return std::vector<np_array>();
+                return std::vector<std::vector<np_array>>();
             }
             np_array dy{dy_sparse};
-            return std::vector<np_array>{dy};
 
             // line search
             Scalar step = 1.0; // step size
@@ -650,24 +650,24 @@ class ParticleGame {
                 const auto x_size = x.size();
                 std::vector<np_array> xx(x_size);
                 for (int i=0; i<x_size; i++){
-                    xx.at(i) = x.at(i) + my_step * dy.block(0,0,dim_x,1);
+                    xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped(N,n);
                 }
                 const auto u_size = u.size();
                 std::vector<np_array> uu(x_size);
                 for (int i=0; i<u_size; i++){
-                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x,0,dim_u,1);
+                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped(N,m);
                 }
                 const auto lamda_size = lamda.size();
                 std::vector<np_array> ll(lamda_size);
                 for (int i=0; i<lamda_size; i++){
-                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u,0,dim_lamda,1);
+                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped(N,n);
                 }
                 const auto mu_size = mu.size();
                 std::vector<np_array> mm(mu_size);
                 for (int i=0; i<mu_size; i++){
-                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda,0,dim_mu,1);
+                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped(N,N);
                 }
-                return std::tuple{xx, uu, ll, mm};
+                return std::tuple<std::vector<np_array>,std::vector<np_array>,std::vector<np_array>,std::vector<np_array>> {xx, uu, ll, mm};
             };
 
 
@@ -689,10 +689,13 @@ class ParticleGame {
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
             if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
                 // stopping
-                return std::vector<np_array>();
+                return std::vector<std::vector<np_array>>();
             } else {
-                std::vector<std::vector<np_array>> retval{std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple)};
-                return retval;
+                auto xx = std::get<0>(y_tuple);
+                auto uu = std::get<1>(y_tuple);
+                auto ll = std::get<2>(y_tuple);
+                auto mm = std::get<3>(y_tuple);
+                return std::vector<std::vector<np_array>>{xx,uu,ll,mm};
             }
         }
 

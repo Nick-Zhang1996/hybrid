@@ -132,7 +132,8 @@ class UnstructuredDriving():
                 return (x_ref, u_ref, lambda_ref, mu_ref, stopping)
             else:
                 stopping = False
-                return tuple(retval) + (stopping,)
+                x_ref, u_ref, lambda_ref, mu_ref = retval
+                return (np.array(x_ref), np.array(u_ref), np.array(lambda_ref), np.array(mu_ref), stopping)
         t.s()
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
