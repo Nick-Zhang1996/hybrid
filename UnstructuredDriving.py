@@ -122,9 +122,12 @@ class UnstructuredDriving():
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
-        if (USE_CPP):
+        # FIXME
+        if (False and USE_CPP):
             t.s()
+            t.s('step')
             retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            t.e('step')
             self.cpp.post_step_update()
             t.e()
             if (len(retval) == 0):
@@ -181,6 +184,24 @@ class UnstructuredDriving():
         dy = np.zeros_like(y0)
         dy[nonzero_cols] = reduced_dy
         t.e('reduced-sparse-lstsq')
+
+
+        # FIXME debug comparison
+        t.s('cpp SparseQR')
+        reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
+        t.e('cpp SparseQR')
+
+        t.s('cpp lscg')
+        # this actually made it worse
+        reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
+        t.e('cpp lscg')
+
+        r0_norm = np.linalg.norm(r0[nonzero_rows])
+        res =     np.linalg.norm(reduced_Dr @ reduced_dy.reshape(-1,1) + r0[nonzero_rows])
+        res_sqr = np.linalg.norm(reduced_Dr @ reduced_dy_sqr + r0[nonzero_rows])
+        res_lscg = np.linalg.norm(reduced_Dr @ reduced_dy_lscg + r0[nonzero_rows])
+        print(r0_norm,res,res_sqr,res_lscg)
+
         ifprint(f'iter: {istop}, {itn}')
 
 

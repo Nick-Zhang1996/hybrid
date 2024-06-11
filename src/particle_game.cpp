@@ -68,6 +68,8 @@ PYBIND11_MODULE(particle_game,m)
       .def("step", &ParticleGame::step)
       
 
+      .def("SparseQR", &ParticleGame::SparseQR)
+      .def("LeastSquaresConjugateGradient", &ParticleGame::LeastSquaresConjugateGradient)
       .def("print_dim", &ParticleGame::print_dim)
       .def("test_bool_array",&ParticleGame::test_bool_array)
       .def("three_dim", &ParticleGame::three_dim)

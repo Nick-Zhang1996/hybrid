@@ -12,6 +12,9 @@
 #include <Eigen/OrderingMethods>
 #include <Eigen/SparseQR>
 using SolverClassName = Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>>;
+// for LeastSquaresConjugateGradient
+#include<Eigen/IterativeLinearSolvers>
+
 
 using std::endl;
 using std::cout;
@@ -625,6 +628,7 @@ class ParticleGame {
             const auto Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
             // TODO get nonzero terms, reduce matrix dimension
             // print dimension of everything
+            cout << "Dr: " << Dr.rows() << " * " << Dr.cols() << endl;
 
             auto Dr_sparse = Dr.sparseView();
             SolverClassName solver;
@@ -635,12 +639,11 @@ class ParticleGame {
                 return std::vector<std::vector<np_array>>();
             }
 
-            auto dy_sparse = solver.solve(-r0);
+            np_array dy = solver.solve(-r0);
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
                 return std::vector<std::vector<np_array>>();
             }
-            np_array dy{dy_sparse};
 
             // line search
             Scalar step = 1.0; // step size
@@ -677,6 +680,7 @@ class ParticleGame {
             };
 
             for (int i=0; i<10; i++){
+                // FIXME doesn't work after O2
                 rt_norm = r_t_norm(step);
                 if (rt_norm > (1-bc_a*step)*r0_norm){
                     step *= bc_b;
@@ -699,7 +703,44 @@ class ParticleGame {
             }
         }
 
+
         // --- helper function, to be removed ---
+
+        // solve Ax=B
+        np_array SparseQR(const np_array& A, const np_array& B){
+            Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> solver;
+            solver.compute(A.sparseView());
+            if (solver.info() != Eigen::Success){
+                cout << " solver initialization failed" << endl;
+                return np_array{};
+            }
+
+            np_array x = solver.solve(B);
+            if (solver.info() != Eigen::Success){
+                cout << " solver solve failed" << endl;
+                return np_array{};
+            }
+            return x;
+        }
+
+        np_array LeastSquaresConjugateGradient(const np_array& A, const np_array& B){
+            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
+            solver.compute(A.sparseView());
+            if (solver.info() != Eigen::Success){
+                cout << " solver initialization failed" << endl;
+                return np_array{};
+            }
+
+            // solver.setMaxIterations();
+            // solver.setTolerance
+            np_array x = solver.solve(B);
+            if (solver.info() != Eigen::Success){
+                cout << " solver solve failed" << endl;
+                return np_array{};
+            }
+            return x;
+        }
+
         void print_dim(const np_array val){
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }
