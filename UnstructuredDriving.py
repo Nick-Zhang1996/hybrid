@@ -162,8 +162,8 @@ class UnstructuredDriving():
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
 
 
-        '''
         # Dense
+        '''
         t.s('lstsq')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
         t.e('lstsq')
@@ -175,34 +175,38 @@ class UnstructuredDriving():
         '''
 
 
-        t.s('reduced-sparse-lstsq')
+        t.s('nonzero reduction')
         nonzero_rows = np.nonzero(np.sum(np.abs(Dr),axis=1))[0]
         nonzero_cols = np.nonzero(np.sum(np.abs(Dr),axis=0))[0]
         reduced_Dr = Dr[nonzero_rows,:][:,nonzero_cols]
+        t.e('nonzero reduction')
+        '''
+        t.s('reduced-sparse-lstsq')
         sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
         reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[nonzero_rows])[:4]
-        dy = np.zeros_like(y0)
-        dy[nonzero_cols] = reduced_dy
         t.e('reduced-sparse-lstsq')
-
-
-        # FIXME debug comparison
+        ifprint(f'iter: {istop}, {itn}')
         t.s('cpp SparseQR')
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp SparseQR')
+        '''
 
         t.s('cpp lscg')
         # this actually made it worse
         reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp lscg')
 
+        '''
         r0_norm = np.linalg.norm(r0[nonzero_rows])
         res =     np.linalg.norm(reduced_Dr @ reduced_dy.reshape(-1,1) + r0[nonzero_rows])
         res_sqr = np.linalg.norm(reduced_Dr @ reduced_dy_sqr + r0[nonzero_rows])
         res_lscg = np.linalg.norm(reduced_Dr @ reduced_dy_lscg + r0[nonzero_rows])
         print(r0_norm,res,res_sqr,res_lscg)
+        '''
 
-        ifprint(f'iter: {istop}, {itn}')
+        dy = np.zeros_like(y0)
+        dy[nonzero_cols] = reduced_dy_lscg.flatten()
+
 
 
         ifprint(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
