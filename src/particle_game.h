@@ -623,27 +623,58 @@ class ParticleGame {
             const int dim_lamda = T * N * n;
             const int dim_mu = T * N * N;
             const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
 
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
-            const auto Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
-            // TODO get nonzero terms, reduce matrix dimension
+            const np_array Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
             // print dimension of everything
-            cout << "Dr: " << Dr.rows() << " * " << Dr.cols() << endl;
+            //cout << "Dr: " << Dr.rows() << " * " << Dr.cols() << endl;
+            // get nonzero terms, reduce matrix dimension
+            std::vector<int> nonzero_rows_idx;
+            std::vector<int> nonzero_cols_idx;
+            std::tie(nonzero_rows_idx, nonzero_cols_idx) = nonzeros(Dr);
+            //cout << "nonzero" << endl;
 
-            auto Dr_sparse = Dr.sparseView();
+
+            np_array Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
+            auto Dr_reduced_sparse = Dr_reduced.sparseView();
+            //cout << "sparseview" << endl;
+            np_array r0_reduced = r0(nonzero_rows_idx,Eigen::all);
+            //cout << "Dr " << Dr.rows() << " " << Dr.cols() << endl;
+            //cout << "r0 " << r0.rows() << " " << r0.cols() << endl;
+            //cout << "Dr_reduced " << Dr_reduced.rows() << " " << Dr_reduced.cols() << endl;
+            //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
+
             SolverClassName solver;
             // solve r0 + Dr* dy = 0 least square
-            solver.compute(Dr_sparse);
+            solver.compute(Dr_reduced_sparse);
+            //solver.compute(Dr.sparseView());
+            //cout << "compute" << endl;
+
             if (solver.info() != Eigen::Success){
                 cout << " solver initialization failed" << endl;
                 return std::vector<std::vector<np_array>>();
             }
 
-            np_array dy = solver.solve(-r0);
+            // FIXME this fails
+            np_array dy_reduced = solver.solve(-r0_reduced);
+            //np_array dy_reduced = solver.solve(-r0);
+            //cout << "solve" << dy_reduced.maxCoeff() << endl;
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
                 return std::vector<std::vector<np_array>>();
             }
+            // reconstruct dy from dy_reduced
+            // FIXME debug printout
+            //cout << "Dr (reduced): " << Dr_reduced_sparse.rows() << " * " << Dr_reduced_sparse.cols() << endl;
+            //cout << "dim_y " << dim_y << endl;
+            //cout << "max col idx " << *std::max_element(nonzero_cols_idx.begin(), nonzero_cols_idx.end()) << endl;
+
+            np_array dy(dim_y,1);
+            dy.setZero();
+            dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
+            std::vector<np_array> dummy{dy};
+            return std::vector<std::vector<np_array>>{dummy};
 
             // line search
             Scalar step = 1.0; // step size
@@ -680,7 +711,6 @@ class ParticleGame {
             };
 
             for (int i=0; i<10; i++){
-                // FIXME doesn't work after O2
                 rt_norm = r_t_norm(step);
                 if (rt_norm > (1-bc_a*step)*r0_norm){
                     step *= bc_b;
@@ -704,7 +734,38 @@ class ParticleGame {
         }
 
 
-        // --- helper function, to be removed ---
+        // --- helper function ---
+        // find nonzero submatrix
+        // return: skimmed matrix (dense), nonzero row indices, nonzero col indices
+        std::tuple<std::vector<int>, std::vector<int>>
+        nonzeros(const Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic>& mtx){
+            // cols
+            Eigen::Matrix<bool,1,Eigen::Dynamic> nonzero_cols_mask = mtx.cast<bool>().colwise().any();
+            const int nonzero_cols_size = nonzero_cols_mask.cast<int>().sum();
+            std::vector<int> nonzero_cols_idx;
+            nonzero_cols_idx.reserve(nonzero_cols_size);
+            const int mtx_cols = mtx.cols();
+            for (int i=0; i<mtx_cols; i++){
+                if (nonzero_cols_mask(0,i)){
+                nonzero_cols_idx.push_back(i);
+                }
+            }
+            // rows
+            Eigen::Matrix<bool,1,Eigen::Dynamic> nonzero_rows_mask = mtx.cast<bool>().rowwise().any();
+            const int nonzero_rows_size = nonzero_rows_mask.cast<int>().sum();
+            std::vector<int> nonzero_rows_idx;
+            nonzero_rows_idx.reserve(nonzero_rows_size);
+            const int mtx_rows = mtx.rows();
+            for (int i=0; i<mtx_rows; i++){
+                if (nonzero_rows_mask(0,i)){
+                nonzero_rows_idx.push_back(i);
+                }
+            }
+
+            return {nonzero_rows_idx, nonzero_cols_idx};
+        }
+
+        // DEBUG functions
 
         // solve Ax=B
         np_array SparseQR(const np_array& A, const np_array& B){

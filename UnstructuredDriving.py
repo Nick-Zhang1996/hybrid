@@ -122,11 +122,11 @@ class UnstructuredDriving():
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
-        # FIXME
-        if (False and USE_CPP):
+        if (USE_CPP):
             t.s()
             t.s('step')
             retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            '''
             t.e('step')
             self.cpp.post_step_update()
             t.e()
@@ -137,6 +137,11 @@ class UnstructuredDriving():
                 stopping = False
                 x_ref, u_ref, lambda_ref, mu_ref = retval
                 return (np.array(x_ref), np.array(u_ref), np.array(lambda_ref), np.array(mu_ref), stopping)
+            '''
+            if (len(retval) > 0):
+                dy_step = retval
+                breakpoint()
+
         t.s()
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
