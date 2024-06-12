@@ -11,9 +11,10 @@
 // sparse solvers
 #include <Eigen/OrderingMethods>
 #include <Eigen/SparseQR>
-using SolverClassName = Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>>;
 // for LeastSquaresConjugateGradient
 #include<Eigen/IterativeLinearSolvers>
+
+#include "profiler.h"
 
 
 using std::endl;
@@ -22,7 +23,6 @@ using std::min;
 // TODO fix h_plus_sum re-calculation
 // TODO add fill-in style api
 // TODO use template size for n,m, T,N
-// TODO add step
 // TODO add solve
 // TODO make program self-independent
 // TODO block
@@ -42,6 +42,7 @@ class ParticleGame {
         np_array A,B,J_Qr,J_Q,J_R,h_Qh,target_y,x0;
         int N,T,n,m;
         double dt,rho,rho_b,bc_a,bc_b;
+        Profiler<false> profiler;
 
 
     public:
@@ -50,7 +51,7 @@ class ParticleGame {
                 const np_array _J_Qr, const np_array _J_Q, const np_array _J_R, const np_array _A, const np_array _B, const np_array _h_Qh, const np_array _target_y):
             N(_N), T(_T), n(_n), m(_m),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
-            J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y),x0() {
+            J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y),x0(),profiler() {
         }
         // TODO unnecessary copy
         // TODO fixed dimension arrays
@@ -616,8 +617,9 @@ class ParticleGame {
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
+            profiler.s();
 
-
+            profiler.s("init");
             const int dim_x = N * T * n;
             const int dim_u = N * T * m;
             const int dim_lamda = T * N * n;
@@ -627,9 +629,9 @@ class ParticleGame {
 
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
             const np_array Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
-            // print dimension of everything
-            //cout << "Dr: " << Dr.rows() << " * " << Dr.cols() << endl;
+            profiler.e("init");
             // get nonzero terms, reduce matrix dimension
+            profiler.s("nonzeros");
             std::vector<int> nonzero_rows_idx;
             std::vector<int> nonzero_cols_idx;
             std::tie(nonzero_rows_idx, nonzero_cols_idx) = nonzeros(Dr);
@@ -637,15 +639,20 @@ class ParticleGame {
 
 
             np_array Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
-            auto Dr_reduced_sparse = Dr_reduced.sparseView();
-            //cout << "sparseview" << endl;
             np_array r0_reduced = r0(nonzero_rows_idx,Eigen::all);
+            profiler.e("nonzeros");
+
+            profiler.s("sparse");
+            auto Dr_reduced_sparse = Dr_reduced.sparseView();
+            profiler.e("sparse");
+            //cout << "sparseview" << endl;
             //cout << "Dr " << Dr.rows() << " " << Dr.cols() << endl;
             //cout << "r0 " << r0.rows() << " " << r0.cols() << endl;
             //cout << "Dr_reduced " << Dr_reduced.rows() << " " << Dr_reduced.cols() << endl;
             //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
 
-            SolverClassName solver;
+            profiler.s("solve");
+            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
             // solve r0 + Dr* dy = 0 least square
             solver.compute(Dr_reduced_sparse);
             //solver.compute(Dr.sparseView());
@@ -663,17 +670,17 @@ class ParticleGame {
                 cout << " solver solve failed" << endl;
                 return std::vector<std::vector<np_array>>();
             }
-            // reconstruct dy from dy_reduced
-            // FIXME debug printout
-            //cout << "Dr (reduced): " << Dr_reduced_sparse.rows() << " * " << Dr_reduced_sparse.cols() << endl;
-            //cout << "dim_y " << dim_y << endl;
-            //cout << "max col idx " << *std::max_element(nonzero_cols_idx.begin(), nonzero_cols_idx.end()) << endl;
+            profiler.e("solve");
 
+            // reconstruct dy from dy_reduced
+            profiler.s("reconstruct dy");
             np_array dy(dim_y,1);
             dy.setZero();
             dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
+            profiler.e("reconstruct dy");
 
             // line search
+            profiler.s("line search");
             Scalar step = 1.0; // step size
             Scalar r0_norm = r0.norm();
 
@@ -709,17 +716,17 @@ class ParticleGame {
             };
 
 
-            cout << "r0_norm " << r0_norm << endl;
             for (int i=0; i<10; i++){
                 rt_norm = r_t_norm(step);
                 if (rt_norm > (1-bc_a*step)*r0_norm){
                     step *= bc_b;
-                    cout << "step = " << step << " norm " << rt_norm << endl;
                 } else {
                     break;
                 }
             }
+            profiler.e("line search");
 
+            profiler.e();
             // stopping criteria
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
             if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
@@ -764,6 +771,10 @@ class ParticleGame {
             }
 
             return {nonzero_rows_idx, nonzero_cols_idx};
+        }
+
+        void summary(){
+            profiler.summary();
         }
 
         // DEBUG functions

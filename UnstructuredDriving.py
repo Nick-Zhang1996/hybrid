@@ -14,7 +14,7 @@ from src.build.particle_game import ParticleGame
 
 DEBUG = False
 t = TimeUtil(True)
-PRINT = True
+PRINT = False
 USE_CPP = True
 CPP_DEBUG = False
 def ifprint(*objects):
@@ -44,10 +44,12 @@ class UnstructuredDriving():
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 8
+        #self.T = 8
+        self.T = 20
         self.track_width = 5
         self.track_length = 20
-        self.dt = dt = 0.25
+        #self.dt = dt = 0.25
+        self.dt = dt = 0.1
 
         self.rho = 10.0
         self.rho_b = 2.0
@@ -123,7 +125,7 @@ class UnstructuredDriving():
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
         t.s()
-        if (False and USE_CPP):
+        if (USE_CPP):
             t.s('cpp step')
             retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
             t.e('cpp step')
@@ -332,6 +334,8 @@ class UnstructuredDriving():
 
     def final(self):
         t.summary()
+        if (USE_CPP):
+            self.cpp.summary()
         if (len(self.frame_vec)>0):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
@@ -1225,4 +1229,3 @@ if __name__=="__main__":
     main = UnstructuredDriving()
     main.solve(save_gif=False,visualize=True)
     main.final()
-    t.summary()
