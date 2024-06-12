@@ -122,12 +122,11 @@ class UnstructuredDriving():
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         global t
-        if (USE_CPP):
-            t.s()
-            t.s('step')
+        t.s()
+        if (False and USE_CPP):
+            t.s('cpp step')
             retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
-            '''
-            t.e('step')
+            t.e('cpp step')
             self.cpp.post_step_update()
             t.e()
             if (len(retval) == 0):
@@ -137,12 +136,7 @@ class UnstructuredDriving():
                 stopping = False
                 x_ref, u_ref, lambda_ref, mu_ref = retval
                 return (np.array(x_ref), np.array(u_ref), np.array(lambda_ref), np.array(mu_ref), stopping)
-            '''
-            if (len(retval) > 0):
-                dy_step = retval
-                breakpoint()
 
-        t.s()
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
@@ -240,11 +234,20 @@ class UnstructuredDriving():
         step = 1.0 # step size
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
+        '''
+        print(f'r0_norm {r0_norm}')
+        print('x1 from cpp')
+        print(np.array(retval[0]).reshape(T,N,n)[0,0])
+        print('x1 from python')
+        print(split_y(y0+step*dy)[0][0,0])
+        '''
+
         for i in range(10):
             r_t = r_y_fun(y0+step*dy)
             r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1-self.bc_a*step)*r0_norm):
                 step *= self.bc_b
+                print(f'mystep = {step} norm {r_t_norm}')
             else:
                 break
         t.e('line search')

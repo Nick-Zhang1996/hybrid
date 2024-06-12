@@ -27,7 +27,7 @@ using std::min;
 // TODO make program self-independent
 // TODO block
 
-typedef Eigen::MatrixXd np_array;
+typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> np_array;
 using Eigen::MatrixBase;
 using Eigen::SparseMatrix;
 // TODO change all double 
@@ -656,7 +656,6 @@ class ParticleGame {
                 return std::vector<std::vector<np_array>>();
             }
 
-            // FIXME this fails
             np_array dy_reduced = solver.solve(-r0_reduced);
             //np_array dy_reduced = solver.solve(-r0);
             //cout << "solve" << dy_reduced.maxCoeff() << endl;
@@ -673,33 +672,32 @@ class ParticleGame {
             np_array dy(dim_y,1);
             dy.setZero();
             dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
-            std::vector<np_array> dummy{dy};
-            return std::vector<std::vector<np_array>>{dummy};
 
             // line search
             Scalar step = 1.0; // step size
             Scalar r0_norm = r0.norm();
+
             Scalar rt_norm = r0_norm;
             auto split_y = [&](const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const np_array& dy, Scalar my_step){
                 const auto x_size = x.size();
                 std::vector<np_array> xx(x_size);
                 for (int i=0; i<x_size; i++){
-                    xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped(N,n);
+                    xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
                 }
                 const auto u_size = u.size();
                 std::vector<np_array> uu(x_size);
                 for (int i=0; i<u_size; i++){
-                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped(N,m);
+                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped<Eigen::AutoOrder>(N,m);
                 }
                 const auto lamda_size = lamda.size();
                 std::vector<np_array> ll(lamda_size);
                 for (int i=0; i<lamda_size; i++){
-                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped(N,n);
+                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
                 }
                 const auto mu_size = mu.size();
                 std::vector<np_array> mm(mu_size);
                 for (int i=0; i<mu_size; i++){
-                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped(N,N);
+                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped<Eigen::AutoOrder>(N,N);
                 }
                 return std::tuple<std::vector<np_array>,std::vector<np_array>,std::vector<np_array>,std::vector<np_array>> {xx, uu, ll, mm};
             };
@@ -710,10 +708,13 @@ class ParticleGame {
                 return r(std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple), h_plus_mask).norm();
             };
 
+
+            cout << "r0_norm " << r0_norm << endl;
             for (int i=0; i<10; i++){
                 rt_norm = r_t_norm(step);
                 if (rt_norm > (1-bc_a*step)*r0_norm){
                     step *= bc_b;
+                    cout << "step = " << step << " norm " << rt_norm << endl;
                 } else {
                     break;
                 }
@@ -738,9 +739,9 @@ class ParticleGame {
         // find nonzero submatrix
         // return: skimmed matrix (dense), nonzero row indices, nonzero col indices
         std::tuple<std::vector<int>, std::vector<int>>
-        nonzeros(const Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic>& mtx){
+        nonzeros(const np_array& mtx){
             // cols
-            Eigen::Matrix<bool,1,Eigen::Dynamic> nonzero_cols_mask = mtx.cast<bool>().colwise().any();
+            Eigen::Matrix<bool,1,Eigen::Dynamic,Eigen::RowMajor> nonzero_cols_mask = mtx.cast<bool>().colwise().any();
             const int nonzero_cols_size = nonzero_cols_mask.cast<int>().sum();
             std::vector<int> nonzero_cols_idx;
             nonzero_cols_idx.reserve(nonzero_cols_size);
@@ -751,7 +752,7 @@ class ParticleGame {
                 }
             }
             // rows
-            Eigen::Matrix<bool,1,Eigen::Dynamic> nonzero_rows_mask = mtx.cast<bool>().rowwise().any();
+            Eigen::Matrix<bool,1,Eigen::Dynamic,Eigen::RowMajor> nonzero_rows_mask = mtx.cast<bool>().rowwise().any();
             const int nonzero_rows_size = nonzero_rows_mask.cast<int>().sum();
             std::vector<int> nonzero_rows_idx;
             nonzero_rows_idx.reserve(nonzero_rows_size);
