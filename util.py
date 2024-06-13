@@ -1,5 +1,9 @@
 import numpy as np
 
+def ifprint(*objects):
+    if (PRINT):
+        print(*objects)
+
 def jacobianNumerical(fun,x,dim=1):
     '''
     find jacobian of fun at x
@@ -77,3 +81,40 @@ def jacobianNumericalSlow(fun,x):
 
     return A
 
+class PrintObject:
+    debug = False
+    def __init__(self):
+        #print_ok(self.prefix() + "in use")
+        #self.debug = False
+        pass
+
+    def print_debug_enable(self):
+        self.debug = True
+    def print_debug_disable(self):
+        self.debug = False
+
+    def prefix(self):
+        return "["+self.__class__.__name__+"]: "
+
+    def print_error(self, *message):
+        print('\033[91m', self.prefix(),'ERROR ', *message, '\033[0m')
+        raise RuntimeError
+
+    def print_ok(self, *message):
+        # green
+        print('\033[92m',self.prefix(), *message, '\033[0m')
+
+    def print_debug(self, *message):
+        # yellow
+        if (self.debug):
+            print('\033[93m',self.prefix(), inspect.stack()[1][3],*message, '\033[0m')
+
+    def print_warning(self, *message):
+        # yellow
+        #print('\033[93m',self.prefix(), *message, '\033[0m')
+        # red
+        print('\033[91m',self.prefix(), 'WARNING: ', *message, '\033[0m')
+
+    def print_info(self, *message):
+        # light blue
+        print('\033[96m',self.prefix(), *message, '\033[0m')
