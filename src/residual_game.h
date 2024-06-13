@@ -37,7 +37,7 @@ inline double sqr(const Scalar a){
     return a*a;
 }
 
-class ParticleGame {
+class ResidualGame {
     private:
         np_array A,B,J_Qr,J_Q,J_R,h_Qh,target_y,x0;
         int N,T,n,m;
@@ -46,7 +46,7 @@ class ParticleGame {
 
 
     public:
-        ParticleGame(const int _N, const int _T, const int _n, const int _m,
+        ResidualGame(const int _N, const int _T, const int _n, const int _m,
                 const double _dt, const double _rho, const double _rho_b, const double _bc_a, const double _bc_b,
                 const np_array _J_Qr, const np_array _J_Q, const np_array _J_R, const np_array _A, const np_array _B, const np_array _h_Qh, const np_array _target_y):
             N(_N), T(_T), n(_n), m(_m),
