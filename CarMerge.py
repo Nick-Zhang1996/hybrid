@@ -20,7 +20,7 @@ class CarMerge(UnstructuredDriving):
         #self.target_y = [0, 0]
 
         # complicated, zipper merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        #np.random.seed(0)
+        np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         super().__init__(car_count=main_lane_n+merge_lane_n)

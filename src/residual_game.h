@@ -221,7 +221,7 @@ class ResidualGame {
 
 
         Matrix dLLi_dxdx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
-            cout << "dLLi_dxdx " << endl;
+            //cout << "dLLi_dxdx " << endl;
             Matrix dLL_dxdx = Matrix::Zero(T*N*n, T*N*n);
 
             auto submtx = [&](int k, int i, int j) {
@@ -229,7 +229,7 @@ class ResidualGame {
             };
 
             // dJi_dxi_dxi
-            cout << "dJi_dxi_dxi " << endl;
+            //cout << "dJi_dxi_dxi " << endl;
             for (int k = 1; k < T; ++k) {
                 auto mtx = submtx(k, i, i);
                 mtx = dJi_dxi_dxi(x[k - 1], u[k].row(i).transpose(), i);
@@ -244,7 +244,7 @@ class ResidualGame {
             }
 
             // dJi_dxi_dxi, k = T
-            cout << "dJi_dxi_dxi k=T " << endl;
+            //cout << "dJi_dxi_dxi k=T " << endl;
             auto mtx = submtx(T, i, i);
             mtx = dJi_dxi_dxi(x[T - 1], Matrix::Zero(m,1), i);
             for (int j=0; j<N; ++j){
@@ -257,7 +257,7 @@ class ResidualGame {
             }
 
             // dJi_dxi_dxj
-            cout << "dJi_dxi_dxj " << endl;
+            //cout << "dJi_dxi_dxj " << endl;
             for (int k = 1; k < T; ++k) {
                 for (int j = 0; j < N; ++j) {
                     if (i == j) {
@@ -276,7 +276,7 @@ class ResidualGame {
                 }
             }
 
-            cout << "dJi_dxi_dxj k=T" << endl;
+            //cout << "dJi_dxi_dxj k=T" << endl;
             const int k = T;
             for (int j = 0; j < N; ++j) {
                 if (i == j) {
@@ -641,16 +641,16 @@ class ResidualGame {
             //cout << "compute" << endl;
 
             if (solver.info() != Eigen::Success){
-                cout << " solver initialization failed" << endl;
-                return std::vector<std::vector<Matrix>>();
+                throw std::runtime_error(" solver initialization failed");
+                //return std::vector<std::vector<Matrix>>();
             }
 
             Matrix dy_reduced = solver.solve(-r0_reduced);
             //Matrix dy_reduced = solver.solve(-r0);
             //cout << "solve" << dy_reduced.maxCoeff() << endl;
             if (solver.info() != Eigen::Success){
-                cout << " solver solve failed" << endl;
-                return std::vector<std::vector<Matrix>>();
+                throw std::runtime_error(" solver solve() failed");
+                //return std::vector<std::vector<Matrix>>();
             }
             profiler.e("solve");
 
@@ -713,7 +713,8 @@ class ResidualGame {
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
             if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
                 // stopping
-                return std::vector<std::vector<Matrix>>();
+                throw pybind11::stop_iteration("stopping criteria met");
+                //return std::vector<std::vector<Matrix>>();
             } else {
                 auto xx = std::get<0>(y_tuple);
                 auto uu = std::get<1>(y_tuple);
@@ -766,13 +767,13 @@ class ResidualGame {
             Eigen::SparseQR<Eigen::SparseMatrix<Scalar>, Eigen::COLAMDOrdering<int>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
-                cout << " solver initialization failed" << endl;
+                throw std::runtime_error(" solver initialization failed");
                 return Matrix{};
             }
 
             Matrix x = solver.solve(B);
             if (solver.info() != Eigen::Success){
-                cout << " solver solve failed" << endl;
+                throw std::runtime_error(" solver solve() failed");
                 return Matrix{};
             }
             return x;
@@ -782,7 +783,7 @@ class ResidualGame {
             Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
-                cout << " solver initialization failed" << endl;
+                throw std::runtime_error(" solver initialization failed");
                 return Matrix{};
             }
 
@@ -790,7 +791,7 @@ class ResidualGame {
             // solver.setTolerance
             Matrix x = solver.solve(B);
             if (solver.info() != Eigen::Success){
-                cout << " solver solve failed" << endl;
+                throw std::runtime_error(" solver solve() failed");
                 return Matrix{};
             }
             return x;

@@ -8,10 +8,12 @@ class UnstructuredDriving : public ResidualGame {
                 const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b,
                 const Matrix _J_Qr, const Matrix _J_Q, const Matrix _J_R, const Matrix _A, const Matrix _B, const Matrix _h_Qh, const Matrix _target_y):
             ResidualGame(_N, _T, _n, _m, _dt, _rho, _rho_b, _bc_a, _bc_b),J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y) {
+                /*
                 cout << "N = " << N;
                 cout << "T = " << T;
                 cout << "n = " << n;
                 cout << "m = " << m;
+                */
         }
 
         // TODO unnecessary copy

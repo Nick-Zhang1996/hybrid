@@ -16,7 +16,8 @@ from TimeUtil import TimeUtil
 
 class ResidualGame(PrintObject):
     DEBUG = False
-    USE_CPP = False
+    USE_CPP = True
+    FORCE_PYTHON_SOLVER = False
     CPP_DEBUG = False
     def __init__(self):
 
@@ -60,6 +61,9 @@ class ResidualGame(PrintObject):
         '''
 
     def solve(self,save_gif=False,visualize=False,animate=False):
+        self.print_ok(f'USE_CPP: {self.USE_CPP}')
+        self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')
+
         N = self.N; T = self.T; n = self.n; m = self.m
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
         self.print_debug(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
@@ -72,11 +76,30 @@ class ResidualGame(PrintObject):
         mu_ref = np.zeros((T,N,N))
         self.visualize(u_ref,animate=animate,gif_prefix='before')
         t0 = time()
+        t = self.profiler
         for i in range(10):
-            x_ref, u_ref, lambda_ref, mu_ref, stopping = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+            t.s()
+            if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
+                t.s('cpp step')
+                try:
+                    try:
+                        retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+                        x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+                        # put update here because in case solver failed, self.step() will call cpp.post_step_update()
+                        self.cpp.post_step_update()
+                    except RuntimeError as e:
+                        self.print_warning('LSCG failed, falling back to python')
+                        x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+                except StopIteration:
+                    self.print_ok('stopping criterion met!')
+                    break
+                finally:
+                    t.e('cpp step')
+            else:
+                x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+            t.e()
             self.print_info(f'------ iter {i} ------')
-            if stopping:
-                break
+
         t_solve = time()-t0
         self.print_info(f'total solve time: {t_solve}')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
@@ -84,21 +107,6 @@ class ResidualGame(PrintObject):
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
-        t.s()
-        if (self.USE_CPP):
-            t.s('cpp step')
-            retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
-            t.e('cpp step')
-            self.cpp.post_step_update()
-            t.e()
-            if (len(retval) == 0):
-                stopping = True
-                return (x_ref, u_ref, lambda_ref, mu_ref, stopping)
-            else:
-                stopping = False
-                x_ref, u_ref, lambda_ref, mu_ref = retval
-                return (np.array(x_ref), np.array(u_ref), np.array(lambda_ref), np.array(mu_ref), stopping)
-
         t.s('setup')
         N = self.N; T = self.T; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
@@ -145,11 +153,10 @@ class ResidualGame(PrintObject):
 
         # use python's sparse lsqr
         t.s('reduced-sparse-lstsq')
-        if (not self.USE_CPP):
-            sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
-            reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[nonzero_rows])[:4]
-            t.e('reduced-sparse-lstsq')
-            self.print_debug(f'iter: {istop}, {itn}')
+        sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
+        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[nonzero_rows])[:4]
+        t.e('reduced-sparse-lstsq')
+        self.print_debug(f'iter: {istop}, {itn}')
         # use cpp's sparse QR
         '''
         t.s('cpp SparseQR')
@@ -158,11 +165,13 @@ class ResidualGame(PrintObject):
         '''
 
         # use cpp's lscg (fastest)
+        '''
         if (self.USE_CPP):
             t.s('cpp lscg')
             # this actually made it worse
             reduced_dy = reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
             t.e('cpp lscg')
+        '''
 
 
         # DEBUG - compare residual of different methods
@@ -199,7 +208,6 @@ class ResidualGame(PrintObject):
             else:
                 break
         t.e('line search')
-        t.e()
 
         self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
@@ -229,9 +237,7 @@ class ResidualGame(PrintObject):
 
         # stopping criterion
         if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
-            stopping = True
-        else:
-            stopping = False
+            raise StopIteration
 
         self.rho *= self.rho_b
 
@@ -240,7 +246,7 @@ class ResidualGame(PrintObject):
             # but if we are only using the "subfunctions", then this will be called
             self.cpp.post_step_update()
 
-        return split_y(y0+step*dy) + (stopping,)
+        return split_y(y0+step*dy)
 
     def rollout(self,x0,U):
         ''' given x0 and u0..u_T-1 (T*N*m), find x1..xT '''

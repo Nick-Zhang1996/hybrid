@@ -17,7 +17,6 @@ from ResidualGame import ResidualGame
 # example: unstructured lane change
 # this version use U as decision variable only
 class UnstructuredDriving(ResidualGame):
-    USE_CPP = True
     def __init__(self,car_count=3):
         super().__init__()
 
