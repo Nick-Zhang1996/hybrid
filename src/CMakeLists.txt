@@ -7,4 +7,5 @@ pkg_check_modules( EIGEN3 REQUIRED eigen3 )
 include_directories( ${EIGEN3_INCLUDE_DIRS} )
 
 add_subdirectory(pybind11)
-pybind11_add_module(residual_game residual_game.cpp)
+#pybind11_add_module(residual_game residual_game.cpp)
+pybind11_add_module(unstructured_driving unstructured_driving.cpp)

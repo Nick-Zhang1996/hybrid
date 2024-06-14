@@ -1,5 +1,5 @@
 #pragma once
-//#define EIGEN_RUNTIME_NO_MALLOC 
+//#define EIGEN_RUNTIME_NO_MALLOC
 //Eigen::internal::set_is_malloc_allowed(false);
 
 #include <iostream>
@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 #include <Eigen/SparseCore>
+#include <stdexcept>
 
 // sparse solvers
 #include <Eigen/OrderingMethods>
@@ -17,113 +18,52 @@
 #include "profiler.h"
 
 
+// TODO fix h_plus_sum re-calculation
+// TODO add fill-in style api
+// TODO add solve
+// TODO make program self-independent
+// TODO use template format for block
+// TODO remove temporary variables?
+
+using Scalar = double;
 using std::endl;
 using std::cout;
 using std::min;
-// TODO fix h_plus_sum re-calculation
-// TODO add fill-in style api
-// TODO use template size for n,m, T,N
-// TODO add solve
-// TODO make program self-independent
-// TODO block
-
-typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> np_array;
 using Eigen::MatrixBase;
 using Eigen::SparseMatrix;
-// TODO change all double 
-using Scalar = double;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
-inline double sqr(const Scalar a){
+inline double sqr(const double a){
     return a*a;
 }
 
 class ResidualGame {
-    private:
-        np_array A,B,J_Qr,J_Q,J_R,h_Qh,target_y,x0;
-        int N,T,n,m;
-        double dt,rho,rho_b,bc_a,bc_b;
-        Profiler<false> profiler;
 
+    protected:
+        // TODO move to template
+        int N,T,n,m;
+        Scalar dt,rho,rho_b,bc_a,bc_b;
+        Matrix x0;
+        Profiler<false> profiler;
 
     public:
         ResidualGame(const int _N, const int _T, const int _n, const int _m,
-                const double _dt, const double _rho, const double _rho_b, const double _bc_a, const double _bc_b,
-                const np_array _J_Qr, const np_array _J_Q, const np_array _J_R, const np_array _A, const np_array _B, const np_array _h_Qh, const np_array _target_y):
+                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b):
             N(_N), T(_T), n(_n), m(_m),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
-            J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y),x0(),profiler() {
+            x0(),profiler() {
         }
-        // TODO unnecessary copy
-        // TODO fixed dimension arrays
-        void set_A(const np_array &val){
-            A = np_array(val);
-        }
-        void set_B(const np_array &val){
-            B = np_array(val);
-        }
-        void set_x0(const np_array &val){
-            x0 = np_array(val);
+
+        void set_x0(const Matrix &val){
+            x0 = Matrix(val);
         }
         void post_step_update(){
             rho *= rho_b;
         }
 
-        np_array f(const np_array x, const np_array u){
-            return A * x + B * u;
-        }
-        np_array df_dx(const np_array x, const np_array u){
-            return A;
-        }
-        np_array df_du(const np_array x, const np_array u){
-            return B;
-        }
-
-
-        double h(const np_array x_i, const np_array x_j){
-            return -sqr(x_i(0,0)-x_j(0,0)) - sqr(x_i(1,0)-x_j(1,0)) + sqr(1.2);
-        }
-        np_array dh_dxi(const np_array x_i, const np_array x_j){
-            return 2*(x_i-x_j).transpose() * h_Qh;
-        }
-        np_array dh_dxj(const np_array x_i, const np_array x_j){
-            return 2*(x_j-x_i).transpose() * h_Qh;
-        }
-        np_array dh_dxi_dxi(const np_array x_i, const np_array x_j){
-            return 2*h_Qh.transpose();
-        }
-        np_array dh_dxj_dxi(const np_array x_i, const np_array x_j){
-            return -2*h_Qh.transpose();
-        }
-        np_array dh_dxi_dxj(const np_array x_i, const np_array x_j){
-            return -2*h_Qh.transpose();
-        }
-        np_array dh_dxj_dxj(const np_array x_i, const np_array x_j){
-            return 2*h_Qh.transpose();
-        }
-
-        // NOTE this is dependent upon the car
-        np_array J_x_ref_fun(int i){
-            np_array mtx(n,1);
-            (mtx << 0,target_y(i,0), 2.0, 0.0 ).finished();
-            return mtx;
-        }
-        np_array J(const np_array x, const np_array u, int i){
-            return (x-J_x_ref_fun(i)).transpose() * J_Qr * (x-J_x_ref_fun(i)) + x.transpose() * J_Q * x + u.transpose() * J_R * u;
-        }
-        np_array dJ_dx(const np_array x, const np_array u, int i){
-            return  2* (x-J_x_ref_fun(i)).transpose() * J_Qr + 2*x.transpose() * J_Q;
-        }
-        np_array dJ_du(const np_array x, const np_array u, int i){
-            return  2* u.transpose() * J_R;
-        }
-        np_array dJ_dxdx(const np_array x, const np_array u, int i){
-            return  2*J_Qr + 2*J_Q;
-        }
-
-
         // x_k: dim: N*n, u_k_i: dim:m*1, lambda_k:N*n, h_k_plus_mask: N*N, mu_k dim:N*N
-        np_array dL_dx_ik(const np_array x_k,const np_array  u_k_i,const np_array  x_k1_i,const np_array h_k_plus_mask,const np_array lamda_k,const np_array mu_k,const int i){
-            np_array val =  dJ_dx(x_k.row(i).transpose(),u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i);
+        Matrix dL_dx_ik(const Matrix x_k,const Matrix  u_k_i,const Matrix  x_k1_i,const Matrix h_k_plus_mask,const Matrix lamda_k,const Matrix mu_k,const int i){
+            Matrix val =  dJ_dx(x_k.row(i).transpose(),u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_k_plus_mask(i,j)){
@@ -135,7 +75,7 @@ class ResidualGame {
             return val;
         }
 
-        np_array dL_du(const np_array x_k, const np_array u_k_i, const np_array x_k1_i, const np_array h_k_plus_mask,const np_array lamda_k, const np_array mu_k,const int i){
+        Matrix dL_du(const Matrix x_k, const Matrix u_k_i, const Matrix x_k1_i, const Matrix h_k_plus_mask,const Matrix lamda_k, const Matrix mu_k,const int i){
             return dJ_du(x_k.row(i).transpose(),u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i);
         }
 
@@ -144,16 +84,16 @@ class ResidualGame {
         //u_i_k: 0..T-1, T*N*m
         //lamda_i_k: 0..T-1 T*N*n
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
-        np_array dLLi_dx(const std::vector<np_array> x,const std::vector<np_array> u,const std::vector<np_array> h_plus_mask,const std::vector<np_array> lamda,const std::vector<np_array> mu,const int i){
+        Matrix dLLi_dx(const std::vector<Matrix> x,const std::vector<Matrix> u,const std::vector<Matrix> h_plus_mask,const std::vector<Matrix> lamda,const std::vector<Matrix> mu,const int i){
             // TODO is this the best approach?
-            np_array der(1,T*N*n);
+            Matrix der(1,T*N*n);
             der.setZero();
             // dLLi_dxi
             for (int k=1; k<T; k++){
                 der.block(0,(k-1)*N*n+i*n,1,n) = dL_dx_ik(x[k-1],u[k,i],x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
             }
             // dLLi_dxi_T
-            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJ_dx(x[T-1].row(i).transpose(),np_array::Zero(m,1),i);
+            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJ_dx(x[T-1].row(i).transpose(),Matrix::Zero(m,1),i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_plus_mask[T-1](i,j)){
@@ -177,8 +117,8 @@ class ResidualGame {
         }
 
         // TODO remember to set x0
-        np_array dLLi_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const int i) {
-            np_array der(1, T * N* m); // Initialize derivative vector as row vector
+        Matrix dLLi_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            Matrix der(1, T * N* m); // Initialize derivative vector as row vector
             der.setZero(); // Ensure all items are properly zero-initialized
 
             // dLLi_dui_0
@@ -192,50 +132,49 @@ class ResidualGame {
             return der;
         }
 
-        np_array dBh_dxi(const np_array& x_i, const np_array& x_j) {
+        Matrix dBh_dxi(const Matrix& x_i, const Matrix& x_j) {
             // Calculate dBh/dxi
             return -1.0 / (rho * h(x_i, x_j)) * dh_dxi(x_i, x_j);
         }
 
-        np_array dBh_dxj(const np_array& x_i, const np_array& x_j) {
+        Matrix dBh_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate dBh/dxj
             return -1.0 / (rho * h(x_i, x_j)) * dh_dxj(x_i, x_j);
-
         }
-        np_array dBh_dxi_dxi(const np_array& x_i, const np_array& x_j) {
+        Matrix dBh_dxi_dxi(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            double h_val = h(x_i, x_j);
-            np_array dhdxi = dh_dxi(x_i, x_j);
-            np_array dhdxi_dxi = dh_dxi_dxi(x_i, x_j);
+            Scalar h_val = h(x_i, x_j);
+            Matrix dhdxi = dh_dxi(x_i, x_j);
+            Matrix dhdxi_dxi = dh_dxi_dxi(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h_val) * (-dhdxi_dxi + 1.0 / h_val * dhdxi.transpose() * dhdxi);
+            Matrix val = 1.0 / (rho * h_val) * (-dhdxi_dxi + 1.0 / h_val * dhdxi.transpose() * dhdxi);
             return val;
         }
-        np_array dBh_dxi_dxj(const np_array& x_i, const np_array& x_j) {
+        Matrix dBh_dxi_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            double h_val = h(x_i, x_j);
-            np_array dhdxi = dh_dxi(x_i, x_j);
-            np_array dhdxj = dh_dxj(x_i, x_j);
-            np_array dhdxi_dxj = dh_dxi_dxj(x_i, x_j);
+            Scalar h_val = h(x_i, x_j);
+            Matrix dhdxi = dh_dxi(x_i, x_j);
+            Matrix dhdxj = dh_dxj(x_i, x_j);
+            Matrix dhdxi_dxj = dh_dxi_dxj(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h_val) * (-dhdxi_dxj + 1.0 / h_val * dhdxi.transpose() * dhdxj);
+            Matrix val = 1.0 / (rho * h_val) * (-dhdxi_dxj + 1.0 / h_val * dhdxi.transpose() * dhdxj);
             return val;
         }
-        np_array dBh_dxj_dxj(const np_array& x_i, const np_array& x_j) {
+        Matrix dBh_dxj_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
-            double h_val = h(x_i, x_j);
-            np_array dhdxj = dh_dxj(x_i, x_j);
-            np_array dhdxj_dxj = dh_dxj_dxj(x_i, x_j);
+            Scalar h_val = h(x_i, x_j);
+            Matrix dhdxj = dh_dxj(x_i, x_j);
+            Matrix dhdxj_dxj = dh_dxj_dxj(x_i, x_j);
 
             // Calculate dBh/dxi_dxi
-            np_array val = 1.0 / (rho * h_val) * (-dhdxj_dxj + 1.0 / h_val * dhdxj.transpose() * dhdxj);
+            Matrix val = 1.0 / (rho * h_val) * (-dhdxj_dxj + 1.0 / h_val * dhdxj.transpose() * dhdxj);
             return val;
         }
-        np_array dF_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const int i, const int k) {
+        Matrix dF_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const int i, const int k) {
             // Initialize dF_dx matrix
-            np_array dFdx = np_array::Zero(n, T * N * n);
+            Matrix dFdx = Matrix::Zero(n, T * N * n);
 
             // Calculate indices for insertion
             int start_idx_1 = (k - 1) * N * n + i * n;
@@ -243,22 +182,22 @@ class ResidualGame {
 
             // Assign values to dF_dx
             dFdx.block(0, start_idx_1, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
-            dFdx.block(0, start_idx_2, n, n) = -np_array::Identity(n, n);
+            dFdx.block(0, start_idx_2, n, n) = -Matrix::Identity(n, n);
 
             return dFdx;
         }
 
-        np_array dF0_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const int i) {
+        Matrix dF0_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const int i) {
             // Initialize dF_dx matrix
-            np_array dFdx = np_array::Zero(n, T * N * n);
-            dFdx.block(0, i*n, n, n) = -np_array::Identity(n, n);
+            Matrix dFdx = Matrix::Zero(n, T * N * n);
+            dFdx.block(0, i*n, n, n) = -Matrix::Identity(n, n);
 
             return dFdx;
         }
 
-        np_array dh_dx(const std::vector<np_array>& x, const int k, const int i, const int j) {
+        Matrix dh_dx(const std::vector<Matrix>& x, const int k, const int i, const int j) {
             // Initialize dh_dx matrix
-            np_array dhdx = np_array::Zero(1, T * N * n);
+            Matrix dhdx = Matrix::Zero(1, T * N * n);
 
             // Calculate indices for insertion
             int start_idx_1 = (k - 1) * N * n + i * n;
@@ -272,8 +211,8 @@ class ResidualGame {
         }
 
 
-        np_array dLLi_dxdx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const int i) {
-            np_array dLL_dxdx = np_array::Zero(T*N*n, T*N*n);
+        Matrix dLLi_dxdx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            Matrix dLL_dxdx = Matrix::Zero(T*N*n, T*N*n);
 
             auto submtx = [&](int k, int i, int j) {
                 return dLL_dxdx.block((k - 1) * N * n + i * n, (k - 1) * N * n + j * n, n, n);
@@ -293,7 +232,7 @@ class ResidualGame {
             }
 
             auto mtx = submtx(T, i, i);
-            mtx = dJ_dxdx(x[T - 1].row(i).transpose(), np_array::Zero(m,1), i);
+            mtx = dJ_dxdx(x[T - 1].row(i).transpose(), Matrix::Zero(m,1), i);
 
             for (int j=0; j<N; ++j){
                 if (i==j){continue;}
@@ -309,7 +248,7 @@ class ResidualGame {
                     if (i == j) {
                         continue;
                     }
-                    np_array val = np_array::Zero(n, n);
+                    Matrix val = Matrix::Zero(n, n);
                     if (h_plus_mask[k-1](i,j)){
                         val = mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
                         submtx(k,j,j) = mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
@@ -324,20 +263,20 @@ class ResidualGame {
             return dLL_dxdx;
         }
 
-        np_array dLLi_dx_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& h_plus_mask, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, int i) {
+        Matrix dLLi_dx_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, int i) {
             // Calculate dimensions
             const int dim_x = T * N * n;
             const int dim_u = T * N * m;
             const int dim_mu = T * N * N;
 
             // Initialize dLL_dx_dmu matrix
-            np_array dLL_dx_dmu = np_array::Zero(dim_x, dim_mu);
+            Matrix dLL_dx_dmu = Matrix::Zero(dim_x, dim_mu);
 
             for (int k = 1; k < T+1; ++k) {
                 for (int j=0; j<N; j++) {
                     if (h_plus_mask[k-1](i,j)){
-                        np_array dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
-                        np_array dLLi_dxkj_dmuijk = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        Matrix dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        Matrix dLLi_dxkj_dmuijk = dh_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
 
                         dLL_dx_dmu.block((k - 1) * N * n + i * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxki_dmuijk.transpose();
                         dLL_dx_dmu.block((k - 1) * N * n + j * n, (k - 1) * N * N + i * N + j, n, 1) = dLLi_dxkj_dmuijk.transpose();
@@ -349,7 +288,7 @@ class ResidualGame {
         }
 
         template<typename Derived>
-        void dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+        void dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             int dim_x = N * T * n;
             int dim_u = N * T * m;
             auto& drdx = const_cast<MatrixBase<Derived>&>(mtx);
@@ -358,21 +297,21 @@ class ResidualGame {
 
             for (int i = 0; i < N; ++i) {
                 // Calculate dLL_dxdx
-                np_array dLL_dxdx = dLLi_dxdx(x, u, h_plus_mask, lamda, mu, i);
+                Matrix dLL_dxdx = dLLi_dxdx(x, u, h_plus_mask, lamda, mu, i);
                 drdx.block(index, 0, dim_x, dim_x) = dLL_dxdx;
                 index += dim_x + dim_u;
 
-                np_array dF0dx = dF0_dx(x, u, i);
+                Matrix dF0dx = dF0_dx(x, u, i);
                 drdx.block(index, 0, n, dim_x) = dF0dx;
 
                 for (int k = 1; k < T; ++k) {
-                    np_array dFdx = dF_dx(x, u, i, k);
+                    Matrix dFdx = dF_dx(x, u, i, k);
                     drdx.block(index + n * k, 0, n, dim_x) = dFdx;
                 }
                 index += n*T;
 
                 for (int k = 1; k <= T; ++k) {
-                    np_array dhdx = np_array::Zero(h_plus_mask[k-1].row(i).count(), dim_x);
+                    Matrix dhdx = Matrix::Zero(h_plus_mask[k-1].row(i).count(), dim_x);
                     int dh_dx_idx = 0;
                     for (int j = 0; j < N; ++j) {
                         //if (i==j){continue;}
@@ -388,7 +327,7 @@ class ResidualGame {
             }
         }
 
-        np_array dr_dx(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = N * T * n;
             int dim_u = N * T * m;
@@ -399,22 +338,25 @@ class ResidualGame {
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
             // Initialize dr_dx matrix
-            np_array drdx = np_array::Zero(dim_r, dim_x);
+            Matrix drdx = Matrix::Zero(dim_r, dim_x);
             dr_dx(x, u, lamda, mu, h_plus_mask, drdx);
             return drdx;
         }
 
         template<typename Derived>
-        void dr_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+        void dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdu = const_cast<MatrixBase<Derived>&>(mtx);
             int dim_x = N * T * n;
             int dim_u = N * T * m;
             int index = 0;
             for (int i = 0; i < N; ++i) {
                 index += dim_x;
-                for (int k = 0; k < T; ++k) {
+                int k = 0;
+                Matrix dLL_duik_duik = dJ_dudu(x0.row(i).transpose(),u[k].row(i).transpose(),i);
+                drdu.block(index + k * N * m + i * m, k * N * m + i * m, m, m) = dLL_duik_duik;
+                for (int k = 1; k < T; ++k) {
                     // dLL_duik_duik
-                    np_array dLL_duik_duik = 2 * J_R;
+                    Matrix dLL_duik_duik = dJ_dudu(x[k-1].row(i).transpose(),u[k].row(i).transpose(),i);
                     drdu.block(index + k * N * m + i * m, k * N * m + i * m, m, m) = dLL_duik_duik;
                 }
                 index += dim_u;
@@ -432,7 +374,7 @@ class ResidualGame {
             }
         }
 
-        np_array dr_du(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = N * T * n;
             int dim_u = T * N * m;
@@ -441,13 +383,13 @@ class ResidualGame {
                 h_plus_sum += mask.count();
             }
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
-            np_array drdu = np_array::Zero(dim_r, dim_u);
+            Matrix drdu = Matrix::Zero(dim_r, dim_u);
             dr_du(x, u, lamda, mu, h_plus_mask, drdu);
             return drdu;
         }
 
         template<typename Derived>
-        void dr_dlamda(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+        void dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdlamda = const_cast<MatrixBase<Derived>&>(mtx);
             int dim_x = T * N * n;
             int dim_u = T * N * m;
@@ -457,11 +399,11 @@ class ResidualGame {
                     // dLLi_dxki_dlamda_ki
                     drdlamda.block(index + (k - 1) * N * n + i * n, k * N * n + i * n, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose()).transpose();
                     // dLLi_dxki_dlamda_k-1,i
-                    drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
+                    drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -Matrix::Identity(n, n);
                 }
 
                 const int k = T;
-                drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -np_array::Identity(n, n);
+                drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -Matrix::Identity(n, n);
                 // skip dLL_dx, index now points at dLLi_du
                 index += dim_x;
 
@@ -479,7 +421,7 @@ class ResidualGame {
             }
 
         }
-        np_array dr_dlamda(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = T * N * n;
             int dim_u = T * N * m;
@@ -489,14 +431,14 @@ class ResidualGame {
                 h_plus_sum += mask.count();
             }
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
-            np_array drdlamda = np_array::Zero(dim_r, dim_lamda);
+            Matrix drdlamda = Matrix::Zero(dim_r, dim_lamda);
             dr_dlamda(x, u, lamda, mu, h_plus_mask, drdlamda);
             return drdlamda;
         }
 
 
         template<typename Derived>
-        void dr_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask, const MatrixBase<Derived>& mtx) {
+        void dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdmu = const_cast<MatrixBase<Derived>&>(mtx);
             const int dim_x = T * N * n;
             const int dim_u = T * N * m;
@@ -504,7 +446,7 @@ class ResidualGame {
             int index = 0;
             for (int i = 0; i < N; ++i) {
                 // Calculate dLL_dx_dmu
-                np_array dLL_dx_dmu = dLLi_dx_dmu(x, u, h_plus_mask, lamda, mu, i);
+                Matrix dLL_dx_dmu = dLLi_dx_dmu(x, u, h_plus_mask, lamda, mu, i);
                 drdmu.block(index, 0, dim_x, dim_mu) = dLL_dx_dmu;
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
@@ -515,7 +457,7 @@ class ResidualGame {
             }
 
         }
-        np_array dr_dmu(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             const int dim_x = T * N * n;
             const int dim_u = T * N * m;
@@ -527,15 +469,15 @@ class ResidualGame {
             int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
             // Initialize dr_dmu matrix
-            np_array drdmu = np_array::Zero(dim_r, dim_mu);
+            Matrix drdmu = Matrix::Zero(dim_r, dim_mu);
             dr_dmu(x, u, lamda, mu, h_plus_mask, drdmu);
             return drdmu;
         }
 
-        std::vector<np_array> getHplusMask(const std::vector<np_array>& x) {
-             std::vector<np_array> h_plus_mask(T);
+        std::vector<Matrix> getHplusMask(const std::vector<Matrix>& x) {
+             std::vector<Matrix> h_plus_mask(T);
              for (int i=0; i<T; i++){
-                 h_plus_mask[i]= np_array::Zero(N, N);
+                 h_plus_mask[i]= Matrix::Zero(N, N);
              }
 
             for (int k = 1; k < T+1; ++k) {
@@ -548,7 +490,7 @@ class ResidualGame {
             return h_plus_mask;
         }
 
-        np_array r(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix r(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             const int dim_x = N * T * n;
             const int dim_u = N * T * m;
             int h_plus_sum = 0;
@@ -557,11 +499,11 @@ class ResidualGame {
             }
             const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
-            np_array r = np_array::Zero(dim_r,1);
+            Matrix r = Matrix::Zero(dim_r,1);
             int index = 0;
             for (int i = 0; i < N; ++i) {
-                np_array dLL_dx = dLLi_dx(x, u, h_plus_mask, lamda, mu, i).transpose();
-                np_array dLL_du = dLLi_du(x, u, h_plus_mask, lamda, mu, i).transpose();
+                Matrix dLL_dx = dLLi_dx(x, u, h_plus_mask, lamda, mu, i).transpose();
+                Matrix dLL_du = dLLi_du(x, u, h_plus_mask, lamda, mu, i).transpose();
                 r.block(index, 0, dim_x, 1) = dLL_dx;
                 index += dim_x;
                 r.block(index, 0, dim_u, 1) = dLL_du;
@@ -589,7 +531,7 @@ class ResidualGame {
             return r;
         }
 
-        np_array dr_dy(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const std::vector<np_array>& h_plus_mask) {
+        Matrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
@@ -601,22 +543,28 @@ class ResidualGame {
             const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
 
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
-            np_array Dr(dim_r,dim_y);
+            Matrix Dr(dim_r,dim_y);
             Dr.setZero();
 
+            //cout << "drdx: " << endl;
             dr_dx(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_r,dim_x));
+            //cout << "drdu: " << endl;
             dr_du(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x,dim_r,dim_u));
+            //cout << "drdlamda: " << endl;
             dr_dlamda(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u,dim_r,dim_lamda));
+            //cout << "drdmu: " << endl;
             dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u+dim_lamda,dim_r,dim_mu));
             return Dr;
         }
 
-        std::vector<std::vector<np_array>> step(const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu) {
+        std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
+            //cout << "step()" << endl;
             const auto h_plus_mask = getHplusMask(x);
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
+            //cout << "getHplusMask()" << endl;
             profiler.s();
 
             profiler.s("init");
@@ -627,8 +575,9 @@ class ResidualGame {
             const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
 
+            //cout << "r()" << endl;
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
-            const np_array Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
+            const Matrix Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
             profiler.e("init");
             // get nonzero terms, reduce matrix dimension
             profiler.s("nonzeros");
@@ -638,8 +587,8 @@ class ResidualGame {
             //cout << "nonzero" << endl;
 
 
-            np_array Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
-            np_array r0_reduced = r0(nonzero_rows_idx,Eigen::all);
+            Matrix Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
+            Matrix r0_reduced = r0(nonzero_rows_idx,Eigen::all);
             profiler.e("nonzeros");
 
             profiler.s("sparse");
@@ -652,7 +601,7 @@ class ResidualGame {
             //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
 
             profiler.s("solve");
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
+            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
             // solve r0 + Dr* dy = 0 least square
             solver.compute(Dr_reduced_sparse);
             //solver.compute(Dr.sparseView());
@@ -660,21 +609,21 @@ class ResidualGame {
 
             if (solver.info() != Eigen::Success){
                 cout << " solver initialization failed" << endl;
-                return std::vector<std::vector<np_array>>();
+                return std::vector<std::vector<Matrix>>();
             }
 
-            np_array dy_reduced = solver.solve(-r0_reduced);
-            //np_array dy_reduced = solver.solve(-r0);
+            Matrix dy_reduced = solver.solve(-r0_reduced);
+            //Matrix dy_reduced = solver.solve(-r0);
             //cout << "solve" << dy_reduced.maxCoeff() << endl;
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
-                return std::vector<std::vector<np_array>>();
+                return std::vector<std::vector<Matrix>>();
             }
             profiler.e("solve");
 
             // reconstruct dy from dy_reduced
             profiler.s("reconstruct dy");
-            np_array dy(dim_y,1);
+            Matrix dy(dim_y,1);
             dy.setZero();
             dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
             profiler.e("reconstruct dy");
@@ -685,28 +634,28 @@ class ResidualGame {
             Scalar r0_norm = r0.norm();
 
             Scalar rt_norm = r0_norm;
-            auto split_y = [&](const std::vector<np_array>& x, const std::vector<np_array>& u, const std::vector<np_array>& lamda, const std::vector<np_array>& mu, const np_array& dy, Scalar my_step){
+            auto split_y = [&](const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const Matrix& dy, Scalar my_step){
                 const auto x_size = x.size();
-                std::vector<np_array> xx(x_size);
+                std::vector<Matrix> xx(x_size);
                 for (int i=0; i<x_size; i++){
                     xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
                 }
                 const auto u_size = u.size();
-                std::vector<np_array> uu(x_size);
+                std::vector<Matrix> uu(x_size);
                 for (int i=0; i<u_size; i++){
                     uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped<Eigen::AutoOrder>(N,m);
                 }
                 const auto lamda_size = lamda.size();
-                std::vector<np_array> ll(lamda_size);
+                std::vector<Matrix> ll(lamda_size);
                 for (int i=0; i<lamda_size; i++){
                     ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
                 }
                 const auto mu_size = mu.size();
-                std::vector<np_array> mm(mu_size);
+                std::vector<Matrix> mm(mu_size);
                 for (int i=0; i<mu_size; i++){
                     mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped<Eigen::AutoOrder>(N,N);
                 }
-                return std::tuple<std::vector<np_array>,std::vector<np_array>,std::vector<np_array>,std::vector<np_array>> {xx, uu, ll, mm};
+                return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>> {xx, uu, ll, mm};
             };
 
 
@@ -731,13 +680,13 @@ class ResidualGame {
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
             if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
                 // stopping
-                return std::vector<std::vector<np_array>>();
+                return std::vector<std::vector<Matrix>>();
             } else {
                 auto xx = std::get<0>(y_tuple);
                 auto uu = std::get<1>(y_tuple);
                 auto ll = std::get<2>(y_tuple);
                 auto mm = std::get<3>(y_tuple);
-                return std::vector<std::vector<np_array>>{xx,uu,ll,mm};
+                return std::vector<std::vector<Matrix>>{xx,uu,ll,mm};
             }
         }
 
@@ -746,7 +695,7 @@ class ResidualGame {
         // find nonzero submatrix
         // return: skimmed matrix (dense), nonzero row indices, nonzero col indices
         std::tuple<std::vector<int>, std::vector<int>>
-        nonzeros(const np_array& mtx){
+        nonzeros(const Matrix& mtx){
             // cols
             Eigen::Matrix<bool,1,Eigen::Dynamic,Eigen::RowMajor> nonzero_cols_mask = mtx.cast<bool>().colwise().any();
             const int nonzero_cols_size = nonzero_cols_mask.cast<int>().sum();
@@ -780,45 +729,45 @@ class ResidualGame {
         // DEBUG functions
 
         // solve Ax=B
-        np_array SparseQR(const np_array& A, const np_array& B){
-            Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> solver;
+        Matrix SparseQR(const Matrix& A, const Matrix& B){
+            Eigen::SparseQR<Eigen::SparseMatrix<Scalar>, Eigen::COLAMDOrdering<int>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 cout << " solver initialization failed" << endl;
-                return np_array{};
+                return Matrix{};
             }
 
-            np_array x = solver.solve(B);
+            Matrix x = solver.solve(B);
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
-                return np_array{};
+                return Matrix{};
             }
             return x;
         }
 
-        np_array LeastSquaresConjugateGradient(const np_array& A, const np_array& B){
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> solver;
+        Matrix LeastSquaresConjugateGradient(const Matrix& A, const Matrix& B){
+            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 cout << " solver initialization failed" << endl;
-                return np_array{};
+                return Matrix{};
             }
 
             // solver.setMaxIterations();
             // solver.setTolerance
-            np_array x = solver.solve(B);
+            Matrix x = solver.solve(B);
             if (solver.info() != Eigen::Success){
                 cout << " solver solve failed" << endl;
-                return np_array{};
+                return Matrix{};
             }
             return x;
         }
 
-        void print_dim(const np_array val){
+        void print_dim(const Matrix val){
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }
-        np_array test_bool_array(const np_array val, const np_array mask){
-            np_array output(val);
+        Matrix test_bool_array(const Matrix val, const Matrix mask){
+            Matrix output(val);
             for (int i=0; i<val.rows(); i++){
                 for (int j=0; j<val.cols(); j++){
                     if (!mask(i,j)){
@@ -828,15 +777,80 @@ class ResidualGame {
             }
             return output;
         }
-        np_array three_dim(const std::vector<np_array> mtx_vec){
+        Matrix three_dim(const std::vector<Matrix> mtx_vec){
             return mtx_vec[1];
         }
         // doesn't work unfortunately
-        void pass_by_ref(std::vector<np_array>& array){
+        void pass_by_ref(std::vector<Matrix>& array){
             // multiply the first array value by 2
             array[0] *= 2;
             // multiply the first array value by 0.5
             array[1] *= 0.5;
             return;
+        }
+
+        // ---- virtual functions, they should be overridden in derived class
+        virtual Matrix f(const Matrix x, const Matrix u){
+            return x;
+        }
+        virtual Matrix df_dx(const Matrix x, const Matrix u){
+            return x;
+        }
+        virtual Matrix df_du(const Matrix x, const Matrix u){
+            return x;
+        }
+
+
+        // TODO use correct dimension zero matrices
+        // collision constraint function
+        virtual Scalar h(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return 0.0;
+        }
+        virtual Matrix dh_dxi(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+        virtual Matrix dh_dxj(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+        virtual Matrix dh_dxi_dxi(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+        virtual Matrix dh_dxj_dxi(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+        virtual Matrix dh_dxi_dxj(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+        virtual Matrix dh_dxj_dxj(const Matrix x_i, const Matrix x_j){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x_i;
+        }
+
+        // Objective function (J)
+        virtual Matrix J(const Matrix x, const Matrix u, int i){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return x;
+        }
+        virtual Matrix dJ_dx(const Matrix x, const Matrix u, int i){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return  x;
+        }
+        virtual Matrix dJ_du(const Matrix x, const Matrix u, int i){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return  x;
+        }
+        virtual Matrix dJ_dxdx(const Matrix x, const Matrix u, int i){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return  x;
+        }
+        virtual Matrix dJ_dudu(const Matrix x, const Matrix u, int i){
+            throw std::runtime_error("abstract function shouldn't be called");
+            return  x;
         }
 };
