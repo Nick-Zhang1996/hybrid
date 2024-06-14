@@ -40,12 +40,12 @@ class UnstructuredDriving(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        #self.T = 8
-        self.T = 20
+        self.T = 8
+        #self.T = 20
         self.track_width = 5
         self.track_length = 20
-        #self.dt = dt = 0.25
-        self.dt = dt = 0.1
+        self.dt = dt = 0.25
+        #self.dt = dt = 0.1
 
         # dimension of x and u for single agent
         self.n = 4
@@ -137,50 +137,73 @@ class UnstructuredDriving(ResidualGame):
 
 
     ''' --------  math functions and their derivatives ------ '''
-    def J(self,x,u,i):
+    def J(self,x_k,u_k_i,i):
         '''
         step cost for an agent, given x,u
-        x.shape (n) x = [x,y,vx,vy]
-        u.shape (m) u = [ax, ay]
+        x_k.shape (N*n) x_k_i = [x,y,vx,vy]
+        u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
-            return self.cpp.J(x,u,i)
-        val = (x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+            return self.cpp.J(x_k,u_k_i,i)
+        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
         if (self.CPP_DEBUG):
-            alt = self.cpp.J(x,u,i)
+            alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
         return val
 
-    def dJ_dx(self,x,u,i):
+    # dJi dxi
+    def dJi_dxi(self,x_k,u_k_i,i):
         if (self.USE_CPP):
-            return self.cpp.dJ_dx(x,u,i)
-        val = 2* (x-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x.T @ self.J_Q
+            return self.cpp.dJi_dxi(x_k,u_k_i,i)
+        val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJ_dx(x,u,i)
+            alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
         return val
-    def dJ_du(self,x,u,i):
+
+    # dJi dxj
+    def dJi_dxj(self,x_k,u_k_i,i,j):
         if (self.USE_CPP):
-            return self.cpp.dJ_du(x,u,i)
-        val = 2* u.T @ self.J_R
+            return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+        val = 0
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJ_du(x,u,i)
+            alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
         return val
-    def dJ_dxdx(self,x,u,i):
+
+    def dJi_du(self,x_k,u_k_i,i):
         if (self.USE_CPP):
-            return self.cpp.dJ_dxdx(x,u,i)
+            return self.cpp.dJi_du(x_k,u_k_i,i)
+        val = 2* u_k_i.T @ self.J_R
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_du(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJ^i / dxi dxi
+    def dJi_dxi_dxi(self,x_k,u,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxi_dxi(x_k,u,i)
         val = 2*self.J_Qr + 2*self.J_Q
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJ_dxdx(x,u,i)
+            alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
         return val
+
+    # dJi / dxi dxj
+    def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dudu(self, x_k, u_k_i, i):
+        return 2*self.J_R
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):

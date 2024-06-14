@@ -63,7 +63,7 @@ class ResidualGame {
 
         // x_k: dim: N*n, u_k_i: dim:m*1, lambda_k:N*n, h_k_plus_mask: N*N, mu_k dim:N*N
         Matrix dL_dx_ik(const Matrix x_k,const Matrix  u_k_i,const Matrix  x_k1_i,const Matrix h_k_plus_mask,const Matrix lamda_k,const Matrix mu_k,const int i){
-            Matrix val =  dJ_dx(x_k.row(i).transpose(),u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i);
+            Matrix val =  dJi_dxi(x_k,u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_k_plus_mask(i,j)){
@@ -76,7 +76,7 @@ class ResidualGame {
         }
 
         Matrix dL_du(const Matrix x_k, const Matrix u_k_i, const Matrix x_k1_i, const Matrix h_k_plus_mask,const Matrix lamda_k, const Matrix mu_k,const int i){
-            return dJ_du(x_k.row(i).transpose(),u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i);
+            return dJi_du(x_k,u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i);
         }
 
         // for 3d array, first dimension is list() -> std::vector
@@ -84,7 +84,7 @@ class ResidualGame {
         //u_i_k: 0..T-1, T*N*m
         //lamda_i_k: 0..T-1 T*N*n
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
-        Matrix dLLi_dx(const std::vector<Matrix> x,const std::vector<Matrix> u,const std::vector<Matrix> h_plus_mask,const std::vector<Matrix> lamda,const std::vector<Matrix> mu,const int i){
+        Matrix dLLi_dx(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
             // TODO is this the best approach?
             Matrix der(1,T*N*n);
             der.setZero();
@@ -93,7 +93,7 @@ class ResidualGame {
                 der.block(0,(k-1)*N*n+i*n,1,n) = dL_dx_ik(x[k-1],u[k,i],x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
             }
             // dLLi_dxi_T
-            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJ_dx(x[T-1].row(i).transpose(),Matrix::Zero(m,1),i);
+            der.block(0,(T-1)*N*n+i*n,1,n) = -lamda[T-1].row(i) + dJi_dxi(x[T-1],Matrix::Zero(m,1),i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_plus_mask[T-1](i,j)){
@@ -105,13 +105,22 @@ class ResidualGame {
             // dLLi_dxj
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
-                for (int k=1; k<T+1; k++){
+                for (int k=1; k<T; k++){
                     if(h_plus_mask[k-1](i,j)){
                         der.block(0,(k-1)*N*n+j*n,1,n) = mu[k-1](i,j) * dh_dxj(x[k-1].row(i).transpose(), x[k-1].row(j).transpose());
                     } else {
                         der.block(0,(k-1)*N*n+j*n,1,n) = -1.0/rho*min(1.0/h(x[k-1].row(i).transpose(), x[k-1].row(j).transpose()),1e10)*dh_dxj(x[k-1].row(i).transpose(), x[k-1].row(j).transpose());
                     }
+                    der.block(0,(k-1)*N*n+j*n,1,n) += dJi_dxj(x[k-1],u[k].row(i).transpose(), i, j);
                 }
+                const int k = T;
+                if(h_plus_mask[k-1](i,j)){
+                    der.block(0,(k-1)*N*n+j*n,1,n) = mu[k-1](i,j) * dh_dxj(x[k-1].row(i).transpose(), x[k-1].row(j).transpose());
+                } else {
+                    der.block(0,(k-1)*N*n+j*n,1,n) = -1.0/rho*min(1.0/h(x[k-1].row(i).transpose(), x[k-1].row(j).transpose()),1e10)*dh_dxj(x[k-1].row(i).transpose(), x[k-1].row(j).transpose());
+                }
+                der.block(0,(k-1)*N*n+j*n,1,n) += dJi_dxj(x[k-1],Matrix::Zero(m,1), i, j);
+
             }
             return der;
         }
@@ -122,11 +131,11 @@ class ResidualGame {
             der.setZero(); // Ensure all items are properly zero-initialized
 
             // dLLi_dui_0
-            der.block(0, i * m, 1, m) = dJ_du(x0.row(i).transpose(), u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose());
+            der.block(0, i * m, 1, m) = dJi_du(x0, u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose());
 
             // dLLi_dui_k
             for (int k = 1; k < T; ++k) {
-                der.block(0, i * m + k * N * m, 1, m) = dJ_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+                der.block(0, i * m + k * N * m, 1, m) = dJi_du(x[k - 1], u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
             }
 
             return der;
@@ -212,15 +221,18 @@ class ResidualGame {
 
 
         Matrix dLLi_dxdx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            cout << "dLLi_dxdx " << endl;
             Matrix dLL_dxdx = Matrix::Zero(T*N*n, T*N*n);
 
             auto submtx = [&](int k, int i, int j) {
                 return dLL_dxdx.block((k - 1) * N * n + i * n, (k - 1) * N * n + j * n, n, n);
             };
 
+            // dJi_dxi_dxi
+            cout << "dJi_dxi_dxi " << endl;
             for (int k = 1; k < T; ++k) {
                 auto mtx = submtx(k, i, i);
-                mtx = dJ_dxdx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(), i);
+                mtx = dJi_dxi_dxi(x[k - 1], u[k].row(i).transpose(), i);
                 for (int j=0; j<N; ++j){
                     if (i==j){continue;}
                     if (h_plus_mask[k-1](i,j)){
@@ -231,9 +243,10 @@ class ResidualGame {
                 }
             }
 
+            // dJi_dxi_dxi, k = T
+            cout << "dJi_dxi_dxi k=T " << endl;
             auto mtx = submtx(T, i, i);
-            mtx = dJ_dxdx(x[T - 1].row(i).transpose(), Matrix::Zero(m,1), i);
-
+            mtx = dJi_dxi_dxi(x[T - 1], Matrix::Zero(m,1), i);
             for (int j=0; j<N; ++j){
                 if (i==j){continue;}
                 if (h_plus_mask[T-1](i,j)){
@@ -243,22 +256,42 @@ class ResidualGame {
                 }
             }
 
-            for (int k = 1; k <= T; ++k) {
+            // dJi_dxi_dxj
+            cout << "dJi_dxi_dxj " << endl;
+            for (int k = 1; k < T; ++k) {
                 for (int j = 0; j < N; ++j) {
                     if (i == j) {
                         continue;
                     }
                     Matrix val = Matrix::Zero(n, n);
                     if (h_plus_mask[k-1](i,j)){
-                        val = mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
-                        submtx(k,j,j) = mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        val = dJi_dxi_dxj(x[k-1], u[k].row(i).transpose(), i, j) + mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        submtx(k,j,j) = dJi_dxj_dxj(x[k-1], u[k].row(i).transpose(), i, j) + mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
                     } else {
-                        val = dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
-                        submtx(k,j,j) = dBh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        val = dJi_dxi_dxj(x[k-1], u[k].row(i).transpose(), i, j) + dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        submtx(k,j,j) = dJi_dxj_dxj(x[k-1], u[k].row(i).transpose(), i, j) + dBh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
                     }
                     submtx(k,i,j) = val;
                     submtx(k,j,i) = val.transpose();
                 }
+            }
+
+            cout << "dJi_dxi_dxj k=T" << endl;
+            const int k = T;
+            for (int j = 0; j < N; ++j) {
+                if (i == j) {
+                    continue;
+                }
+                Matrix val = Matrix::Zero(n, n);
+                if (h_plus_mask[k-1](i,j)){
+                    val = dJi_dxi_dxj(x[k-1], Matrix::Zero(m,1), i, j) + mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    submtx(k,j,j) = dJi_dxj_dxj(x[k-1], Matrix::Zero(m,1), i, j) + mu[k - 1](i,j) * dh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                } else {
+                    val = dJi_dxi_dxj(x[k-1], Matrix::Zero(m,1), i, j) + dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    submtx(k,j,j) = dJi_dxj_dxj(x[k-1], Matrix::Zero(m,1), i, j) + dBh_dxj_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                }
+                submtx(k,i,j) = val;
+                submtx(k,j,i) = val.transpose();
             }
             return dLL_dxdx;
         }
@@ -352,11 +385,11 @@ class ResidualGame {
             for (int i = 0; i < N; ++i) {
                 index += dim_x;
                 int k = 0;
-                Matrix dLL_duik_duik = dJ_dudu(x0.row(i).transpose(),u[k].row(i).transpose(),i);
+                Matrix dLL_duik_duik = dJi_dudu(x0,u[k].row(i).transpose(),i);
                 drdu.block(index + k * N * m + i * m, k * N * m + i * m, m, m) = dLL_duik_duik;
                 for (int k = 1; k < T; ++k) {
                     // dLL_duik_duik
-                    Matrix dLL_duik_duik = dJ_dudu(x[k-1].row(i).transpose(),u[k].row(i).transpose(),i);
+                    Matrix dLL_duik_duik = dJi_dudu(x[k-1],u[k].row(i).transpose(),i);
                     drdu.block(index + k * N * m + i * m, k * N * m + i * m, m, m) = dLL_duik_duik;
                 }
                 index += dim_u;
@@ -791,12 +824,15 @@ class ResidualGame {
 
         // ---- virtual functions, they should be overridden in derived class
         virtual Matrix f(const Matrix x, const Matrix u){
+            throw std::runtime_error("abstract function f() shouldn't be called");
             return x;
         }
         virtual Matrix df_dx(const Matrix x, const Matrix u){
+            throw std::runtime_error("abstract function df_dx() shouldn't be called");
             return x;
         }
         virtual Matrix df_du(const Matrix x, const Matrix u){
+            throw std::runtime_error("abstract function hdf_du() shouldn't be called");
             return x;
         }
 
@@ -804,53 +840,65 @@ class ResidualGame {
         // TODO use correct dimension zero matrices
         // collision constraint function
         virtual Scalar h(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function h() shouldn't be called");
             return 0.0;
         }
         virtual Matrix dh_dxi(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxi() shouldn't be called");
             return x_i;
         }
         virtual Matrix dh_dxj(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxj() shouldn't be called");
             return x_i;
         }
         virtual Matrix dh_dxi_dxi(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxi_dxi() shouldn't be called");
             return x_i;
         }
         virtual Matrix dh_dxj_dxi(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxj_dxi() shouldn't be called");
             return x_i;
         }
         virtual Matrix dh_dxi_dxj(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxi_dxj() shouldn't be called");
             return x_i;
         }
         virtual Matrix dh_dxj_dxj(const Matrix x_i, const Matrix x_j){
-            throw std::runtime_error("abstract function shouldn't be called");
+            throw std::runtime_error("abstract function dh_dxj_dxj() shouldn't be called");
             return x_i;
         }
 
         // Objective function (J)
-        virtual Matrix J(const Matrix x, const Matrix u, int i){
-            throw std::runtime_error("abstract function shouldn't be called");
-            return x;
+        virtual Matrix J(const Matrix x_k, const Matrix u_k_i, int i){
+            throw std::runtime_error("abstract function J() shouldn't be called");
+            return x_k;
         }
-        virtual Matrix dJ_dx(const Matrix x, const Matrix u, int i){
-            throw std::runtime_error("abstract function shouldn't be called");
-            return  x;
+        virtual Matrix dJi_dxi(const Matrix x_k, const Matrix u, int i){
+            throw std::runtime_error("abstract function dJi_dxi() shouldn't be called");
+            return x_k;
         }
-        virtual Matrix dJ_du(const Matrix x, const Matrix u, int i){
-            throw std::runtime_error("abstract function shouldn't be called");
-            return  x;
+        virtual Matrix dJi_dxj(const Matrix x_k, const Matrix u, int i, int j){
+            throw std::runtime_error("abstract function dJi_dxj() shouldn't be called");
+            return x_k;
         }
-        virtual Matrix dJ_dxdx(const Matrix x, const Matrix u, int i){
-            throw std::runtime_error("abstract function shouldn't be called");
-            return  x;
+        virtual Matrix dJi_du(const Matrix x_k, const Matrix u, int i){
+            throw std::runtime_error("abstract function dJi_du() shouldn't be called");
+            return x_k;
         }
-        virtual Matrix dJ_dudu(const Matrix x, const Matrix u, int i){
-            throw std::runtime_error("abstract function shouldn't be called");
-            return  x;
+        virtual Matrix dJi_dxi_dxi(const Matrix x_k, const Matrix u, int i){
+            throw std::runtime_error("abstract function dJi_dxi_dxi() shouldn't be called");
+            return x_k;
+        }
+        virtual Matrix dJi_dxi_dxj(const Matrix x_k, const Matrix u, int i, int j){
+            throw std::runtime_error("abstract function dJi_dxi_dxj() shouldn't be called");
+            return x_k;
+        }
+        virtual Matrix dJi_dxj_dxj(const Matrix x_k, const Matrix u, int i,int j){
+            throw std::runtime_error("abstract function dJi_dxj_dxj() shouldn't be called");
+            return x_k;
+        }
+        virtual Matrix dJi_dudu(const Matrix x_k, const Matrix u, int i){
+            throw std::runtime_error("abstract function dJi_dudu() shouldn't be called");
+            return x_k;
         }
 };

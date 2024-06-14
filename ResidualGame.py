@@ -353,20 +353,20 @@ class ResidualGame(PrintObject):
         # barrier for h < 0
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x_k[i], x_k[j.item()]),-1e-100)) if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0] ])
         dynamics = lamda_k[i].T @ ( self.f(x_k[i],u_k_i,i) - x_k1_i)
-        return self.J(x_k[i], u_k_i, i) + h_plus + h_minus + dynamics
+        return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         if (self.USE_CPP):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
         # NOTE the behavior of barrier function near boundary may need tuning
         if (self.DEBUG):
-            # dJ_dx -- passed
-            num = jacobianNumerical(lambda xx:self.J(xx,u_k_i,i), x_k[i])
-            ana = self.dJ_dx(x_k[i], u_k_i, i)
+            # dJi_dx -- passed
+            num = jacobianNumerical(lambda xx:self.J(xx,u_k_i,i), x_k)
+            ana = self.dJi_dxi(x_k, u_k_i, i)
             assert (np.linalg.norm(num-ana) < 1e-4)
             # df_dx -- inconclusive
-            num = jacobianNumerical(lambda uu:self.J(x_k[i],uu,i), u_k_i)
-            ana = self.dJ_du(x_k[i], u_k_i, i)
+            num = jacobianNumerical(lambda uu:self.J(x_k,uu,i), u_k_i)
+            ana = self.dJi_du(x_k, u_k_i, i)
             assert (np.linalg.norm(num-ana) < 1e-4)
             # dh_dxi -- inconclusive
             for j in np.nonzero(h_k_plus_mask[i])[0]:
@@ -376,13 +376,13 @@ class ResidualGame(PrintObject):
                 num = jacobianNumerical(lambda xx:self.h(xx,x_k[j]),x_k[i])
                 assert (np.linalg.norm(num-ana) < 1e-4)
 
-        val =  self.dJ_dx(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
+        val =  self.dJi_dxi(x_k,u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
         val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
 
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJ_dx(x_k[i], u_k_i, i)
-            if (np.linalg.norm(self.dJ_dx(x_k[i],u_k_i,i)-alt)>1e-4):
+            alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
+            if (np.linalg.norm(self.dJi_dxi(x_k,u_k_i,i)-alt)>1e-4):
                 breakpoint()
             alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
             if (np.linalg.norm(val-alt)>1e-4):
@@ -394,10 +394,10 @@ class ResidualGame(PrintObject):
         return -lamda_k[i].T
     def dL_dx_jk(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i,j):
         assert (i!=j)
-        return  mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
-            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j])
+        return  self.dJi_dxj(x[k-1],u[k],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
+            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j]) )
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
-        val = self.dJ_du(x_k[i],u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
+        val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
         return val
 
 
@@ -405,9 +405,9 @@ class ResidualGame(PrintObject):
         T = self.T
         LLi_val = np.sum( [self.L(x[k-1],u[k,i], x[k,i],h_plus_mask[k-1], lamda[k], mu[k-1],i) for k in range(1,T)] ,axis=0)
         # x0 related terms
-        LLi_val += self.J(self.x0[i],u[0,i],i) + lamda[0,i].T @ ( self.f(self.x0[i],u[0,i],i) - x[0,i])
+        LLi_val += self.J(self.x0,u[0,i],i) + lamda[0,i].T @ ( self.f(self.x0[i],u[0,i],i) - x[0,i])
         # x_T related terms
-        LLi_val += self.J(x[T-1,i],np.zeros_like(u[0,i]),i)
+        LLi_val += self.J(x[T-1],np.zeros_like(u[0,i]),i)
         h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0)
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
         LLi_val += h_plus + h_minus
@@ -431,7 +431,7 @@ class ResidualGame(PrintObject):
 
         # dLLi_dxi_T
         sub = submtx_i_k(i,T)
-        sub[:] = -lamda[T-1,i].T + self.dJ_dx(x[T-1,i],np.zeros(m),i) \
+        sub[:] = -lamda[T-1,i].T + self.dJi_dxi(x[T-1],np.zeros(m),i) \
             + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
             -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
 
@@ -440,10 +440,14 @@ class ResidualGame(PrintObject):
         for j in range(0,N):
             if i==j:
                 continue
-            for k in range(1,T+1):
+            for k in range(1,T):
                 sub = submtx_i_k(j,k)
-                sub[:] =  mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
-                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j])
+                sub[:] = self.dJi_dxj(x[k-1],u[k],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
+                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
+            k = T
+            sub = submtx_i_k(j,k)
+            sub[:] = self.dJi_dxj(x[k-1],np.zeros(m),i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
+                -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
         val = der.reshape(1,-1)
         if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -461,12 +465,12 @@ class ResidualGame(PrintObject):
         submtx_i_k = lambda i,k:der[k*N*m+i*m:k*N*m+(i+1)*m]
         # dLLi_dui_0
         sub = submtx_i_k(i,0)
-        sub[:] = self.dJ_du(self.x0[i],u[0,i],i) + lamda[0,i].T @ self.df_du(self.x0[i],u[0,i])
+        sub[:] = self.dJi_du(self.x0,u[0,i],i) + lamda[0,i].T @ self.df_du(self.x0[i],u[0,i])
         # dLLi_dui_k
         for k in range(1,T):
             sub = submtx_i_k(i,k)
             # dL_du
-            sub[:] = self.dJ_du(x[k-1,i],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i])
+            sub[:] = self.dJi_du(x[k-1],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i])
         if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_du([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
             if (np.linalg.norm(alt-der)>1e-4):
@@ -673,40 +677,66 @@ class ResidualGame(PrintObject):
         for k in range(1,T):
             #dLLi_dxki_dxki
             mtx = submtx(k,i,i)
-            val1 = self.dJ_dxdx(x[k-1,i],u[k,i],i)
+            val1 = self.dJi_dxi_dxi(x[k-1],u[k,i],i)
             val2 = np.sum( [ mu[k-1,i,j.item()] * ( self.dh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) ) for j in np.nonzero(h_plus_mask[k-1,i])[0] ],axis=0)
             val3 = np.sum([self.dBh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[k-1,i])[0] ],axis=0)
             mtx[:,:] = val1 + val2 + val3
 
         #dLLi_dxki_dxki, k=T, u_T is undefined, use 0 to penalize J(x) only
         mtx = submtx(T,i,i)
-        mtx[:,:] = self.dJ_dxdx(x[T-1,i],np.zeros(m),i) \
+        mtx[:,:] = self.dJi_dxi_dxi(x[T-1],np.zeros(m),i) \
                 + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
                 + np.sum([self.dBh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
-        for k in range(1,T+1):
+
+        # dLLi_dxi_dxj
+        for k in range(1,T):
             for j in range(N):
                 if i==j:
                     continue
                 if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
                     #dLLi_dxki_dxkj
-                    val = mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = self.dJi_dxi_dxj(x[k-1],u[k],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
                     mtx = submtx(k,i,j)
                     mtx[:,:] = val
                     mtx = submtx(k,j,i)
                     mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
                     mtx = submtx(k,j,j)
-                    mtx[:,:] = mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k],i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
                 else:
                     #dLLi_dxki_dxkj
-                    val = self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = self.dJi_dxi_dxj(x[k-1],u[k],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
                     mtx = submtx(k,i,j)
                     mtx[:,:] = val
                     mtx = submtx(k,j,i)
                     mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
                     mtx = submtx(k,j,j)
-                    mtx[:,:] = self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k],i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+        k = T
+        for j in range(N):
+            if i==j:
+                continue
+            if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
+                #dLLi_dxki_dxkj
+                val = self.dJi_dxi_dxj(x[k-1],np.zeros(m),i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                mtx = submtx(k,i,j)
+                mtx[:,:] = val
+                mtx = submtx(k,j,i)
+                mtx[:,:] = val.T
+                #dLLi_dxkj_dxkj
+                mtx = submtx(k,j,j)
+                mtx[:,:] = self.dJi_dxj_dxj(x[k-1],np.zeros(m),i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+            else:
+                #dLLi_dxki_dxkj
+                val = self.dJi_dxi_dxj(x[k-1],np.zeros(m),i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                mtx = submtx(k,i,j)
+                mtx[:,:] = val
+                mtx = submtx(k,j,i)
+                mtx[:,:] = val.T
+                #dLLi_dxkj_dxkj
+                mtx = submtx(k,j,j)
+                mtx[:,:] = self.dJi_dxj_dxj(x[k-1],np.zeros(m),i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
 
 
         if (self.DEBUG):
@@ -862,7 +892,7 @@ class ResidualGame(PrintObject):
         for i in range(self.N):
             index += dim_x
             for k in range(self.T):
-                dLL_duik_duik = 2*self.J_R
+                dLL_duik_duik = self.dJi_dudu(x[k-1],u[k,i],i)
                 drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
             index += dim_u
             k = 0
@@ -947,6 +977,7 @@ class ResidualGame(PrintObject):
             if (np.linalg.norm(alt-dLL_dx_dmu)>1e-4):
                 breakpoint()
         return dLL_dx_dmu
+
 
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
         if (self.USE_CPP):

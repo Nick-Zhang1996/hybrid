@@ -8,6 +8,10 @@ class UnstructuredDriving : public ResidualGame {
                 const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b,
                 const Matrix _J_Qr, const Matrix _J_Q, const Matrix _J_R, const Matrix _A, const Matrix _B, const Matrix _h_Qh, const Matrix _target_y):
             ResidualGame(_N, _T, _n, _m, _dt, _rho, _rho_b, _bc_a, _bc_b),J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), A(_A), B(_B), h_Qh(_h_Qh), target_y(_target_y) {
+                cout << "N = " << N;
+                cout << "T = " << T;
+                cout << "n = " << n;
+                cout << "m = " << m;
         }
 
         // TODO unnecessary copy
@@ -59,19 +63,28 @@ class UnstructuredDriving : public ResidualGame {
             (mtx << 0,target_y(i,0), 2.0, 0.0 ).finished();
             return mtx;
         }
-        Matrix J(const Matrix x, const Matrix u, int i){
-            return (x-J_x_ref_fun(i)).transpose() * J_Qr * (x-J_x_ref_fun(i)) + x.transpose() * J_Q * x + u.transpose() * J_R * u;
+        Matrix J(const Matrix x_k, const Matrix u_k_i, int i){
+            return (x_k.row(i).transpose()-J_x_ref_fun(i)).transpose() * J_Qr * (x_k.row(i).transpose()-J_x_ref_fun(i)) + x_k.row(i) * J_Q * x_k.row(i).transpose() + u_k_i.transpose() * J_R * u_k_i;
         }
-        Matrix dJ_dx(const Matrix x, const Matrix u, int i){
-            return  2* (x-J_x_ref_fun(i)).transpose() * J_Qr + 2*x.transpose() * J_Q;
+        Matrix dJi_dxi(const Matrix x_k, const Matrix u, int i){
+            return  2* (x_k.row(i).transpose()-J_x_ref_fun(i)).transpose() * J_Qr + 2*x_k.row(i).transpose().transpose() * J_Q;
         }
-        Matrix dJ_du(const Matrix x, const Matrix u, int i){
+        Matrix dJi_dxj(const Matrix x_k, const Matrix u, int i, int j){
+            return  Matrix::Zero(1,n);
+        }
+        Matrix dJi_du(const Matrix x_k, const Matrix u, int i){
             return  2* u.transpose() * J_R;
         }
-        Matrix dJ_dxdx(const Matrix x, const Matrix u, int i){
+        Matrix dJi_dxi_dxi(const Matrix x_k, const Matrix u, int i){
             return  2*J_Qr + 2*J_Q;
         }
-        Matrix dJ_dudu(const Matrix x, const Matrix u, int i){
+        Matrix dJi_dxi_dxj(const Matrix x_k, const Matrix u, int i, int j){
+            return  Matrix::Zero(n,n);
+        }
+        Matrix dJi_dxj_dxj(const Matrix x_k, const Matrix u, int i, int j){
+            return  Matrix::Zero(n,n);
+        }
+        Matrix dJi_dudu(const Matrix x_k, const Matrix u, int i){
             return  2*J_R;
         }
 };
