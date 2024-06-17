@@ -3,7 +3,7 @@ from time import time
 from UnstructuredDriving import UnstructuredDriving
 import matplotlib.pyplot as plt
 
-class CarCrossing(UnstructuredDriving):
+class CarCrossingDoubleIntegrator(UnstructuredDriving):
     def __init__(self,car_count=4):
         # TODO: need adaptation
         # visualization

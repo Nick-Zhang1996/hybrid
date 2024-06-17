@@ -1,7 +1,7 @@
 import numpy as np
 from UnstructuredDriving import UnstructuredDriving
 
-class CarMerge(UnstructuredDriving):
+class CarMergeDoubleIntegrator(UnstructuredDriving):
     def __init__(self, car_count=8):
         #super().__init__(car_count=5)
         # simplest, 3 car
