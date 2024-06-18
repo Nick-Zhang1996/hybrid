@@ -41,6 +41,9 @@ class ResidualGame(PrintObject):
         self.bc_a = 0.1 #alpha
         self.bc_b = 0.5 #beta
         self.backtracking_max_iter = 10
+        # max iterations
+        self.iterations = 20
+
 
 
         # solver variables
@@ -78,7 +81,7 @@ class ResidualGame(PrintObject):
         self.visualize(u_ref,animate=animate,gif_prefix='before')
         t0 = time()
         t = self.profiler
-        for i in range(10):
+        for i in range(self.iterations):
             t.s()
             if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
                 t.s('cpp step')
@@ -216,7 +219,6 @@ class ResidualGame(PrintObject):
 
 
         # DEBUG - check different parts of the residuals, with rho = infty
-        '''
         original_rho = self.rho
         self.rho = 1e4
         index = 0
@@ -234,7 +236,6 @@ class ResidualGame(PrintObject):
             index += np.sum(h_plus_mask[:,i])
             self.print_debug(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
         self.rho = original_rho
-        '''
 
         self.residuals = r_t_norm
         self.violations = np.sum(h_plus_mask)/2
@@ -268,7 +269,7 @@ class ResidualGame(PrintObject):
 
     def visualize(self,U,X=None,visualize=False,save_gif=False,animate=False,gif_prefix='run'):
         if (visualize or save_gif):
-            fig = self._visualize(U)
+            fig = self._visualize(U,X)
             if (save_gif):
                 fig.canvas.draw()
                 frame = Image.frombytes('RGB',

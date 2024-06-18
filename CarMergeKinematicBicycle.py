@@ -65,12 +65,12 @@ class CarMergeKinematicBicycle(ResidualGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
-        self.J_Qr = np.diag([0,0.2,0.01,0])
-        self.J_Q = np.diag([0,0,0,0.5])
-        self.J_R = np.eye(self.m)*5e-1
+        self.J_Qr = np.diag([0,0.1,0.01,0])
+        self.J_Q = np.diag([0,0,0,1.0])
+        self.J_R = np.eye(self.m)*0.5
 
         # collision definition
-        self.h_Qh = np.diag([-0.25,-1,0,0])
+        self.h_Qh = np.diag([-1.0,-1,0,0])
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -80,8 +80,9 @@ class CarMergeKinematicBicycle(ResidualGame):
             self.cpp = cpp_UnstructuredDriving(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
-    def _visualize(self,U):
-        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+    def _visualize(self,U,X=None):
+        if (X is None):
+            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
         ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
         ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
@@ -96,7 +97,6 @@ class CarMergeKinematicBicycle(ResidualGame):
         ax.set_aspect('equal', adjustable='box')
         return fig
 
-    # TODO
     def _animation(self,U,X=None,gif_prefix=''):
         ''' build a gif animation'''
         if X is None:
@@ -257,7 +257,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         ''' car distance larger than 1.2 normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0])/2.0 )**2 - (x_i[1]-x_j[1])**2 + 1.2**2
+        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 2.9**2
         if (self.CPP_DEBUG):
             alt = self.cpp.h(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
