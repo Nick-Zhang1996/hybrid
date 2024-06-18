@@ -28,10 +28,10 @@ class UnstructuredDriving : public ResidualGame {
         Matrix f(const Matrix x, const Matrix u){
             return A * x + B * u;
         }
-        Matrix df_dx(const Matrix x, const Matrix u){
+        Matrix df_dx(const Matrix x, const Matrix u, const int i){
             return A;
         }
-        Matrix df_du(const Matrix x, const Matrix u){
+        Matrix df_du(const Matrix x, const Matrix u, const int i){
             return B;
         }
 

@@ -63,7 +63,7 @@ class ResidualGame {
 
         // x_k: dim: N*n, u_k_i: dim:m*1, lambda_k:N*n, h_k_plus_mask: N*N, mu_k dim:N*N
         Matrix dL_dx_ik(const Matrix x_k,const Matrix  u_k_i,const Matrix  x_k1_i,const Matrix h_k_plus_mask,const Matrix lamda_k,const Matrix mu_k,const int i){
-            Matrix val =  dJi_dxi(x_k,u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i);
+            Matrix val =  dJi_dxi(x_k,u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i,i);
             for (int j=0; j<N; j++){
                 if (i==j){continue;}
                 if (h_k_plus_mask(i,j)){
@@ -76,7 +76,7 @@ class ResidualGame {
         }
 
         Matrix dL_du(const Matrix x_k, const Matrix u_k_i, const Matrix x_k1_i, const Matrix h_k_plus_mask,const Matrix lamda_k, const Matrix mu_k,const int i){
-            return dJi_du(x_k,u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i);
+            return dJi_du(x_k,u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i,i);
         }
 
         // for 3d array, first dimension is list() -> std::vector
@@ -131,11 +131,11 @@ class ResidualGame {
             der.setZero(); // Ensure all items are properly zero-initialized
 
             // dLLi_dui_0
-            der.block(0, i * m, 1, m) = dJi_du(x0, u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose());
+            der.block(0, i * m, 1, m) = dJi_du(x0, u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose(), i);
 
             // dLLi_dui_k
             for (int k = 1; k < T; ++k) {
-                der.block(0, i * m + k * N * m, 1, m) = dJi_du(x[k - 1], u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+                der.block(0, i * m + k * N * m, 1, m) = dJi_du(x[k - 1], u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i);
             }
 
             return der;
@@ -190,7 +190,7 @@ class ResidualGame {
             int start_idx_2 = k * N * n + i * n;
 
             // Assign values to dF_dx
-            dFdx.block(0, start_idx_1, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+            dFdx.block(0, start_idx_1, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i);
             dFdx.block(0, start_idx_2, n, n) = -Matrix::Identity(n, n);
 
             return dFdx;
@@ -394,9 +394,9 @@ class ResidualGame {
                 }
                 index += dim_u;
 
-                drdu.block(index + 0 * n, 0 * N * m + i * m, n, m) = df_du(x0.row(i).transpose(), u[0].row(i).transpose());
+                drdu.block(index + 0 * n, 0 * N * m + i * m, n, m) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i);
                 for (int k = 1; k < T; ++k) {
-                    drdu.block(index + k * n, k * N * m + i * m, n, m) = df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose());
+                    drdu.block(index + k * n, k * N * m + i * m, n, m) = df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i);
                 }
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
@@ -430,7 +430,7 @@ class ResidualGame {
             for (int i = 0; i < N; ++i) {
                 for (int k = 1; k < T; ++k) {
                     // dLLi_dxki_dlamda_ki
-                    drdlamda.block(index + (k - 1) * N * n + i * n, k * N * n + i * n, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose()).transpose();
+                    drdlamda.block(index + (k - 1) * N * n + i * n, k * N * n + i * n, n, n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
                     // dLLi_dxki_dlamda_k-1,i
                     drdlamda.block(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n, n, n) = -Matrix::Identity(n, n);
                 }
@@ -440,9 +440,9 @@ class ResidualGame {
                 // skip dLL_dx, index now points at dLLi_du
                 index += dim_x;
 
-                drdlamda.block(index + 0 * N * m + i * m, 0 * N * n + i * n, m, n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose()).transpose();
+                drdlamda.block(index + 0 * N * m + i * m, 0 * N * n + i * n, m, n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i).transpose();
                 for (int k = 1; k < T; ++k) {
-                    drdlamda.block(index + k * N * m + i * m, k * N * n + i * n, m, n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose()).transpose();
+                    drdlamda.block(index + k * N * m + i * m, k * N * n + i * n, m, n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
                 }
 
                 // skip count for h_plus_mask[all k, i, all j]
@@ -828,11 +828,11 @@ class ResidualGame {
             throw std::runtime_error("abstract function f() shouldn't be called");
             return x;
         }
-        virtual Matrix df_dx(const Matrix x, const Matrix u){
+        virtual Matrix df_dx(const Matrix x, const Matrix u, const int i){
             throw std::runtime_error("abstract function df_dx() shouldn't be called");
             return x;
         }
-        virtual Matrix df_du(const Matrix x, const Matrix u){
+        virtual Matrix df_du(const Matrix x, const Matrix u, const int i){
             throw std::runtime_error("abstract function hdf_du() shouldn't be called");
             return x;
         }

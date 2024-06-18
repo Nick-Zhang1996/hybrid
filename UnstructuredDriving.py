@@ -214,9 +214,9 @@ class UnstructuredDriving(ResidualGame):
         x[3] + self.dt*u[1]/10])
         '''
         return self.A @ x + self.B @ u
-    def df_dx(self,x,u):
+    def df_dx(self,x,u,i):
         return self.A
-    def df_du(self,x,u):
+    def df_du(self,x,u,i):
         return self.B
 
 

@@ -19,6 +19,7 @@ from ResidualGame import ResidualGame
 # uses kinematic bicycle model
 # this version use U as decision variable only
 class CarMergeKinematicBicycle(ResidualGame):
+    DEBUG = False
     USE_CPP = False
     CPP_DEBUG = False
     def __init__(self,car_count=3):
@@ -42,11 +43,11 @@ class CarMergeKinematicBicycle(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        #self.T = 8
+        #self.T = 3
         self.T = 20
         self.track_width = 2
         self.track_length = 20
-        self.dt = dt = 0.25
+        self.dt = dt = 0.2
         #self.dt = dt = 0.1
 
         # dimension of x and u for single agent
@@ -58,15 +59,15 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_y_lim = [-2,30]
 
         # initial state, stated in unit of car size
-        self.x0 = np.array([[0,0.9,1.5,0.0],[4,1.1,2.0,0.0],[1.3,-1.1,1.7,radians(5)]])
+        self.x0 = np.array([[0,0.9,1.5,0.0],[3,1.1,1.5,0.0],[2.1,-1.1,1.7,radians(5)]])
         self.target_y = [1.0,1.0,1.0]
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
-        self.J_Qr = np.diag([0,1,1,0])
-        self.J_Q = np.diag([0,0,0,1e-2])
-        self.J_R = np.eye(self.m)*1e-2
+        self.J_Qr = np.diag([0,0.2,0.01,0])
+        self.J_Q = np.diag([0,0,0,0.5])
+        self.J_R = np.eye(self.m)*5e-1
 
         # collision definition
         self.h_Qh = np.diag([-0.25,-1,0,0])
@@ -222,30 +223,38 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
-        beta = atan(tan(u[1]*0.5))
-        dx = np.array([x[2]*cos(x[3]+beta),x[2]*sin(x[3]+beta), u[0],x[2]/0.5*sin(beta)])
+        beta = atan(tan(u[1])*0.5)
+        dx = np.array([x[2]*cos(x[3]+beta),x[2]*sin(x[3]+beta), u[0],x[2]/1.0*sin(beta)])
         return x+dx*self.dt
 
-    def df_dx(self,x,u):
-        beta = atan(tan(u[1]*0.5))
-        A = np.array([[0,0,cos(theta+beta), -x[2]*sin(theta+beta)],
-            [0,0, sin(theta+beta), u[2]*cos(theta+beta)],
+    def df_dx(self,x,u,i):
+        beta = atan(tan(u[1])*0.5)
+        A = np.array([[0,0,cos(x[3]+beta), -x[2]*sin(x[3]+beta)],
+            [0,0, sin(x[3]+beta), x[2]*cos(x[3]+beta)],
             [0,0,0,0],
-            [0,0,sin(beta)/0.5,0]])
-        return np.eye(4) + A*self.dt
+            [0,0,sin(beta)/1.0,0]])
+        val = np.eye(4) + A*self.dt
+        if (self.DEBUG):
+            num = jacobianNumerical(lambda xx:self.f(xx,u,i), x,dim=self.n)
+            assert (np.linalg.norm(num-val)<1e-4)
+        return val
 
-    def df_du(self,x,u):
-        beta = atan(tan(u[1]*0.5))
+    def df_du(self,x,u,i):
+        beta = atan(tan(u[1])*0.5)
         dbeta_dst = 0.5/(  ((tan(u[1])*0.5)**2+1) * cos(u[1])**2 )
-        B = np.array([[0,-u[2]*sin(theta+beta)*dbeta_dst],
-            [0,u[2]*cos(theta+beta)*dbeta_dst],
+        B = np.array([[0,-x[2]*sin(x[3]+beta)*dbeta_dst],
+            [0,x[2]*cos(x[3]+beta)*dbeta_dst],
             [1,0],
-            [0,u[2]/0.5*cos(beta)*dbeta_dst]])
-        return B*self.dt
+            [0,x[2]/1.0*cos(beta)*dbeta_dst]])
+        val = B*self.dt
+        if (self.DEBUG):
+            num = jacobianNumerical(lambda uu:self.f(x,uu,i), u,dim=self.n)
+            assert (np.linalg.norm(num-val)<1e-4)
+        return val
 
     # collision definition is similar to Double Integrator, car is an "ellipsis"
     def h(self, x_i, x_j):
-        ''' car distance larger than 1.0 normalized '''
+        ''' car distance larger than 1.2 normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
         val = -( (x_i[0]-x_j[0])/2.0 )**2 - (x_i[1]-x_j[1])**2 + 1.2**2
@@ -321,7 +330,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 if __name__=="__main__":
     main = CarMergeKinematicBicycle()
     main.setup()
-    #main.solve(save_gif=False,visualize=True)
-    #main.final()
-    main.testAnimation()
+    main.solve(save_gif=False,visualize=True,animate=True)
+    main.final()
+    #main.testAnimation()
 

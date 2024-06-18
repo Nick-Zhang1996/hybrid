@@ -48,6 +48,7 @@ class ResidualGame(PrintObject):
         self.residuals = None
         self.violations = None
         self.profiler = TimeUtil(True)
+        self.print_debug_enable()
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -96,7 +97,11 @@ class ResidualGame(PrintObject):
                 finally:
                     t.e('cpp step')
             else:
-                x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+                try:
+                    x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
+                except StopIteration:
+                    self.print_ok('stopping criterion met!')
+                    break
             t.e()
             self.print_info(f'------ iter {i} ------')
 
@@ -209,7 +214,6 @@ class ResidualGame(PrintObject):
                 break
         t.e('line search')
 
-        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}')
 
         # DEBUG - check different parts of the residuals, with rho = infty
         '''
@@ -234,6 +238,8 @@ class ResidualGame(PrintObject):
 
         self.residuals = r_t_norm
         self.violations = np.sum(h_plus_mask)/2
+
+        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
 
         # stopping criterion
         if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
@@ -364,10 +370,18 @@ class ResidualGame(PrintObject):
     def dL_dx_ik(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         if (self.USE_CPP):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i)
+
+        val =  self.dJi_dxi(x_k,u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i,i)
+        val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
+        # FIXME
+        h_val = -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        #h_val_alt = np.sum([ self.dBh_dxi(x_k[i], x_k[j.item()]) * (j.item()!=i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        val += h_val
+
         # NOTE the behavior of barrier function near boundary may need tuning
         if (self.DEBUG):
             # dJi_dx -- passed
-            num = jacobianNumerical(lambda xx:self.J(xx,u_k_i,i), x_k)
+            num = jacobianNumerical(lambda xx:self.J(xx.reshape(x_k.shape),u_k_i,i), x_k.flatten()).reshape(1,self.N,self.n)[:,i]
             ana = self.dJi_dxi(x_k, u_k_i, i)
             assert (np.linalg.norm(num-ana) < 1e-4)
             # df_dx -- inconclusive
@@ -382,9 +396,9 @@ class ResidualGame(PrintObject):
                 num = jacobianNumerical(lambda xx:self.h(xx,x_k[j]),x_k[i])
                 assert (np.linalg.norm(num-ana) < 1e-4)
 
-        val =  self.dJi_dxi(x_k,u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i)
-        val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
-        val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+            num = jacobianNumerical(lambda xx:self.L(xx.reshape(x_k.shape), u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i),x_k.flatten())
+            num = num[0,i*self.n:(i+1)*self.n]
+            assert (np.linalg.norm(num-val) < 1e-4)
 
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
@@ -403,7 +417,7 @@ class ResidualGame(PrintObject):
         return  self.dJi_dxj(x[k-1],u[k],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j]) )
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
-        val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i)
+        val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i,i)
         return val
 
 
@@ -471,12 +485,12 @@ class ResidualGame(PrintObject):
         submtx_i_k = lambda i,k:der[k*N*m+i*m:k*N*m+(i+1)*m]
         # dLLi_dui_0
         sub = submtx_i_k(i,0)
-        sub[:] = self.dJi_du(self.x0,u[0,i],i) + lamda[0,i].T @ self.df_du(self.x0[i],u[0,i])
+        sub[:] = self.dJi_du(self.x0,u[0,i],i) + lamda[0,i].T @ self.df_du(self.x0[i],u[0,i],i)
         # dLLi_dui_k
         for k in range(1,T):
             sub = submtx_i_k(i,k)
             # dL_du
-            sub[:] = self.dJi_du(x[k-1],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i])
+            sub[:] = self.dJi_du(x[k-1],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i],i)
         if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_du([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
             if (np.linalg.norm(alt-der)>1e-4):
@@ -778,7 +792,7 @@ class ResidualGame(PrintObject):
         ''' F(x,u) = f(x_k_i,u_k_i)-x_k+1_i, find dF_dx, note x here is of dim(T*N*n) '''
         T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
         dFdx = np.zeros((n,dim_x))
-        dFdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i])
+        dFdx[:,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i],i)
         dFdx[:,k*N*n+i*n:k*N*n+(i+1)*n] = -np.eye(n)
         if (self.CPP_DEBUG):
             alt = self.cpp.dF_dx([xx for xx in x],[uu for uu in u],i,k)
@@ -902,16 +916,14 @@ class ResidualGame(PrintObject):
                 drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
             index += dim_u
             k = 0
-            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(self.x0[i],u[k,i])
+            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(self.x0[i],u[k,i],i)
 
             for k in range(1,self.T):
-                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i])
+                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i],i)
             index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
 
         if (self.DEBUG):
             drdu_num = jacobianNumerical(lambda uu:self.r(x,uu.reshape(u.shape),lamda,mu,h_plus_mask), u.flatten(),dim=dim_r)
-            assert(np.linalg.norm(drdu-drdu_num)<1e-4)
-            '''
             if (np.linalg.norm(drdu-drdu_num)>1e-4):
                 for i in range(N):
                     for k in range(0,T):
@@ -920,7 +932,7 @@ class ResidualGame(PrintObject):
                         if (np.linalg.norm(val - val_num)>1e-4):
                             self.print_debug(f'k={k}, i={i},{np.nonzero(val-val_num)}')
                 breakpoint()
-            '''
+            assert(np.linalg.norm(drdu-drdu_num)<1e-4)
         if (self.CPP_DEBUG):
             alt = self.cpp.dr_du([xx for xx in x],[uu for uu in u],[ll for ll in lamda],[mmm for mmm in mu],[hh for hh in h_plus_mask])
             if (np.linalg.norm(alt-drdu)>1e-4):
@@ -939,7 +951,7 @@ class ResidualGame(PrintObject):
         for i in range(N):
             for k in range(1,T):
                 # dLLi_dxki_dlamda_ki
-                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i]).T
+                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i],i).T
                 # dLLi_dxki_dlamda_k-1,i
                 dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
             k = T
@@ -947,9 +959,9 @@ class ResidualGame(PrintObject):
 
             index += dim_x # skip dLL_dx, index now points at dLLi_du
             k = 0
-            dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(self.x0[i],u[k,i]).T
+            dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(self.x0[i],u[k,i],i).T
             for k in range(1,T):
-                dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(x[k-1,i],u[k,i]).T
+                dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(x[k-1,i],u[k,i],i).T
 
             index += dim_u + n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
 
