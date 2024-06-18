@@ -133,6 +133,7 @@ class CarMergeKinematicBicycle(ResidualGame):
             for i in range(self.N):
                 box_vec[i].set_xy(car_pos_vec[i][frame])
                 box_vec[i].set_angle(car_angle_vec[i][frame])
+            return box_vec
         # Add the boxes to the plot
         for box in box_vec:
             ax.add_patch(box)
