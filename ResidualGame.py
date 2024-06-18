@@ -112,6 +112,11 @@ class ResidualGame(PrintObject):
         self.print_info(f'total solve time: {t_solve}')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
+        '''
+        self.print_info(full_x_ref)
+        self.print_info(u_ref)
+        breakpoint()
+        '''
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
@@ -234,7 +239,12 @@ class ResidualGame(PrintObject):
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            self.print_debug(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res**2:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            index = dim_x+dim_u
+            '''
+            f0_res = np.linalg.norm(r_t[index:index+n])**2
+            self.print_debug(f'f0 residual: {f0_res}')
+            '''
         self.rho = original_rho
 
         self.residuals = r_t_norm
@@ -374,10 +384,8 @@ class ResidualGame(PrintObject):
 
         val =  self.dJi_dxi(x_k,u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i,i)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
-        # FIXME
-        h_val = -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
         #h_val_alt = np.sum([ self.dBh_dxi(x_k[i], x_k[j.item()]) * (j.item()!=i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
-        val += h_val
 
         # NOTE the behavior of barrier function near boundary may need tuning
         if (self.DEBUG):

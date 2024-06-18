@@ -59,7 +59,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_y_lim = [-2,30]
 
         # initial state, stated in unit of car size
-        self.x0 = np.array([[0,0.9,1.5,0.0],[3,1.1,1.5,0.0],[2.1,-1.1,1.7,radians(5)]])
+        self.x0 = np.array([[0,0.9,1.5,0.0],[3,1.1,1.5,0.0],[2.1,-1.3,1.7,radians(5)]])
         self.target_y = [1.0,1.0,1.0]
 
         # step cost parameters
@@ -257,7 +257,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         ''' car distance larger than 1.2 normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 2.9**2
+        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 7
         if (self.CPP_DEBUG):
             alt = self.cpp.h(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
