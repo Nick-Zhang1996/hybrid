@@ -51,8 +51,8 @@ class ResidualGame(PrintObject):
         self.frame_vec = []
         self.residuals = None
         self.violations = None
-        self.profiler = TimeUtil(True)
-        self.print_debug_enable()
+        self.profiler = TimeUtil(False)
+        #self.print_debug_enable()
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -173,20 +173,22 @@ class ResidualGame(PrintObject):
         t.e('reduced-sparse-lstsq')
         self.print_debug(f'iter: {istop}, {itn}')
         # use cpp's sparse QR
+
         '''
         t.s('cpp SparseQR')
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp SparseQR')
         '''
 
+
         # use cpp's lscg (fastest)
         '''
         if (self.USE_CPP):
             t.s('cpp lscg')
-            # this actually made it worse
             reduced_dy = reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
             t.e('cpp lscg')
         '''
+
 
 
         # DEBUG - compare residual of different methods

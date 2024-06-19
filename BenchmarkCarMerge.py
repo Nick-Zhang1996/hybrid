@@ -1,7 +1,7 @@
 # benchmark CarMerge.py, for different total car count
 from time import time
 import numpy as np
-from CarMerge import CarMerge
+from CarMergeKinematicBicycle import CarMergeKinematicBicycle
 
 car_count_vec = range(2,10)
 mean_vec = []
@@ -10,7 +10,9 @@ std_vec = []
 for car_count in car_count_vec:
     time_vec = []
     for i in range(100):
-        main = CarMerge(car_count)
+        main = CarMergeKinematicBicycle(car_count)
+        main.silent_mode_enable()
+        main.setup()
         t0 = time()
         main.solve(save_gif=False,visualize=False,animate=False)
         time_vec.append(time()-t0)

@@ -19,6 +19,7 @@ from ResidualGame import ResidualGame
 # this version use U as decision variable only
 class CarMergeKinematicBicycle(ResidualGame):
     USE_CPP = True
+    FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
         super().__init__()
 
@@ -73,11 +74,11 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.J_R = np.eye(self.m)*0.3
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        np.random.seed(0)
+        #np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 1.0+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
@@ -89,7 +90,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
+            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):
