@@ -39,7 +39,7 @@ class CarMergeDoubleIntegrator(UnstructuredDriving):
 
 
 if __name__=="__main__":
-    main = CarMerge(8)
+    main = CarMergeDoubleIntegrator(8)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()

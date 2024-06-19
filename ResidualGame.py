@@ -42,8 +42,9 @@ class ResidualGame(PrintObject):
         self.bc_b = 0.5 #beta
         self.backtracking_max_iter = 10
         # max iterations
-        self.iterations = 20
-
+        self.iterations = 10
+        # NOTE this is not implemented in cpp
+        self.dynamics_residual_weight = 1.0
 
 
         # solver variables
@@ -112,9 +113,10 @@ class ResidualGame(PrintObject):
         self.print_info(f'total solve time: {t_solve}')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
+
         '''
-        self.print_info(full_x_ref)
-        self.print_info(u_ref)
+        self.print_info(full_x_ref[:,1,:])
+        self.print_info(u_ref[:,1,:])
         breakpoint()
         '''
 
@@ -239,7 +241,7 @@ class ResidualGame(PrintObject):
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.2f}, dLL_du {dLL_du_res:.2f}, fx {fx_res**2:.2f}, h_res {h_res:.2f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
             index = dim_x+dim_u
             '''
             f0_res = np.linalg.norm(r_t[index:index+n])**2
@@ -506,7 +508,28 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return der
 
+    def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
+        if (self.USE_CPP):
+            return self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+        ''' return: dim: dim_x*dim_mu '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_mu = T*N*N
+        dLL_dx_dmu = np.zeros((dim_x,dim_mu))
+        for k in range(1,T+1):
+            for j in np.nonzero(h_plus_mask[k-1,i])[0]:
+                dLLi_dxki_dmuijk = self.dh_dxi(x[k-1,i],x[k-1,j])
+                dLLi_dxkj_dmuijk = self.dh_dxj(x[k-1,i],x[k-1,j])
+                dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
+                dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_dmuijk
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-dLL_dx_dmu)>1e-4):
+                breakpoint()
+        return dLL_dx_dmu
 
+
+    '''
     def r_numerical(self, x, u, lamda, mu, h_plus_mask):
         T = self.T
         try:
@@ -526,6 +549,7 @@ class ResidualGame(PrintObject):
             raise e
             breakpoint()
         return r
+    '''
 
     def r(self, x, u, lamda, mu, h_plus_mask):
         if (self.USE_CPP):
@@ -543,9 +567,9 @@ class ResidualGame(PrintObject):
                     assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
                 r = np.hstack([r,dLL_dx.flatten(), dLL_du.flatten()])
                 # dynamics for f(x0,u0) = x1
-                r = np.hstack([r,self.f(self.x0[i], u[0,i],i) - x[0,i]])
+                r = np.hstack([r, self.dynamics_residual_weight * self.f(self.x0[i], u[0,i],i) - x[0,i]])
                 for k in range(1,self.T):
-                    r = np.hstack([r,self.f(x[k-1,i], u[k,i],i) - x[k,i]]) # dual for dynamics
+                    r = np.hstack([r, self.dynamics_residual_weight * self.f(x[k-1,i], u[k,i],i) - x[k,i]]) # dual for dynamics
                 for k in range(1,self.T):
                     r = np.hstack([r]+[ self.h(x[k-1,i], x[k-1,j.item()]) for j in np.nonzero(h_plus_mask[k-1,i])[0] ])
                 # h(x_T_i, x_T_j)
@@ -560,6 +584,7 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return r
 
+    '''
     def r_fillin(self, x, u, lamda, mu, h_plus_mask):
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = N*T*n; dim_u = N*T*m
@@ -596,6 +621,7 @@ class ResidualGame(PrintObject):
             raise e
             breakpoint()
         return r
+    '''
 
     def Bh(self,x_i,x_j):
         return -1/self.rho * np.log(-min(self.h(x_i, x_j),-1e-100))
@@ -856,10 +882,10 @@ class ResidualGame(PrintObject):
             # dynamics for f(x0,u0) = x1
             drdx[index:index+dim_x,:] = dLL_dxdx
             index += dim_x + dim_u
-            drdx[index:index+n,:] = dF0dx
+            drdx[index:index+n,:] = self.dynamics_residual_weight * dF0dx
             for k in range(1,self.T):
                 dFdx = self.dF_dx(x,u,i,k)
-                drdx[index+k*n:index+(k+1)*n,:] = dFdx
+                drdx[index+k*n:index+(k+1)*n,:] = self.dynamics_residual_weight * dFdx
             index += n*T
             for k in range(1,self.T+1):
                 indices = np.nonzero(h_plus_mask[k-1,i])[0]
@@ -879,8 +905,9 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return drdx
 
+    '''
     def dr_dx_old(self, x, u, lamda, mu, h_plus_mask):
-        ''' return: dim(r)*dim(x) '''
+        # return: dim(r)*dim(x)
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = N*T*n; dim_u = N*T*m
         dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
@@ -906,6 +933,7 @@ class ResidualGame(PrintObject):
             self.print_debug(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
         return drdx
+    '''
 
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
         if (self.USE_CPP):
@@ -925,10 +953,10 @@ class ResidualGame(PrintObject):
                 drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
             index += dim_u
             k = 0
-            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(self.x0[i],u[k,i],i)
+            drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.dynamics_residual_weight * self.df_du(self.x0[i],u[k,i],i)
 
             for k in range(1,self.T):
-                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.df_du(x[k-1,i],u[k,i],i)
+                drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.dynamics_residual_weight * self.df_du(x[k-1,i],u[k,i],i)
             index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
 
         if (self.DEBUG):
@@ -984,26 +1012,6 @@ class ResidualGame(PrintObject):
             if (np.linalg.norm(alt-dr_dlamda)>1e-4):
                 breakpoint()
         return dr_dlamda
-
-    def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
-        if (self.USE_CPP):
-            return self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
-        ''' return: dim: dim_x*dim_mu '''
-        T = self.T; N = self.N; n = self.n; m = self.m
-        dim_x = T*N*n; dim_u = T*N*m
-        dim_mu = T*N*N
-        dLL_dx_dmu = np.zeros((dim_x,dim_mu))
-        for k in range(1,T+1):
-            for j in np.nonzero(h_plus_mask[k-1,i])[0]:
-                dLLi_dxki_dmuijk = self.dh_dxi(x[k-1,i],x[k-1,j])
-                dLLi_dxkj_dmuijk = self.dh_dxj(x[k-1,i],x[k-1,j])
-                dLL_dx_dmu[(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
-                dLL_dx_dmu[(k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n,(k-1)*N*N+i*N+j] = dLLi_dxkj_dmuijk
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
-            if (np.linalg.norm(alt-dLL_dx_dmu)>1e-4):
-                breakpoint()
-        return dLL_dx_dmu
 
 
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):

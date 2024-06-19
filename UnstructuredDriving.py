@@ -84,8 +84,9 @@ class UnstructuredDriving(ResidualGame):
             self.cpp = cpp_UnstructuredDriving(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
-    def _visualize(self,U):
-        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+    def _visualize(self,U,X=None):
+        if (X is None):
+            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
         ax.vlines(x=-self.track_width/2,ymin=-1,ymax=self.track_length)
         ax.vlines(x=self.track_width/2,ymin=-1,ymax=self.track_length)

@@ -11,17 +11,14 @@ from matplotlib.patches import Rectangle
 
 from util import *
 from TimeUtil import TimeUtil
-#from src.build.unstructured_driving import UnstructuredDriving as cpp_UnstructuredDriving
+from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
-
 
 # example: Merging
 # uses kinematic bicycle model
 # this version use U as decision variable only
 class CarMergeKinematicBicycle(ResidualGame):
-    DEBUG = False
-    USE_CPP = False
-    CPP_DEBUG = False
+    USE_CPP = True
     def __init__(self,car_count=3):
         super().__init__()
 
@@ -43,12 +40,12 @@ class CarMergeKinematicBicycle(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        #self.T = 3
         self.T = 20
-        self.track_width = 2
+        self.track_width = 2.2
         self.track_length = 20
         self.dt = dt = 0.2
-        #self.dt = dt = 0.1
+        # NOTE this is not implemented in cpp
+        self.dynamics_residual_weight = 1.0
 
         # dimension of x and u for single agent
         self.n = 4
@@ -58,26 +55,41 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
 
-        # initial state, stated in unit of car size
-        self.x0 = np.array([[0,0.9,1.5,0.0],[3,1.1,1.5,0.0],[2.1,-1.3,1.7,radians(5)]])
+        # collision definition
+        self.h_Qh = np.diag([-1.0,-1,0,0])
+
+        '''
+        # initial state,
+        # NOTE this is 3 car simple case, it will be overridden
+        self.x0 = np.array([[0,0.9,1.5,0.0],[4,1.1,1.5,0.0],[2.1,-1.3,1.7,0.0]])
         self.target_y = [1.0,1.0,1.0]
+        '''
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
         self.J_Qr = np.diag([0,0.1,0.01,0])
         self.J_Q = np.diag([0,0,0,1.0])
-        self.J_R = np.eye(self.m)*0.5
+        self.J_R = np.eye(self.m)*0.3
 
-        # collision definition
-        self.h_Qh = np.diag([-1.0,-1,0,0])
+        # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
+        np.random.seed(0)
+        main_lane_n = min(int(0.65*car_count),car_count-1)
+        merge_lane_n = car_count - main_lane_n
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 1.0+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        v_main_lane = 2.0 + np.random.random(main_lane_n)
+        v_merge_lane = 2.0 + np.random.random(merge_lane_n)
+        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
+        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
+        self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
+        self.target_y = [1]*(main_lane_n+merge_lane_n)
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            raise RuntimeError
-            self.cpp = cpp_UnstructuredDriving(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
+            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.n, self.m, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):
@@ -223,8 +235,9 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        dx = np.array([x[2]*cos(x[3]+beta),x[2]*sin(x[3]+beta), u[0],x[2]/1.0*sin(beta)])
+        lf = 1.0; lr = 1.0
+        beta = atan(tan(u[1])*lr/(lf+lr))
+        dx = np.array([x[2]*cos(x[3]+beta),x[2]*sin(x[3]+beta), u[0],x[2]/lr*sin(beta)])
         return x+dx*self.dt
 
     def df_dx(self,x,u,i):
@@ -321,14 +334,17 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))
+        u_ref[:,0,1] = radians(20)
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
-        self._animation(u_ref,full_x_ref)
+        #self._animation(u_ref,full_x_ref)
+        self._visualize(u_ref,full_x_ref)
+        plt.show()
 
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle()
+    main = CarMergeKinematicBicycle(car_count=10)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
