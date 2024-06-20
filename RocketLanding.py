@@ -53,7 +53,7 @@ class RocketLanding(ResidualGame):
         self.T = 20
         self.dt = dt = 0.2
 
-        self.x0 = np.array([[-10,1,-0.3, -0.1, radians(10)],[1,0.2,0,0,0]])
+        self.x0 = np.array([[-10,1,-0.3, -0.1, radians(0)],[-2,5.0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
@@ -63,7 +63,8 @@ class RocketLanding(ResidualGame):
         # bounds for visualization
         self.visual_x_lim = [-20,20]
         self.visual_y_lim = [-2,30]
-        self.rocket_img = mpimg.imread('./resources/rocket.png')
+        self.rocket_img = mpimg.imread('./resources/rocket_alpha.png')
+        self.ship_img = mpimg.imread('./resources/ship_alpha.png')
 
 
     def setup(self):
@@ -76,6 +77,9 @@ class RocketLanding(ResidualGame):
 
     # TODO
     def _visualize(self,U,X=None):
+        rocket_scale = 0.01/2 # for rocket size
+        ship_scale = 0.01/2 # for ship size
+
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
@@ -87,19 +91,27 @@ class RocketLanding(ResidualGame):
         plt.plot(yy_0,-xx_0,'*-')
         # plot initial pose
         pose_0 = X[0,0]
-        scale = 0.01/2
         rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[4]),reshape=True)
-        ax.imshow(rotated_rocket_img, extent=[pose_0[1]-183*scale, pose_0[1]+183*scale, -pose_0[0]-275*scale, -pose_0[0]+275*scale])
+        L,W,_ = rotated_rocket_img.shape
+        ax.imshow(rotated_rocket_img, extent=[pose_0[1]-W*rocket_scale, pose_0[1]+W*rocket_scale, -pose_0[0]-L*rocket_scale, -pose_0[0]+L*rocket_scale])
         # plot final pose
         pose_0 = X[-1,0]
-        scale = 0.01/2
         rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[4]),reshape=True)
-        ax.imshow(rotated_rocket_img, extent=[pose_0[1]-183*scale, pose_0[1]+183*scale, -pose_0[0]-275*scale, -pose_0[0]+275*scale])
-        breakpoint()
+        L,W,_ = rotated_rocket_img.shape
+        ax.imshow(rotated_rocket_img, extent=[pose_0[1]-W*rocket_scale, pose_0[1]+W*rocket_scale, -pose_0[0]-L*rocket_scale, -pose_0[0]+L*rocket_scale])
 
         # agent 1: ship
         yy_1 = X[:,1,0]
         plt.plot(yy_1,np.zeros_like(yy_1),'o-')
+        # plot initial pose
+        pose_0 = X[0,1]
+        L,W,_ = self.ship_img.shape
+        ax.imshow(self.ship_img, extent=[pose_0[0]-W*ship_scale, pose_0[0]+W*ship_scale, -L*ship_scale, +L*ship_scale])
+        # plot final pose
+        pose_0 = X[-1,1]
+        L,W,_ = self.ship_img.shape
+        ax.imshow(self.ship_img, extent=[pose_0[0]-W*ship_scale, pose_0[0]+W*ship_scale, -L*ship_scale, +L*ship_scale])
+
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
         ax.set_ylim(*self.visual_y_lim)
@@ -334,7 +346,7 @@ class RocketLanding(ResidualGame):
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))
-        u_ref[:,0,1] = radians(20)
+        u_ref[:,0,1] = 0.1 # ccw
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         #self._animation(u_ref,full_x_ref)
