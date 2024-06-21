@@ -114,11 +114,9 @@ class ResidualGame(PrintObject):
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
-        '''
-        self.print_info(full_x_ref[:,1,:])
-        self.print_info(u_ref[:,1,:])
+        self.print_info(full_x_ref[:,0,:])
+        self.print_info(u_ref[:,0,:])
         breakpoint()
-        '''
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
