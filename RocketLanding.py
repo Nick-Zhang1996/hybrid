@@ -27,7 +27,7 @@ class RocketLanding(ResidualGame):
         super().__init__()
 
         # agent 0: rocket
-        # x: [x,y,vx,vy,theta]
+        # x: [x,y,theta, vx,vy,omega]
         # u: [Tx,Ty], thrust with respect to body, Tx is nozzle direction, Ty is sideways to right:
         # unit:g
         # agent 1: ship
@@ -53,11 +53,11 @@ class RocketLanding(ResidualGame):
         self.T = 20
         self.dt = dt = 0.2
 
-        self.x0 = np.array([[-10,1,-0.3, -0.1, radians(0)],[-2,5.0,0,0,0]])
+        self.x0 = np.array([[-10,1,radians(0), -0.3, -0.1, 0],[-2,3.0,0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
-        self.n = 5
+        self.n = 6
         self.m = 2
 
         # bounds for visualization
@@ -65,6 +65,20 @@ class RocketLanding(ResidualGame):
         self.visual_y_lim = [-2,30]
         self.rocket_img = mpimg.imread('./resources/rocket_alpha.png')
         self.ship_img = mpimg.imread('./resources/ship_alpha.png')
+
+        # cost functions R for rocket, S for ship
+        self.Q_R = np.diag([1,0,1,1,1,1])
+        self.R_R = np.diag([1,1])
+        self.Q_S = np.diag([0,1,0,0,0,0])
+        self.R_S = np.diag([1,0])
+
+        self.Q_D = np.diag([1,1]) # penalize dy, dvy
+        self.P_R = np.zeros((self.m,self.n))
+        self.P_R[0,1] = 1
+        self.P_R[1,4] = 1
+        self.P_S = np.zeros((self.m,self.n))
+        self.P_S[0,0] = 1
+        self.P_S[1,1] = 1
 
 
     def setup(self):
@@ -91,12 +105,12 @@ class RocketLanding(ResidualGame):
         plt.plot(yy_0,-xx_0,'*-')
         # plot initial pose
         pose_0 = X[0,0]
-        rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[4]),reshape=True)
+        rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[2]),reshape=True)
         L,W,_ = rotated_rocket_img.shape
         ax.imshow(rotated_rocket_img, extent=[pose_0[1]-W*rocket_scale, pose_0[1]+W*rocket_scale, -pose_0[0]-L*rocket_scale, -pose_0[0]+L*rocket_scale])
         # plot final pose
         pose_0 = X[-1,0]
-        rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[4]),reshape=True)
+        rotated_rocket_img = rotate(self.rocket_img,degrees(pose_0[2]),reshape=True)
         L,W,_ = rotated_rocket_img.shape
         ax.imshow(rotated_rocket_img, extent=[pose_0[1]-W*rocket_scale, pose_0[1]+W*rocket_scale, -pose_0[0]-L*rocket_scale, -pose_0[0]+L*rocket_scale])
 
@@ -117,7 +131,9 @@ class RocketLanding(ResidualGame):
         ax.set_ylim(*self.visual_y_lim)
         return fig
 
+    # TODO
     def _animation(self,U,X=None,gif_prefix=''):
+        return
         ''' build a gif animation'''
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
@@ -157,11 +173,6 @@ class RocketLanding(ResidualGame):
         for box in box_vec:
             ax.add_patch(box)
         # lane boundary lines
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i,ymax=i+1)
 
         ax.set_aspect('equal', adjustable='box')
 
@@ -173,7 +184,6 @@ class RocketLanding(ResidualGame):
 
 
     ''' --------  math functions and their derivatives ------ '''
-    # TODO
     def J(self,x_k,u_k_i,i):
         '''
         step cost for an agent, given x,u
@@ -181,10 +191,15 @@ class RocketLanding(ResidualGame):
         u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
-        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
             return self.cpp.J(x_k,u_k_i,i)
-        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        if (i==0):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = x_k[0].T @ self.Q_R @ x_k[0] + u_k_i.T @ self.R_R @ u_k_i + dx.T @ self.Q_D @ dx
+        elif (i==1):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = x_k[1].T @ self.Q_S @ x_k[1] + u_k_i.T @ self.R_S @ u_k_i + dx.T @ self.Q_D @ dx
+
         if (self.CPP_DEBUG):
             alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -195,7 +210,13 @@ class RocketLanding(ResidualGame):
     def dJi_dxi(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
-        val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+        if (i==0):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = 2*x_k[0] @ self.Q_R + 2*dx.T @ self.Q_D @ self.P_R
+        elif (i==1):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = 2*x_k[1] @ self.Q_S - 2*dx.T @ self.Q_D @ self.P_S
+
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -206,7 +227,13 @@ class RocketLanding(ResidualGame):
     def dJi_dxj(self,x_k,u_k_i,i,j):
         if (self.USE_CPP):
             return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
-        val = 0
+        if (i==0 and j==1):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = -2*dx.T @ self.Q_D @ self.P_S
+        elif (i==1 and j==0):
+            dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
+            val = 2*dx.T @ self.Q_D @ self.P_R
+
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -216,7 +243,11 @@ class RocketLanding(ResidualGame):
     def dJi_du(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_du(x_k,u_k_i,i)
-        val = 2* u_k_i.T @ self.J_R
+        if (i==0):
+            val = 2* u_k_i.T @ self.R_R
+        elif (i==1):
+            val = 2* u_k_i.T @ self.R_S
+
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -236,113 +267,85 @@ class RocketLanding(ResidualGame):
 
     # dJi / dxi dxj
     def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
-        return 0
+        if (i==0 and j==1):
+            val = -2*self.P_R.T @ self.Q_D @ self.P_S
+        elif (i==1 and j==0):
+            val = -2*self.P_S.T @ self.Q_D @ self.P_R
+        return val
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
-        return 0
+        if (i==0 and j==1):
+            val = 2*self.P_S.T @ self.Q_D @ self.P_S
+        elif (i==1 and j==0):
+            val = 2*self.P_R.T @ self.Q_D @ self.P_R
+        return val
     def dJi_dudu(self, x_k, u_k_i, i):
-        return 2*self.J_R
+        if (i==0):
+            val = 2*self.R_R
+        elif (i==1):
+            val = 2*self.R_S
+        return val
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
         if (i==0):
             I = 1.0; L = 1.0
-            dx = np.array([ x[2],x[3], u[0]*cos(x[4]) - u[1]*sin(x[4]) + 1.0, u[1]*cos(x[4]) + u[0]*sin(x[4]), u[1]*L/I ])
+            dx = np.array([ x[3],x[4], x[5], u[0]*cos(x[4]) - u[1]*sin(x[4]) + 1.0, u[1]*cos(x[4]) + u[0]*sin(x[4]), u[1]*L/I ])
         elif (i==1):
-            dx = np.array([x[1],u[0],0,0,0])
+            dx = np.array([x[1],u[0],0,0,0,0])
         return x+dx*self.dt
 
-    # TODO
     def df_dx(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        A = np.array([[0,0,cos(x[3]+beta), -x[2]*sin(x[3]+beta)],
-            [0,0, sin(x[3]+beta), x[2]*cos(x[3]+beta)],
-            [0,0,0,0],
-            [0,0,sin(beta)/1.0,0]])
-        val = np.eye(4) + A*self.dt
+        if (i==0):
+            A = np.zeros((self.n,self.n))
+            A[0,3] = 1
+            A[1,4] = 1
+            A[2,5] = 1
+            A[3,2] = -u[0]*sin(x[2]) - u[1]*cos(x[2])
+            A[4,2] = u[0]*cos(x[2]) - u[1]*sin(x[2])
+        elif (i==1):
+            A = np.zeros((self.n,self.n))
+            A[0,1] = 1
+
+        val = np.eye(self.n) + A*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda xx:self.f(xx,u,i), x,dim=self.n)
             assert (np.linalg.norm(num-val)<1e-4)
         return val
 
     def df_du(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        dbeta_dst = 0.5/(  ((tan(u[1])*0.5)**2+1) * cos(u[1])**2 )
-        B = np.array([[0,-x[2]*sin(x[3]+beta)*dbeta_dst],
-            [0,x[2]*cos(x[3]+beta)*dbeta_dst],
-            [1,0],
-            [0,x[2]/1.0*cos(beta)*dbeta_dst]])
+        if (i==0):
+            L = 1.0; I = 1.0;
+            B = np.zeros((self.n,self.m))
+            B[3,0] = cos(x[2])
+            B[3,1] = -sin(x[2])
+            B[4,0] = sin(x[2])
+            B[4,1] = cos(x[2])
+            B[5,1] = L/I
+        elif (i==1):
+            B = np.zeros((self.n,self.m))
+            B[1,0] = 1
         val = B*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda uu:self.f(x,uu,i), u,dim=self.n)
             assert (np.linalg.norm(num-val)<1e-4)
         return val
 
-    # collision definition is similar to Double Integrator, car is an "ellipsis"
+    # handle collision
     def h(self, x_i, x_j):
-        ''' car distance larger than 1.2 normalized '''
-        if (self.USE_CPP):
-            return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 7
-        if (self.CPP_DEBUG):
-            alt = self.cpp.h(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return -1
 
     def dh_dxi(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxi(x_i,x_j)
-        val =  2*(x_i-x_j).T @ self.h_Qh
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxi(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
     def dh_dxj(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxj(x_i,x_j)
-        val = 2*(x_j-x_i).T @ self.h_Qh
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxj(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
     def dh_dxi_dxi(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxi_dxi(x_i,x_j)
-        val =  2*self.h_Qh.T
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxi_dxi(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
     def dh_dxj_dxi(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxj_dxi(x_i,x_j)
-        val = -2* self.h_Qh.T
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxj_dxi(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
     def dh_dxi_dxj(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxi_dxj(x_i,x_j)
-        val = -2*self.h_Qh.T
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxi_dxj(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
     def dh_dxj_dxj(self,x_i,x_j):
-        if (self.USE_CPP):
-            return self.cpp.dh_dxj_dxj(x_i,x_j)
-        val = 2*self.h_Qh.T
-        if (self.CPP_DEBUG):
-            alt = self.cpp.dh_dxj_dxj(x_i,x_j)
-            if (np.linalg.norm(alt-val)>1e-4):
-                breakpoint()
-        return val
+        return 0
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))
@@ -357,8 +360,8 @@ class RocketLanding(ResidualGame):
 
 if __name__=="__main__":
     main = RocketLanding()
-    #main.setup()
-    #main.solve(save_gif=False,visualize=True,animate=True)
-    #main.final()
-    main.testAnimation()
+    main.setup()
+    main.solve(save_gif=False,visualize=True,animate=True)
+    main.final()
+    #main.testAnimation()
 
