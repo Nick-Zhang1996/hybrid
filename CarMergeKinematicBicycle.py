@@ -18,7 +18,7 @@ from ResidualGame import ResidualGame
 # uses kinematic bicycle model
 # this version use U as decision variable only
 class CarMergeKinematicBicycle(ResidualGame):
-    USE_CPP = True
+    USE_CPP = False
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
         super().__init__()
@@ -74,7 +74,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.J_R = np.eye(self.m)*0.3
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        #np.random.seed(0)
+        np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
@@ -85,6 +85,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
+        self.print_debug_enable()
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module

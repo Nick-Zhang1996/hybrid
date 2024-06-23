@@ -114,9 +114,11 @@ class ResidualGame(PrintObject):
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
+        '''
         self.print_info(full_x_ref[:,0,:])
         self.print_info(u_ref[:,0,:])
         breakpoint()
+        '''
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
@@ -140,8 +142,6 @@ class ResidualGame(PrintObject):
             self.print_debug(f't: Dr numerical {time()-t0}')
             self.print_debug(np.linalg.norm(Dr-Dr_alt))
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
-
-
         # find newton direction, dense matrix
         '''
         t.s('lstsq')
@@ -155,8 +155,6 @@ class ResidualGame(PrintObject):
         dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
         t.e('sparse-lstsq')
         '''
-
-
         # find newton direction, remove zero col/rows first, then Sparse
         t.s('nonzero reduction')
         nonzero_rows = np.nonzero(np.sum(np.abs(Dr),axis=1))[0]
@@ -177,8 +175,6 @@ class ResidualGame(PrintObject):
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp SparseQR')
         '''
-
-
         # use cpp's lscg (fastest)
         '''
         if (self.USE_CPP):
@@ -186,9 +182,6 @@ class ResidualGame(PrintObject):
             reduced_dy = reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
             t.e('cpp lscg')
         '''
-
-
-
         # DEBUG - compare residual of different methods
         '''
         r0_norm = np.linalg.norm(r0[nonzero_rows])
@@ -208,6 +201,9 @@ class ResidualGame(PrintObject):
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
         self.print_debug(f' nonzero entries:  {nonzero_entries/total_entries}')
         '''
+        # TODO NEW FEATURE: projection onto dynamics null space
+        # extract control constraint F
+
 
         # Backtracking line search
         t.s('line search')
@@ -225,11 +221,30 @@ class ResidualGame(PrintObject):
         t.e('line search')
 
 
-        # DEBUG - check different parts of the residuals, with rho = infty
-        original_rho = self.rho
-        self.rho = 1e4
+        # FIXME DEBUG
+        # is residual actually reduced? if yes, from where? compare r0 against r_t
         index = 0
         h_plus_violations = 0
+        self.print_debug(' r_0 breakdown ')
+        for i in range(self.N):
+            self.print_debug(f'agent {i}')
+            dLL_dx_res = np.linalg.norm(r0[index:index+dim_x])
+            index += dim_x
+            dLL_du_res = np.linalg.norm(r0[index:index+dim_u])
+            index += dim_u
+            fx_res = np.linalg.norm(r0[index:index+n*T])
+            index += n*T
+            h_res = np.linalg.norm(r0[index:index+np.sum(h_plus_mask[:,i])])
+            h_plus_violations += h_res
+            index += np.sum(h_plus_mask[:,i])
+            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
+
+        #check different parts of the residuals, with rho = infty
+        original_rho = self.rho
+        #self.rho = 1e4
+        index = 0
+        h_plus_violations = 0
+        self.print_debug(f' r_t breakdown, step = {step} ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
@@ -242,17 +257,13 @@ class ResidualGame(PrintObject):
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
             self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
-            index = dim_x+dim_u
-            '''
-            f0_res = np.linalg.norm(r_t[index:index+n])**2
-            self.print_debug(f'f0 residual: {f0_res}')
-            '''
         self.rho = original_rho
 
         self.residuals = r_t_norm
         self.violations = np.sum(h_plus_mask)/2
 
         self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
+        breakpoint()
 
         # stopping criterion
         if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):

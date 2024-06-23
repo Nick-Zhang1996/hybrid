@@ -53,7 +53,8 @@ class RocketLanding(ResidualGame):
         self.T = 20
         self.dt = dt = 0.2
 
-        self.x0 = np.array([[-10,1,radians(0), -0.3, 0.2, 0],[1,0.2,0,0,0,0]])
+        #self.x0 = np.array([[-10,1,radians(0), -0.3, 0.2, 0],[1,0.2,0,0,0,0]])
+        self.x0 = np.array([[-10,1,radians(4), -0.3, 0.2, 0],[1,0.4,0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
