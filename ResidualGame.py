@@ -9,6 +9,7 @@ import scipy.sparse # sparse matrix operations
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
+from itertools import chain
 
 from util import *
 from TimeUtil import TimeUtil
@@ -84,6 +85,7 @@ class ResidualGame(PrintObject):
         t = self.profiler
         for i in range(self.iterations):
             t.s()
+            x_ref = self.rollout(self.x0,u_ref)
             if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
                 t.s('cpp step')
                 try:
@@ -203,6 +205,39 @@ class ResidualGame(PrintObject):
         '''
         # TODO NEW FEATURE: projection onto dynamics null space
         # extract control constraint F
+        # assert that x,u are separated from the rest
+        # F @ [x,u] = Fx @ x + Fu @ u= -r_F
+        index = 0
+        for i in range(self.N):
+            index += dim_x + dim_u
+            # x: T*N*n
+            x_indices = list(chain.from_iterable([list(range(t*N*n+i*n,t*N*n+(i+1)*n)) for t in range(T)]))
+            # u: T*N*m
+            u_indices = list(chain.from_iterable([list(range(dim_x+t*N*m+i*m,dim_x+t*N*m+(i+1)*m)) for t in range(T)]))
+            Fx = Dr[index:index+n*T,x_indices]
+            Fu = Dr[index:index+n*T,u_indices]
+            dx_i = dy[x_indices].flatten()
+            du_i = dy[u_indices].flatten()
+            '''
+            # TODO DEBUG ensure this is correct
+            dx_full, du_full, _, _ = split_y(dy)
+            dx_i_alt = dx_full[:,i,:].flatten()
+            self.print_debug(f'dx err {np.linalg.norm(dx_i_alt - dx_i)}')
+            du_i_alt = du_full[:,i,:].flatten()
+            self.print_debug(f'du err {np.linalg.norm(du_i_alt - du_i)}')
+            '''
+            r_F = r0[index:index+n*T]
+            '''
+            # TODO assert that the rest of the row is empty
+            accounted_norm = np.linalg.norm(Fx)**2 + np.linalg.norm(Fu)**2
+            unaccounted_norm = np.linalg.norm(Dr[index:index+n*T])**2 - accounted_norm
+            self.print_debug(f'accoutned_norm {accounted_norm}, unaccounted {unaccounted_norm}')
+            '''
+            du, residuals, rank, s = np.linalg.lstsq(Fu,-r_F - Fx @ dx_i)
+            #self.print_debug(f'residuals {np.linalg.norm(residuals)}')
+            self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du)}')
+            dy[u_indices] = du
+            index += n*T + np.sum(h_plus_mask[:,i])
 
 
         # Backtracking line search
@@ -212,7 +247,12 @@ class ResidualGame(PrintObject):
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
         for i in range(self.backtracking_max_iter):
-            r_t = r_y_fun(y0+step*dy)
+            y_new = y0+step*dy
+            # NOTE testing change: rollout in line search
+            _,u_new,_,_ = split_y(y_new)
+            x_new = self.rollout(self.x0, u_new)
+            y_new[:dim_x] = x_new.flatten()
+            r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1-self.bc_a*step)*r0_norm):
                 step *= self.bc_b
@@ -263,7 +303,6 @@ class ResidualGame(PrintObject):
         self.violations = np.sum(h_plus_mask)/2
 
         self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
-        breakpoint()
 
         # stopping criterion
         if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
@@ -276,7 +315,7 @@ class ResidualGame(PrintObject):
             # but if we are only using the "subfunctions", then this will be called
             self.cpp.post_step_update()
 
-        return split_y(y0+step*dy)
+        return split_y(y_new)
 
     def rollout(self,x0,U):
         ''' given x0 and u0..u_T-1 (T*N*m), find x1..xT '''

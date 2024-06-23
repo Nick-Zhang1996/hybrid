@@ -54,7 +54,7 @@ class RocketLanding(ResidualGame):
         self.dt = dt = 0.2
 
         #self.x0 = np.array([[-10,1,radians(0), -0.3, 0.2, 0],[1,0.2,0,0,0,0]])
-        self.x0 = np.array([[-10,1,radians(4), -0.3, 0.2, 0],[1,0.4,0,0,0,0]])
+        self.x0 = np.array([[-10,1,radians(4), -0.3, 0.2, 0],[-1,0.4,0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
@@ -69,9 +69,9 @@ class RocketLanding(ResidualGame):
 
         # cost functions R for rocket, S for ship
         self.Q_R = np.diag([1,0,1,1,1,1])
-        self.R_R = np.diag([1,1])
+        self.R_R = np.diag([1,1])*1e-2
         self.Q_S = np.diag([0,1,0,0,0,0])
-        self.R_S = np.diag([1,0])
+        self.R_S = np.diag([1,0])*1e-2
 
         self.Q_D = np.diag([1,1]) # penalize dy, dvy
         self.P_R = np.zeros((self.m,self.n))
@@ -133,7 +133,7 @@ class RocketLanding(ResidualGame):
 
         # DEBUG, plot rollout trajectory
         plt.plot(rollout_X[:,0,1],-rollout_X[:,0,0],'o-')
-        plt.plot(rollout_X[:,1,1],np.zeros_like(yy_1),'o-')
+        plt.plot(rollout_X[:,1,0],np.zeros_like(yy_1),'o-')
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
