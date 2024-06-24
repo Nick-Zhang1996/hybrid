@@ -118,6 +118,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         car_pos_vec = []
         car_angle_vec = []
         box_vec = []
+        circle_vec = []
         color_vec = ['red','green','blue','black']
         color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
         # prepare smoothed animation
@@ -139,6 +140,7 @@ class CarMergeKinematicBicycle(ResidualGame):
             car_angle_vec.append(angle_vec)
             car_pos_vec.append(pos_vec)
             box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color))
+            circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
 
         fig, ax = plt.subplots()
         ax.set_xlim(*self.visual_x_lim)
@@ -147,10 +149,13 @@ class CarMergeKinematicBicycle(ResidualGame):
             for i in range(self.N):
                 box_vec[i].set_xy(car_pos_vec[i][frame])
                 box_vec[i].set_angle(car_angle_vec[i][frame])
+                circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
             return box_vec
         # Add the boxes to the plot
         for box in box_vec:
             ax.add_patch(box)
+        for circ in circle_vec:
+            ax.add_patch(circ)
         # lane boundary lines
         ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
         ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
@@ -340,9 +345,9 @@ class CarMergeKinematicBicycle(ResidualGame):
         u_ref[:,0,1] = radians(20)
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
-        #self._animation(u_ref,full_x_ref)
-        self._visualize(u_ref,full_x_ref)
-        plt.show()
+        self._animation(u_ref,full_x_ref)
+        #self._visualize(u_ref,full_x_ref)
+        #plt.show()
 
 
 

@@ -85,7 +85,6 @@ class ResidualGame(PrintObject):
         t = self.profiler
         for i in range(self.iterations):
             t.s()
-            x_ref = self.rollout(self.x0,u_ref)
             if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
                 t.s('cpp step')
                 try:
@@ -240,6 +239,7 @@ class ResidualGame(PrintObject):
             index += n*T + np.sum(h_plus_mask[:,i])
 
 
+
         # Backtracking line search
         t.s('line search')
         # backtracking line search
@@ -260,9 +260,6 @@ class ResidualGame(PrintObject):
                 break
         t.e('line search')
 
-
-        # FIXME DEBUG
-        # is residual actually reduced? if yes, from where? compare r0 against r_t
         index = 0
         h_plus_violations = 0
         self.print_debug(' r_0 breakdown ')
