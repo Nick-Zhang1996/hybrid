@@ -473,7 +473,7 @@ class ResidualGame(PrintObject):
         return -lamda_k[i].T
     def dL_dx_jk(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i,j):
         assert (i!=j)
-        return  self.dJi_dxj(x[k-1],u[k],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
+        return  self.dJi_dxj(x[k-1],u[k,i],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j]) )
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i,i)
@@ -521,7 +521,7 @@ class ResidualGame(PrintObject):
                 continue
             for k in range(1,T):
                 sub = submtx_i_k(j,k)
-                sub[:] = self.dJi_dxj(x[k-1],u[k],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
+                sub[:] = self.dJi_dxj(x[k-1],u[k,i],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
                     -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
             k = T
             sub = submtx_i_k(j,k)
@@ -798,24 +798,24 @@ class ResidualGame(PrintObject):
                     continue
                 if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
                     #dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(x[k-1],u[k],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = self.dJi_dxi_dxj(x[k-1],u[k,i],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
                     mtx = submtx(k,i,j)
                     mtx[:,:] = val
                     mtx = submtx(k,j,i)
                     mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
                     mtx = submtx(k,j,j)
-                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k],i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k,i],i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
                 else:
                     #dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(x[k-1],u[k],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    val = self.dJi_dxi_dxj(x[k-1],u[k,i],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
                     mtx = submtx(k,i,j)
                     mtx[:,:] = val
                     mtx = submtx(k,j,i)
                     mtx[:,:] = val.T
                     #dLLi_dxkj_dxkj
                     mtx = submtx(k,j,j)
-                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k],i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+                    mtx[:,:] = self.dJi_dxj_dxj(x[k-1],u[k,i],i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
         k = T
         for j in range(N):
             if i==j:

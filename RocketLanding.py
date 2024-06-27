@@ -17,10 +17,8 @@ from util import *
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 
-# example: Merging
-# uses kinematic bicycle model
-# this version use U as decision variable only
 class RocketLanding(ResidualGame):
+    DEBUG = False
     USE_CPP = False
     FORCE_PYTHON_SOLVER = False
     def __init__(self):
@@ -54,7 +52,7 @@ class RocketLanding(ResidualGame):
         self.dt = dt = 0.2
 
         #self.x0 = np.array([[-10,1,radians(0), -0.3, 0.2, 0],[1,0.2,0,0,0,0]])
-        self.x0 = np.array([[-10,0,radians(4), -0.3, 0, 0],[0,0,0,0,0,0]])
+        self.x0 = np.array([[-10,0,radians(5), -0.3, 0, 0],[1,0,0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
@@ -68,12 +66,13 @@ class RocketLanding(ResidualGame):
         self.ship_img = mpimg.imread('./resources/ship_alpha.png')
 
         # cost functions R for rocket, S for ship
-        self.Q_R = np.diag([1.5,0,1 ,0,0.0,0.1])
+        self.Q_R = np.diag([1,0,1 ,0,0.0,1])
         self.R_R = np.diag([1,1])*1e-2
-        self.Q_S = np.diag([0,0.01,0,0,0,0])
-        self.R_S = np.diag([1,0])*1e-2
 
-        self.Q_D = np.diag([0,0]) # penalize dy, dvy
+        self.Q_S = np.diag([0,0,0,0,0,0])
+        self.R_S = np.diag([1,1])*1e-2
+
+        self.Q_D = np.diag([1,0]) # penalize dy, dvy
         self.P_R = np.zeros((self.m,self.n))
         self.P_R[0,1] = 1
         self.P_R[1,4] = 1
@@ -218,6 +217,8 @@ class RocketLanding(ResidualGame):
             alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+        if (len(val.shape) > 1):
+            breakpoint()
         return val
 
     # dJi dxi
@@ -235,6 +236,12 @@ class RocketLanding(ResidualGame):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+        if (self.DEBUG):
+            if (i==0):
+                num = jacobianNumerical(lambda xi:self.J(np.vstack([xi,x_k[1]]),u_k_i,i), x_k[0])
+            elif (i==1):
+                num = jacobianNumerical(lambda xi:self.J(np.vstack([x_k[0],xi]),u_k_i,i), x_k[1])
+            assert (np.linalg.norm(num-val)<1e-4)
         return val
 
     # dJi dxj
@@ -252,6 +259,12 @@ class RocketLanding(ResidualGame):
             alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+        if (self.DEBUG):
+            if (i==0 and j==1):
+                num = jacobianNumerical(lambda xj:self.J(np.vstack([x_k[0],xj]),u_k_i,i), x_k[1].flatten())
+            elif (i==1 and j==0):
+                num = jacobianNumerical(lambda xj:self.J(np.vstack([xj,x_k[1]]),u_k_i,i), x_k[0].flatten())
+            assert (np.linalg.norm(num-val)<1e-4)
         return val
 
     def dJi_du(self,x_k,u_k_i,i):
@@ -266,6 +279,9 @@ class RocketLanding(ResidualGame):
             alt = self.cpp.dJi_du(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
+        if (self.DEBUG):
+            num = jacobianNumerical(lambda xi:self.J(x_k,u_k_i,i), u_k_i)
+            assert (np.linalg.norm(num-val)<1e-4)
         return val
 
     # dJ^i / dxi dxi
@@ -302,11 +318,10 @@ class RocketLanding(ResidualGame):
             val = 2*self.R_S
         return val
 
-    # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
         if (i==0):
             I = 1.0; L = 1.0
-            dx = np.array([ x[3],x[4], x[5], u[0]*cos(x[4]) - u[1]*sin(x[4]) + 1.0, u[1]*cos(x[4]) + u[0]*sin(x[4]), u[1]*L/I ])
+            dx = np.array([ x[3],x[4], x[5], u[0]*cos(x[2]) - u[1]*sin(x[2]) + 1.0, u[1]*cos(x[2]) + u[0]*sin(x[2]), u[1]*L/I ])
         elif (i==1):
             dx = np.array([x[1],u[0],0,0,0,0])
         return x+dx*self.dt
