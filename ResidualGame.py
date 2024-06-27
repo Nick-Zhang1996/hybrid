@@ -486,7 +486,7 @@ class ResidualGame(PrintObject):
         # x0 related terms
         LLi_val += self.J(self.x0,u[0,i],i) + lamda[0,i].T @ ( self.f(self.x0[i],u[0,i],i) - x[0,i])
         # x_T related terms
-        LLi_val += self.J(x[T-1],np.zeros_like(u[0,i]),i)
+        LLi_val += self.Jfi(x[T-1],i)
         h_plus = np.sum( [ mu[T-1,i,j.item()] * ( self.h(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0)
         h_minus = -1/self.rho*np.sum([np.log(-min(self.h(x[T-1,i], x[T-1,j.item()]),-1e-100)) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
         LLi_val += h_plus + h_minus
@@ -510,11 +510,10 @@ class ResidualGame(PrintObject):
 
         # dLLi_dxi_T
         sub = submtx_i_k(i,T)
-        sub[:] = -lamda[T-1,i].T + self.dJi_dxi(x[T-1],np.zeros(m),i) \
+        sub[:] = -lamda[T-1,i].T + self.dJfi_dxi(x[T-1],i) \
             + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
             -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
 
-        # TODO optimize
         # dLLi_dxj
         for j in range(0,N):
             if i==j:
@@ -525,7 +524,7 @@ class ResidualGame(PrintObject):
                     -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
             k = T
             sub = submtx_i_k(j,k)
-            sub[:] = self.dJi_dxj(x[k-1],np.zeros(m),i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
+            sub[:] = self.dJfi_dxj(x[k-1],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
                 -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
         val = der.reshape(1,-1)
         if (self.CPP_DEBUG):
@@ -787,7 +786,7 @@ class ResidualGame(PrintObject):
 
         #dLLi_dxki_dxki, k=T, u_T is undefined, use 0 to penalize J(x) only
         mtx = submtx(T,i,i)
-        mtx[:,:] = self.dJi_dxi_dxi(x[T-1],np.zeros(m),i) \
+        mtx[:,:] = self.dJfi_dxi_dxi(x[T-1],i) \
                 + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
                 + np.sum([self.dBh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
 
@@ -822,24 +821,24 @@ class ResidualGame(PrintObject):
                 continue
             if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
                 #dLLi_dxki_dxkj
-                val = self.dJi_dxi_dxj(x[k-1],np.zeros(m),i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                val = self.dJfi_dxi_dxj(x[k-1],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
                 mtx = submtx(k,i,j)
                 mtx[:,:] = val
                 mtx = submtx(k,j,i)
                 mtx[:,:] = val.T
                 #dLLi_dxkj_dxkj
                 mtx = submtx(k,j,j)
-                mtx[:,:] = self.dJi_dxj_dxj(x[k-1],np.zeros(m),i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
+                mtx[:,:] = self.dJfi_dxj_dxj(x[k-1],i,j) + mu[k-1,i,j] * self.dh_dxj_dxj(x[k-1,i], x[k-1,j])
             else:
                 #dLLi_dxki_dxkj
-                val = self.dJi_dxi_dxj(x[k-1],np.zeros(m),i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                val = self.dJfi_dxi_dxj(x[k-1],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
                 mtx = submtx(k,i,j)
                 mtx[:,:] = val
                 mtx = submtx(k,j,i)
                 mtx[:,:] = val.T
                 #dLLi_dxkj_dxkj
                 mtx = submtx(k,j,j)
-                mtx[:,:] = self.dJi_dxj_dxj(x[k-1],np.zeros(m),i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
+                mtx[:,:] = self.dJfi_dxj_dxj(x[k-1],i,j) + self.dBh_dxj_dxj(x[k-1,i], x[k-1,j])
 
 
         if (self.DEBUG):
@@ -856,7 +855,7 @@ class ResidualGame(PrintObject):
             dLL_dxdx_num = jacobianNumerical(lambda xx:self.dLLi_dx(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
             self.print_debug(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
-        if (self.CPP_DEBUG): 
+        if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
             if (np.linalg.norm(alt-dLL_dxdx)>1e-4):
                 breakpoint()
@@ -1093,4 +1092,40 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return dr_dmu
 
+
+    # ---------- Defaults for  some Application specific functions -------
+    # terminal(final) cost for agent i
+    # x_T: terminal GAME state (N*n)
+    # return : scalar
+    # if User doesn't choose a terminal cost, the step cost J will be used
+    def Jfi(self, x_T, i):
+        return self.J(x_T,np.zeros(m),i)
+    def dJfi_dxi(self, x_T, i):
+        return self.dJi_dxi(x_T,np.zeros(m),i)
+    def dJfi_dxj(self, x_T, i,j):
+        return self.dJi_dxj(x_T,np.zeros(m),i,j)
+    def dJfi_dxi_dxi(self, x_T, i):
+        return self.dJi_dxi_dxi(x_T,np.zeros(m),i)
+    def dJfi_dxi_dxj(self, x_T, i,j):
+        return self.dJi_dxi_dxj(x_T,np.zeros(m),i,j)
+    def dJfi_dxj_dxj(self, x_T, i,j):
+        return self.dJi_dxj_dxj(x_T,np.zeros(m),i,j)
+
+    # step cost function
+    def J(self,x_k,u_k_i,i):
+        return 0
+    def dJi_dxi(self,x_k,u_k_i,i):
+        return np.zeros((1,self.n))
+    def dJi_dxj(self,x_k,u_k_i,i,j):
+        return np.zeros((1,self.n))
+    def dJi_dxi_dxi(self,x_k,u_k_i,i):
+        return np.zeros((self.n,self.n))
+    def dJi_dxi_dxj(self,x_k,u_k_i,i,j):
+        return np.zeros((self.n,self.n))
+    def dJi_dxj_dxj(self,x_k,u_k_i,i,j):
+        return np.zeros((self.n,self.n))
+    def dJi_du(self,x_k,u_k_i,i):
+        return np.zeros((1,self.m))
+    def dJi_dudu(self, x_k, u_k_i, i):
+        return np.zeros((self.m,self.m))
 
