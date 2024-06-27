@@ -76,6 +76,7 @@ class UnstructuredDriving(ResidualGame):
 
         # collision definition
         self.h_Qh = np.diag([-1,-1,0,0])
+        self.guess = np.zeros((self.T,self.N,self.m))
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module

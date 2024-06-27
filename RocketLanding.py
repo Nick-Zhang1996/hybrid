@@ -54,7 +54,7 @@ class RocketLanding(ResidualGame):
         self.dt = dt = 0.2
 
         #self.x0 = np.array([[-10,1,radians(0), -0.3, 0.2, 0],[1,0.2,0,0,0,0]])
-        self.x0 = np.array([[-10,1,radians(4), -0.3, 0.2, 0],[-1,0.4,0,0,0,0]])
+        self.x0 = np.array([[-10,0,radians(4), -0.3, 0, 0],[0,0,0,0,0,0]])
 
         # dimension of x and u for single agent
         # max(n^i)
@@ -68,12 +68,12 @@ class RocketLanding(ResidualGame):
         self.ship_img = mpimg.imread('./resources/ship_alpha.png')
 
         # cost functions R for rocket, S for ship
-        self.Q_R = np.diag([1,0,1,1,1,1])
+        self.Q_R = np.diag([1.5,0,1 ,0,0.0,0.1])
         self.R_R = np.diag([1,1])*1e-2
-        self.Q_S = np.diag([0,1,0,0,0,0])
+        self.Q_S = np.diag([0,0.01,0,0,0,0])
         self.R_S = np.diag([1,0])*1e-2
 
-        self.Q_D = np.diag([1,1]) # penalize dy, dvy
+        self.Q_D = np.diag([0,0]) # penalize dy, dvy
         self.P_R = np.zeros((self.m,self.n))
         self.P_R[0,1] = 1
         self.P_R[1,4] = 1
@@ -83,6 +83,11 @@ class RocketLanding(ResidualGame):
         self.print_debug_enable()
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
+
+        u_ref = np.zeros((self.T,self.N,self.m))
+        #u_ref[:,0,0] = 0.1
+        #u_ref[:,1,0] = 1.0
+        self.guess = u_ref
 
 
     def setup(self):

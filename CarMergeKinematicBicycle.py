@@ -72,6 +72,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.J_Qr = np.diag([0,0.1,0.01,0])
         self.J_Q = np.diag([0,0,0,1.0])
         self.J_R = np.eye(self.m)*0.3
+        self.guess = np.zeros((self.T,self.N,self.m))
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
         np.random.seed(0)

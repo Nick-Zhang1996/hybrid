@@ -46,6 +46,7 @@ class ResidualGame(PrintObject):
         self.iterations = 10
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
+        self.guess = np.zeros((self.T,self.N,self.m))
 
 
         # solver variables
@@ -74,7 +75,7 @@ class ResidualGame(PrintObject):
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
         self.print_debug(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
 
-        u_ref = np.zeros((T,N,self.m))
+        u_ref = self.guess
         # x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.rollout(self.x0,u_ref)
         lambda_ref = np.zeros((T,N,self.n))
