@@ -1099,17 +1099,17 @@ class ResidualGame(PrintObject):
     # return : scalar
     # if User doesn't choose a terminal cost, the step cost J will be used
     def Jfi(self, x_T, i):
-        return self.J(x_T,np.zeros(m),i)
+        return self.J(x_T,np.zeros(self.m),i)
     def dJfi_dxi(self, x_T, i):
-        return self.dJi_dxi(x_T,np.zeros(m),i)
+        return self.dJi_dxi(x_T,np.zeros(self.m),i)
     def dJfi_dxj(self, x_T, i,j):
-        return self.dJi_dxj(x_T,np.zeros(m),i,j)
+        return self.dJi_dxj(x_T,np.zeros(self.m),i,j)
     def dJfi_dxi_dxi(self, x_T, i):
-        return self.dJi_dxi_dxi(x_T,np.zeros(m),i)
+        return self.dJi_dxi_dxi(x_T,np.zeros(self.m),i)
     def dJfi_dxi_dxj(self, x_T, i,j):
-        return self.dJi_dxi_dxj(x_T,np.zeros(m),i,j)
+        return self.dJi_dxi_dxj(x_T,np.zeros(self.m),i,j)
     def dJfi_dxj_dxj(self, x_T, i,j):
-        return self.dJi_dxj_dxj(x_T,np.zeros(m),i,j)
+        return self.dJi_dxj_dxj(x_T,np.zeros(self.m),i,j)
 
     # step cost function
     def J(self,x_k,u_k_i,i):

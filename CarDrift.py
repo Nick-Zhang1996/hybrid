@@ -19,11 +19,15 @@ from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cp
 from ResidualGame import ResidualGame
 from track.Skidpad import Skidpad
 
+from SymbolicDynamics import SymbolicDynamics
+import sympy
+
 # example: Car drifting (1/2 car)
 # uses dynamic bicycle model, defined on Frenet frame
 class CarDrift(ResidualGame):
     USE_CPP = False
     FORCE_PYTHON_SOLVER = False
+    #DEBUG = True
     def __init__(self):
         super().__init__()
 
@@ -45,27 +49,35 @@ class CarDrift(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = 1
-        self.T = 100
+        self.T = 40
         self.dt = dt = 0.05
 
         # dimension of x and u for single agent
         self.n = 8
         self.m = 2
 
-        # bounds for visualization
-        self.visual_x_lim = [0,25]
-        self.visual_y_lim = [0,25]
+        # dynamics parameters
+        self.mass = 1.0; self.Iz = 1.0; self.lf = 1.0; self.lr = 1.0;
+        self.Tmax = 1.0;
+
 
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
         vx = 1.0; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82)*0;
         self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
+        self.guess = np.zeros((self.T,self.N,self.m))
+        self.mu_ref = radians(10); self.vx_ref = 1.0
+
         self.print_debug_enable()
 
         self.track = Skidpad()
         self.car_img = mpimg.imread('./resources/porsche_orange.png')
         self.car_scale = 0.004/2
+
+        # bounds for visualization
+        self.visual_x_lim = [0,25]
+        self.visual_y_lim = [0,25]
 
     def setup(self):
         return
@@ -167,9 +179,9 @@ class CarDrift(ResidualGame):
         ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=len(car_pose_vec), blit=True)
-        #gif_filename = self.resolveLogname(logPrefix=gif_prefix)
-        #anim.save(gif_filename, writer='pillow')
+        anim = FuncAnimation(fig, update, frames=len(car_pose_vec), blit=True, interval=10)
+        gif_filename = self.resolveLogname(logPrefix=gif_prefix)
+        anim.save(gif_filename, writer='pillow')
         plt.show()
 
 
@@ -185,7 +197,9 @@ class CarDrift(ResidualGame):
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
             return self.cpp.J(x_k,u_k_i,i)
-        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        s,n,mu,vx,vy,r,theta,Br = x_k[i]
+        dsteer,dB = u_k_i
+        val = (mu-self.mu_ref)**2 + (vx-self.vx_ref)**2 + n**2 + 1e-2*(dsteer**2 + dB**2)
         if (self.CPP_DEBUG):
             alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -196,7 +210,9 @@ class CarDrift(ResidualGame):
     def dJi_dxi(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
-        val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[0, 2*x1, -2*self.mu_ref + 2*x2, -2*self.vx_ref + 2*x3, 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -217,7 +233,10 @@ class CarDrift(ResidualGame):
     def dJi_du(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_du(x_k,u_k_i,i)
-        val = 2* u_k_i.T @ self.J_R
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[0.02*u0, 0.02*u1]])
+
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -228,7 +247,7 @@ class CarDrift(ResidualGame):
     def dJi_dxi_dxi(self,x_k,u,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k,u,i)
-        val = 2*self.J_Qr + 2*self.J_Q
+        val = np.array([[0, 0, 0, 0, 0, 0, 0, 0], [0, 2, 0, 0, 0, 0, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -241,25 +260,26 @@ class CarDrift(ResidualGame):
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
         return 0
     def dJi_dudu(self, x_k, u_k_i, i):
-        return 2*self.J_R
+        return np.array([[0.0200000000000000, 0], [0, 0.0200000000000000]])
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
         s,n,mu,vx,vy,r,theta,Br = x
         dsteer,dB = u
         k = lambda s: splev(s,self.track.curvature)[0].item()
-        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
-        Tmax = 1.0;
+        k_s = k(s)
+        vy_sign = (1 if vy>0 else -1)
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
 
-        Fry = Tmax * sin(Br)* (-1 if vy>0 else 1)
+        Fry = Tmax * sin(Br)* -vy_sign
         Frx = Tmax * cos(Br)
         # NOTE different from ref paper (opposite sign)
         Bf = -atan( (vy+lf*r)/vx ) + theta
         # TODO use pacejka F = A sin(B atan(C beta) )
         Ffy = Bf
-        ds = (vx*cos(mu) - vy*sin(mu))/(1-n*k(s))
+        ds = (vx*cos(mu) - vy*sin(mu))/(1-n*k_s)
         dn = vx*sin(mu) + vy*cos(mu)
-        dmu = r - k(s)*ds
+        dmu = r - k_s*ds
         dvx = 1/m*(Frx - Fry*sin(theta) + m*vy*r)
         dvy = 1/m*(Fry + Ffy*cos(theta) - m*vx*r)
         dr = 1/Iz*(Ffy*cos(theta)*lf - Fry * lr)
@@ -268,27 +288,31 @@ class CarDrift(ResidualGame):
         #print(f'ds = {ds}, dn = {dn}, dmu = {dmu}, dvx = {dvx}, dvy = {dvy}, dr = {dr}')
         return x+dx*self.dt
 
-    # TODO
+    # TODO test
     def df_dx(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        A = np.array([[0,0,cos(x[3]+beta), -x[2]*sin(x[3]+beta)],
-            [0,0, sin(x[3]+beta), x[2]*cos(x[3]+beta)],
-            [0,0,0,0],
-            [0,0,sin(beta)/1.0,0]])
-        val = np.eye(4) + A*self.dt
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
+        s,n,mu,vx,vy,r,theta,Br = x
+        dsteer,dB = u
+        x0,x1,x2,x3,x4,x5,x6,x7 = x
+        u0, u1 = u
+
+        k = lambda s: splev(s,self.track.curvature)[0].item()
+        k_s = k(x0)
+        vy_sign = (1 if vy>0 else -1)
+
+        dfdx = np.array([[0, k_s*(x3*cos(x2) - x4*sin(x2))/(-k_s*x1 + 1)**2, (-x3*sin(x2) - x4*cos(x2))/(-k_s*x1 + 1), cos(x2)/(-k_s*x1 + 1), -sin(x2)/(-k_s*x1 + 1), 0, 0, 0], [0, 0, x3*cos(x2) - x4*sin(x2), sin(x2), cos(x2), 0, 0, 0], [0, -k_s**2*(x3*cos(x2) - x4*sin(x2))/(-k_s*x1 + 1)**2, -k_s*(-x3*sin(x2) - x4*cos(x2))/(-k_s*x1 + 1), -k_s*cos(x2)/(-k_s*x1 + 1), k_s*sin(x2)/(-k_s*x1 + 1), 1, 0, 0], [0, 0, 0, 0, 1.0*x5, 1.0*x4, 1.0*vy_sign*sin(x7)*cos(x6), 1.0*vy_sign*sin(x6)*cos(x7) - 1.0*sin(x7)], [0, 0, 0, -1.0*x5 + 1.0*(x4 + 1.0*x5)*cos(x6)/(x3**2*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*cos(x6)/(x3*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*x3 - 1.0*cos(x6)/(x3*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*(x6 - atan((x4 + 1.0*x5)/x3))*sin(x6) + 1.0*cos(x6), -1.0*vy_sign*cos(x7)], [0, 0, 0, 1.0*(x4 + 1.0*x5)*cos(x6)/(x3**2*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*cos(x6)/(x3*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*cos(x6)/(x3*(1 + (x4 + 1.0*x5)**2/x3**2)), -1.0*(x6 - atan((x4 + 1.0*x5)/x3))*sin(x6) + 1.0*cos(x6), 1.0*vy_sign*cos(x7)], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
+
+        val = np.eye(self.n) + dfdx*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda xx:self.f(xx,u,i), x,dim=self.n)
             assert (np.linalg.norm(num-val)<1e-4)
         return val
 
-    # TODO
+    # TODO test
     def df_du(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        dbeta_dst = 0.5/(  ((tan(u[1])*0.5)**2+1) * cos(u[1])**2 )
-        B = np.array([[0,-x[2]*sin(x[3]+beta)*dbeta_dst],
-            [0,x[2]*cos(x[3]+beta)*dbeta_dst],
-            [1,0],
-            [0,x[2]/1.0*cos(beta)*dbeta_dst]])
+        B = np.zeros((self.n,self.m))
+        B[6,0] = 1
+        B[7,1] = 1
         val = B*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda uu:self.f(x,uu,i), u,dim=self.n)
@@ -321,8 +345,7 @@ class CarDrift(ResidualGame):
         plt.show()
 
     def phasePortrait_vx_r(self):
-        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
-        Tmax = 1.0;
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
         # setpoints, vy>0
         Br = radians(10); theta = radians(20);
         # variables
@@ -366,8 +389,7 @@ class CarDrift(ResidualGame):
         plt.show()
 
     def phasePortrait_vy_r(self):
-        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
-        Tmax = 1.0;
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
         # setpoints, vy>0
         # vx = 0.38, vy = 1.14, r = -0.91
         Br = radians(10); theta = radians(20); vx = 0.38
@@ -418,8 +440,7 @@ class CarDrift(ResidualGame):
         print(f'dvx = {dvx}, dr = {dr}, dvy = {dvy}')
         return
     def findSetpoints(self):
-        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
-        Tmax = 1.0;
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
 
         def fun2(x, *data):
             vx,vy,r = data
@@ -472,14 +493,62 @@ class CarDrift(ResidualGame):
         ax.legend()
         plt.show()
 
+    def buildDynamicsJacobian(self):
+        ''' find dfdx, dfdu with symbolic math, note this finds df/dx, not dx+/dx '''
+        m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
+        dyn = SymbolicDynamics(self.n, self.m)
+
+        # almost verbatim copy of f(x,u,i)
+        s,n,mu,vx,vy,r,theta,Br = dyn.x
+        dsteer,dB = dyn.u
+
+        k_s = sympy.symbols(f'k_s') # NOTE external variable
+        #k = lambda s: splev(s,self.track.curvature)[0].item()
+        #k_s = k(s)
+
+        vy_sign = sympy.symbols(f'vy_sign') # NOTE external variable
+        #vy_sign = (1 if vy>0 else -1)
+
+        Fry = Tmax * sympy.sin(Br)* -vy_sign
+        Frx = Tmax * sympy.cos(Br)
+        Bf = -sympy.atan( (vy+lf*r)/vx ) + theta
+        Ffy = Bf
+        ds = (vx*sympy.cos(mu) - vy*sympy.sin(mu))/(1-n*k_s)
+        dn = vx*sympy.sin(mu) + vy*sympy.cos(mu)
+        dmu = r - k_s*ds
+        dvx = 1/m*(Frx - Fry*sympy.sin(theta) + m*vy*r)
+        dvy = 1/m*(Fry + Ffy*sympy.cos(theta) - m*vx*r)
+        dr = 1/Iz*(Ffy*sympy.cos(theta)*lf - Fry * lr)
+        dyn.f = [ds, dn, dmu, dvx, dvy, dr, dsteer, dB]
+        dyn.symDerF()
+        print(f'dfdx = {dyn.dfdx}')
+        print(f'dfdu = {dyn.dfdu}')
+
+        # almost verbatim copy of L
+        mu_ref = sympy.symbols(f'mu_ref')
+        #mu_ref = radians(10);
+        vx_ref = sympy.symbols(f'vx_ref')
+        #vx_ref = 1.0
+
+        dyn.l = (mu-mu_ref)**2 + (vx-vx_ref)**2 + n**2 + 1e-2*(dsteer**2 + dB**2)
+        dyn.symDerL()
+        print(f'lx = {dyn.lx}')
+        print(f'lxx = {dyn.lxx}')
+
+        print(f'lu = {dyn.lu}')
+        print(f'luu = {dyn.luu}')
+        print(f'lux = {dyn.lux}')
+        return
+
 
 if __name__=="__main__":
     main = CarDrift()
-    #main.setup()
-    #main.solve(save_gif=False,visualize=True,animate=True)
-    #main.final()
-    main.testAnimation()
+    #main.testAnimation()
+    #main.buildDynamicsJacobian()
     #main.phasePortrait_vx_r()
     #main.phasePortrait_vy_r()
     #main.findSetpoints()
+    main.setup()
+    main.solve(save_gif=False,visualize=True,animate=True)
+    main.final()
 
