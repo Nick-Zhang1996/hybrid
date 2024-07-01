@@ -9,6 +9,9 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 from math import cos,sin,pi,atan2,radians,degrees,tan,atan
 from scipy.interpolate import splprep, splev,CubicSpline,interp1d
+from scipy.optimize import fsolve
+import matplotlib.image as mpimg
+from scipy.ndimage import rotate
 
 from util import *
 from TimeUtil import TimeUtil
@@ -43,37 +46,65 @@ class CarDrift(ResidualGame):
         # decision variables:
         self.N = 1
         self.T = 100
-        self.dt = dt = 0.2
+        self.dt = dt = 0.05
 
         # dimension of x and u for single agent
         self.n = 8
         self.m = 2
 
         # bounds for visualization
-        self.visual_x_lim = [-10,10]
-        self.visual_y_lim = [-10,10]
+        self.visual_x_lim = [0,25]
+        self.visual_y_lim = [0,25]
 
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
-        self.x0 = np.array([[0,0,0,1,0,0,atan(10),0]])
-        
+        vx = 1.0; vy = -0.38;  r= 0.1333;
+        theta = -radians(10.45); Br = radians(3.82)*0;
+        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
         self.print_debug_enable()
 
         self.track = Skidpad()
+        self.car_img = mpimg.imread('./resources/porsche_orange.png')
+        self.car_scale = 0.004/2
 
     def setup(self):
         return
+    def getCartesianFromFrenet(self, states):
+        A = np.array([[0,-1],[1,0]])
+        ss,nn,mu,vx,vy,r,theta,Br = states
+        rr = np.array(splev(ss,self.track.raceline_s))
+        dr = np.array(splev(ss,self.track.raceline_s,der=1))
+        normal_dir = A @ dr/np.linalg.norm(dr,axis=0)
+        heading = np.arctan2(dr[1],dr[0]) + mu
+        r = normal_dir * nn + rr
+        # x,y, cartesian heading
+        #breakpoint()
+        return (r[0], r[1], heading)
+
 
     def _visualize(self,U,X=None):
+        car_scale = self.car_scale
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
+
+        # draw car initial and final pose
+        pose = self.getCartesianFromFrenet(X[0,0])
+        # plot initial pose
+        rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
+        L,W,_ = rotated_car_img.shape
+        ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
+        # plot final pose
+        pose = self.getCartesianFromFrenet(X[-1,0])
+        rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
+        L,W,_ = rotated_car_img.shape
+        ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
 
         # draw raceline
         ss = np.linspace(0,self.track.raceline_len_m,1000)
         rr = np.array(splev(ss,self.track.raceline_s))
         ax.plot(rr[0],rr[1])
-        A = np.array([[0,-1],[1,0]]) 
+        A = np.array([[0,-1],[1,0]])
 
         # draw car trajectory
         for i in range(self.N):
@@ -84,70 +115,61 @@ class CarDrift(ResidualGame):
             normal_dir = A @ dr/np.linalg.norm(dr,axis=0)
             rr = normal_dir * nn + rr
             ax.plot(rr[0], rr[1],'*-')
-            breakpoint()
+
 
         ax.set_aspect('equal', adjustable='box')
         return fig
 
     def _animation(self,U,X=None,gif_prefix=''):
-        return
         ''' build a gif animation'''
+        car_scale = self.car_scale
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
-        car_pos_vec = []
-        car_angle_vec = []
-        box_vec = []
-        circle_vec = []
-        color_vec = ['red','green','blue','black']
-        color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
-        # prepare smoothed animation
-        for i,color in zip(range(self.N),color_vec):
-            # interpolate for smooth graphics
-            #tt = np.linspace(0,self.T*self.dt,50)
-            tt = np.linspace(0,self.dt*self.T,self.T+1)
-            # for plt.Rectangle, we offset position so this corresponds to top left corner
-            # also flip x axis
-            xx = X[:,i,0] - 1.0
-            yy = -(X[:,i,1]) - 0.5
-            angle = X[:,i,3]
-            xx_fun = interpolate.interp1d(tt,xx)
-            yy_fun = interpolate.interp1d(tt,yy)
-            angle_fun = interpolate.interp1d(tt,angle)
-
-            pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
-            angle_vec = angle_fun(tt)/np.pi*180.0
-            car_angle_vec.append(angle_vec)
-            car_pos_vec.append(pos_vec)
-            box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color))
-            circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
-
         fig, ax = plt.subplots()
-        ax.set_xlim(*self.visual_x_lim)
-        ax.set_ylim(*self.visual_y_lim)
+
+        # draw raceline
+        ss = np.linspace(0,self.track.raceline_len_m,1000)
+        rr = np.array(splev(ss,self.track.raceline_s))
+        ax.plot(rr[0],rr[1])
+        A = np.array([[0,-1],[1,0]])
+
+        # draw car trajectory
+        for i in range(self.N):
+            ss = X[:,i,0]
+            nn = X[:,i,1]
+            rr = np.array(splev(ss,self.track.raceline_s))
+            dr = np.array(splev(ss,self.track.raceline_s,der=1))
+            normal_dir = A @ dr/np.linalg.norm(dr,axis=0)
+            rr = normal_dir * nn + rr
+            ax.plot(rr[0], rr[1],'-')
+
+
+        # draw car sprite
+        car_pose_vec = []
+        for states in X:
+            pose = self.getCartesianFromFrenet(states[0])
+            car_pose_vec.append(pose)
+
+        # plot initial pose
+        rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[0][2]),reshape=True),0.0,1.0)
+        L,W,_ = rotated_car_img.shape
+        im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][0]-W*car_scale, car_pose_vec[0][0]+W*car_scale, car_pose_vec[0][1]-L*car_scale, car_pose_vec[0][1]+L*car_scale])
+
         def update(frame):
-            for i in range(self.N):
-                box_vec[i].set_xy(car_pos_vec[i][frame])
-                box_vec[i].set_angle(car_angle_vec[i][frame])
-                circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
-            return box_vec
-        # Add the boxes to the plot
-        for box in box_vec:
-            ax.add_patch(box)
-        for circ in circle_vec:
-            ax.add_patch(circ)
-        # lane boundary lines
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i,ymax=i+1)
+            rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[frame][2]),reshape=True), 0.0, 1.0)
+            L,W,_ = rotated_car_img.shape
+            im.set_data(rotated_car_img)
+            im.set_extent((car_pose_vec[frame][0]-W*car_scale, car_pose_vec[frame][0]+W*car_scale, car_pose_vec[frame][1]-L*car_scale, car_pose_vec[frame][1]+L*car_scale))
+            return [im]
 
         ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(*self.visual_x_lim)
+        ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=len(car_pos_vec[0]), blit=True)
-        gif_filename = self.resolveLogname(logPrefix=gif_prefix)
-        anim.save(gif_filename, writer='pillow')
+        anim = FuncAnimation(fig, update, frames=len(car_pose_vec), blit=True)
+        #gif_filename = self.resolveLogname(logPrefix=gif_prefix)
+        #anim.save(gif_filename, writer='pillow')
         plt.show()
 
 
@@ -229,8 +251,8 @@ class CarDrift(ResidualGame):
         m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
         Tmax = 1.0;
 
-        Fry = Tmax * sin(Br)* (1 if vy>0 else -1)
-        Frx = Tmax * cos(Br)*0 # FIXME
+        Fry = Tmax * sin(Br)* (-1 if vy>0 else 1)
+        Frx = Tmax * cos(Br)
         # NOTE different from ref paper (opposite sign)
         Bf = -atan( (vy+lf*r)/vx ) + theta
         # TODO use pacejka F = A sin(B atan(C beta) )
@@ -242,6 +264,8 @@ class CarDrift(ResidualGame):
         dvy = 1/m*(Fry + Ffy*cos(theta) - m*vx*r)
         dr = 1/Iz*(Ffy*cos(theta)*lf - Fry * lr)
         dx = np.array([ds, dn, dmu, dvx, dvy, dr, dsteer, dB])
+        #print(f'x = {x}')
+        #print(f'ds = {ds}, dn = {dn}, dmu = {dmu}, dvx = {dvx}, dvy = {dvy}, dr = {dr}')
         return x+dx*self.dt
 
     # TODO
@@ -292,10 +316,161 @@ class CarDrift(ResidualGame):
         u_ref = np.zeros((self.T,self.N,self.m))
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
-        #self._animation(u_ref,full_x_ref)
-        self._visualize(u_ref,full_x_ref)
+        self._animation(u_ref,full_x_ref)
+        #self._visualize(u_ref,full_x_ref)
         plt.show()
 
+    def phasePortrait_vx_r(self):
+        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
+        Tmax = 1.0;
+        # setpoints, vy>0
+        Br = radians(10); theta = radians(20);
+        # variables
+        vx_range = np.linspace(0.1,0.8)
+        r_range = np.linspace(-1.3,0.5)
+        vx, r = np.meshgrid(vx_range, r_range)
+
+        Fry = Tmax * np.sin(Br)* (-1)
+        Frx = Tmax * np.cos(Br)
+        vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+
+        # NOTE different from ref paper (opposite sign)
+        Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        # TODO use pacejka F = A np.sin(B atan(C beta) )
+        Ffy = Bf
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+
+        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r) # == 0
+        print(f' dvy = {np.linalg.norm(dvy)} = 0?')
+
+        fig,ax = plt.subplots()
+        ax.plot(0.38,-0.916,'ro')
+        ax.streamplot(vx, r, dvx, dr,color='C0')
+        ax.set_xlabel('vx')
+        ax.set_ylabel('r')
+
+        def fun(x):
+            vx = x[0]; r = x[1];
+            vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+            return [dvx,dr]
+        #root = fsolve(fun, (1.0,-0.1)) # -0.38, -0.91
+        root = fsolve(fun, (1.0,0.2)) # -0.38, -0.91
+        print(f'vx,r = {root}')
+        vx = root[0]; r = root[1];
+        vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+        print(f'vy={vy}')
+        plt.show()
+
+    def phasePortrait_vy_r(self):
+        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
+        Tmax = 1.0;
+        # setpoints, vy>0
+        # vx = 0.38, vy = 1.14, r = -0.91
+        Br = radians(10); theta = radians(20); vx = 0.38
+        # variables
+        vy_range = np.linspace(0.8,1.4)
+        r_range = np.linspace(-1.3,0.5)
+        vy, r = np.meshgrid(vy_range, r_range)
+
+        Fry = Tmax * np.sin(Br)* (-1)
+        Frx = Tmax * np.cos(Br)
+
+        # NOTE different from ref paper (opposite sign)
+        Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        # TODO use pacejka F = A np.sin(B atan(C beta) )
+        Ffy = Bf
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+
+        fig,ax = plt.subplots()
+        ax.plot(1.14,-0.916,'or')
+        ax.streamplot(vy, r, dvy, dr,color='C0')
+        ax.set_xlabel('vy')
+        ax.set_ylabel('r')
+
+        def fun(x):
+            vy = x[0]; r = x[1];
+            vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+            return [dvy,dr]
+        root = fsolve(fun, (1.14,-0.91))
+        print(f'vy,r = {root}')
+        vy = root[0]; r = root[1];
+        Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        print(f'dvx = {dvx}')
+        plt.show()
+
+        # more testing
+        vx = 0.379; r = -0.916; vy = 1.14;
+        Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+        print(f'dvx = {dvx}, dr = {dr}, dvy = {dvy}')
+        return
+    def findSetpoints(self):
+        m = 1.0; Iz = 1.0; lf = 1.0; lr = 1.0;
+        Tmax = 1.0;
+
+        def fun2(x, *data):
+            vx,vy,r = data
+            theta = x[0]; Br = x[1];
+            Fry = Tmax * np.sin(Br)* (-1)
+            Frx = Tmax * np.cos(Br)
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            #dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+            return [dvy, dr]
+
+        def fun3(x, *data):
+            vx,vy,r = data
+            theta = x[0]; Br = x[1];
+            Fry = Tmax * np.sin(Br)* (-1)
+            Frx = Tmax * np.cos(Br)
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+            return [dvx, dvy, dr]
+
+        fig,ax = plt.subplots()
+        vx = 1.0
+        print(f'vx = {vx}')
+        vy_vec = np.linspace(0,0.5,10)*vx
+        for vy in vy_vec:
+            print(f'\t vy = {vy}')
+            r_vec = np.linspace(0,-0.6,10)
+            valid_theta_vec = []; valid_r_vec = []; valid_Br_vec = []
+            for r in r_vec:
+                root = fsolve(fun2, (radians(10), radians(10)), args = (vx, vy, r) )
+                theta, Br = root
+                dvx, dvy, dr = fun3(root, *(vx,vy,r))
+                if (theta>0 and Br>0):
+                    print(f'\t\t theta = {degrees(theta):.2f}d, Br = {degrees(Br):.2f}d, r = {r:.4f}, dvx = {dvx:.4f}, dvy = {dvy:.4f}, dr = {dr:.4f}')
+                    valid_theta_vec.append(degrees(theta))
+                    valid_r_vec.append(degrees(r))
+                    valid_Br_vec.append(degrees(Br))
+
+            slip_angle = degrees(atan(vy/vx))
+            ax.plot(valid_theta_vec, valid_r_vec, 'o-',label=f'slip: {slip_angle:.1f}deg')
+            for i in range(len(valid_r_vec)):
+                ax.annotate(f'Br={valid_Br_vec[i]:.2f}deg', (valid_theta_vec[i], valid_r_vec[i]))
+
+        ax.set_xlabel('steering/theta (deg)')
+        ax.set_ylabel('angular speed (deg/s)')
+        ax.set_title(f'vx = {vx}')
+        ax.legend()
+        plt.show()
 
 
 if __name__=="__main__":
@@ -304,4 +479,7 @@ if __name__=="__main__":
     #main.solve(save_gif=False,visualize=True,animate=True)
     #main.final()
     main.testAnimation()
+    #main.phasePortrait_vx_r()
+    #main.phasePortrait_vy_r()
+    #main.findSetpoints()
 
