@@ -88,6 +88,7 @@ class CarDrift(ResidualGame):
 
     def setup(self):
         return
+
     def getCartesianFromFrenet(self, states):
         A = np.array([[0,-1],[1,0]])
         ss,nn,mu,vx,vy,r,theta,Br = states

@@ -1,0 +1,65 @@
+# apply CarDrift in a receding horizon style
+from CarDrift import CarDrift
+from math import radians, degrees
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+
+class CarDriftMpc(CarDrift):
+    def __init__(self):
+        super().__init__()
+        self.T = 100
+        self.dt = dt = 0.05
+        # initial state,
+        #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
+        vx = 1.0; vy = -0.38;  r= 0.1333;
+        theta = -radians(10.45); Br = radians(3.82);
+        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
+        self.guess = np.zeros((self.T,self.N,self.m))
+        self.guess[:,0,0] = -radians(0)
+
+        self.mu_ref = radians(17); self.vx_ref = 1.0
+        self.control_cost = 1e-2
+        self.n_cost = 0.3
+        self.vx_cost = 0.1
+
+    def simulate(self):
+        overlap_steps = self.T//2
+        original_x0 = self.x0.copy()
+
+        x_vec = [self.x0[np.newaxis,:,:]]
+        u_vec = []
+        # set  x0, u_ref
+
+        for i in range(10):
+            # find solution
+            u_ref, full_x_ref = self.solve(save_gif=False, visualize=False, animate=False)
+            # log state/control, move horizon forward
+            x_vec.append(full_x_ref[1:overlap_steps+1])
+            u_vec.append(u_ref[:overlap_steps])
+            self.init() # reset solver dynamic parameters
+            self.x0 = full_x_ref[overlap_steps]
+            self.guess = np.zeros((self.T,self.N,self.m))
+            self.guess[:overlap_steps] = u_ref[overlap_steps:]
+
+        self.x0 = original_x0
+        x_vec = np.vstack(x_vec)
+        u_vec = np.vstack(u_vec)
+        self.T = len(u_vec)
+
+        self._visualize(u_vec,X=x_vec)
+        plt.show()
+
+        self._visualize(u_vec)
+        plt.show()
+
+        #X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        rollout_x = self.rollout(self.x0,u_vec)
+
+        breakpoint()
+
+
+if __name__=="__main__":
+    main = CarDriftMpc()
+    main.simulate()

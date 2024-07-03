@@ -34,14 +34,8 @@ class ResidualGame(PrintObject):
         # initial state, stated in unit of car size
         self.x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
 
-        # solver tuning parameters
-        # barrier function scaling schedule
-        self.rho = 10.0
-        self.rho_b = 2.0
-        # backtracking line search param
-        self.bc_a = 0.1 #alpha
-        self.bc_b = 0.5 #beta
-        self.backtracking_max_iter = 10
+        self.init()
+
         # max iterations
         self.iterations = 10
         # NOTE this is not implemented in cpp
@@ -55,6 +49,17 @@ class ResidualGame(PrintObject):
         self.violations = None
         self.profiler = TimeUtil(False)
         #self.print_debug_enable()
+
+    def init(self):
+        ''' setup some dynamic solver parameters that changes between iterations, call this funtion to reset the solver '''
+        # solver tuning parameters
+        # barrier function scaling schedule
+        self.rho = 10.0
+        self.rho_b = 2.0
+        # backtracking line search param
+        self.bc_a = 0.1 #alpha
+        self.bc_b = 0.5 #beta
+        self.backtracking_max_iter = 10
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -81,7 +86,7 @@ class ResidualGame(PrintObject):
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T,N,N))
-        self.visualize(u_ref,animate=animate,gif_prefix='before')
+        self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
         t0 = time()
         t = self.profiler
         for i in range(self.iterations):
@@ -121,6 +126,7 @@ class ResidualGame(PrintObject):
         self.print_info(u_ref[:,0,:])
         breakpoint()
         '''
+        return u_ref, full_x_ref
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
