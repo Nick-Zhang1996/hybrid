@@ -49,7 +49,7 @@ class CarDrift(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = 1
-        self.T = 40
+        self.T = 100
         self.dt = dt = 0.05
 
         # dimension of x and u for single agent
@@ -64,10 +64,15 @@ class CarDrift(ResidualGame):
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
         vx = 1.0; vy = -0.38;  r= 0.1333;
-        theta = -radians(10.45); Br = radians(3.82)*0;
+        theta = -radians(10.45); Br = radians(3.82);
         self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.mu_ref = radians(10); self.vx_ref = 1.0
+        self.guess[:,0,0] = -radians(0)
+
+        self.mu_ref = radians(17); self.vx_ref = 1.0
+        self.control_cost = 1e-2
+        self.n_cost = 0.3
+        self.vx_cost = 0.1
 
         self.print_debug_enable()
 
@@ -78,6 +83,8 @@ class CarDrift(ResidualGame):
         # bounds for visualization
         self.visual_x_lim = [0,25]
         self.visual_y_lim = [0,25]
+
+        self.testAnimation(self.guess)
 
     def setup(self):
         return
@@ -100,17 +107,27 @@ class CarDrift(ResidualGame):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
 
+
+        for index in range(0,len(X), len(X)//5):
+            pose = self.getCartesianFromFrenet(X[index,0])
+            rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
+            L,W,_ = rotated_car_img.shape
+            ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
+
+        '''
         # draw car initial and final pose
         pose = self.getCartesianFromFrenet(X[0,0])
         # plot initial pose
         rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
         L,W,_ = rotated_car_img.shape
         ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
+
         # plot final pose
         pose = self.getCartesianFromFrenet(X[-1,0])
         rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
         L,W,_ = rotated_car_img.shape
         ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
+        '''
 
         # draw raceline
         ss = np.linspace(0,self.track.raceline_len_m,1000)
@@ -133,6 +150,7 @@ class CarDrift(ResidualGame):
         return fig
 
     def _animation(self,U,X=None,gif_prefix=''):
+        return # FIXME
         ''' build a gif animation'''
         car_scale = self.car_scale
         if X is None:
@@ -199,7 +217,7 @@ class CarDrift(ResidualGame):
             return self.cpp.J(x_k,u_k_i,i)
         s,n,mu,vx,vy,r,theta,Br = x_k[i]
         dsteer,dB = u_k_i
-        val = (mu-self.mu_ref)**2 + (vx-self.vx_ref)**2 + n**2 + 1e-2*(dsteer**2 + dB**2)
+        val = (mu-self.mu_ref)**2 + self.vx_cost*(vx-self.vx_ref)**2 + self.n_cost*n**2 + self.control_cost*(dsteer**2 + dB**2)
         if (self.CPP_DEBUG):
             alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -212,7 +230,7 @@ class CarDrift(ResidualGame):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
         x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
         u0, u1 = u_k_i
-        val = np.array([[0, 2*x1, -2*self.mu_ref + 2*x2, -2*self.vx_ref + 2*x3, 0, 0, 0, 0]])
+        val = np.array([[0, 2*self.n_cost*x1, -2*self.mu_ref + 2*x2, self.vx_cost*(-2*self.vx_ref + 2*x3), 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -235,7 +253,7 @@ class CarDrift(ResidualGame):
             return self.cpp.dJi_du(x_k,u_k_i,i)
         x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
         u0, u1 = u_k_i
-        val = np.array([[0.02*u0, 0.02*u1]])
+        val = np.array([[self.control_cost*u0, self.control_cost*u1]])
 
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k,u_k_i,i)
@@ -247,7 +265,7 @@ class CarDrift(ResidualGame):
     def dJi_dxi_dxi(self,x_k,u,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k,u,i)
-        val = np.array([[0, 0, 0, 0, 0, 0, 0, 0], [0, 2, 0, 0, 0, 0, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 2, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
+        val = np.array([[0, 0, 0, 0, 0, 0, 0, 0], [0, 2*self.n_cost, 0, 0, 0, 0, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 2*self.vx_cost, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -260,7 +278,7 @@ class CarDrift(ResidualGame):
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
         return 0
     def dJi_dudu(self, x_k, u_k_i, i):
-        return np.array([[0.0200000000000000, 0], [0, 0.0200000000000000]])
+        return np.eye(self.m)*self.control_cost
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
@@ -336,12 +354,16 @@ class CarDrift(ResidualGame):
     def dh_dxj_dxj(self,x_i,x_j):
         return np.zeros((self.n,self.n))
 
-    def testAnimation(self):
-        u_ref = np.zeros((self.T,self.N,self.m))
+    def testAnimation(self,U=None):
+        if (U is None):
+            u_ref = np.zeros((self.T,self.N,self.m))
+            u_ref[:,0,0] = -radians(2)
+        else:
+            u_ref = U
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
-        self._animation(u_ref,full_x_ref)
-        #self._visualize(u_ref,full_x_ref)
+        #self._animation(u_ref,full_x_ref)
+        self._visualize(u_ref,full_x_ref)
         plt.show()
 
     def phasePortrait_vx_r(self):
