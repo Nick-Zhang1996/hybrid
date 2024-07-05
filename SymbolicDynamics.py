@@ -155,6 +155,57 @@ class SymbolicDynamics:
         assert(len(a)==len(b))
         return [a[i]-b[i] for i in range(len(a))]
 
+class MultiAgentSymbolicDynamics:
+    ''' helper class for finding various jacobians and hessians in a multi agent control problem '''
+    def __init__(self,n,m,N):
+        ''' n,m: dimension of state and control for ONE agent, 
+        N: number of agents
+        '''
+        self.n = n
+        self.m = m
+        self.x = [ [symbols(f'x{i}_{agent}') for i in range(n)] for agent in range(N) ]
+        self.u = [ [symbols(f'u{i}_{agent}') for i in range(m)] for agent in range(N) ]
+
+    def jacobian(self, expressions, variables):
+        ''' expression: list of expressions
+        var: list of variables
+        return: jacobian, list of expressions
+        '''
+        jac = []
+        for exp in expressions:
+            jac.append( [exp.diff(variables[i]) for i in range(len(variables))] )
+        return jac
+
+    def secondDerivative(self, expression, first_vars, second_vars):
+        ''' d^2 expression / (d first_var * d second_var ) '''
+        dfun_dfirst = self.jacobian( [expression], first_vars )[0]
+        return self.jacobian(dfun_dfirst, second_vars)
+
+    def symDerJ(self, J_eq):
+        print('dJi_dxi')
+        print(self.jacobian([J_eq], self.x[0]))
+
+        print('dJi_dxj')
+        print(self.jacobian([J_eq], self.x[1]))
+
+        print('dJi_du')
+        print(self.jacobian([J_eq], self.u[0]))
+
+        print('dJi_dxi_dxi')
+        print(self.secondDerivative( J_eq, self.x[0], self.x[0] ))
+
+        print('dJi_dxi_dxj')
+        print(self.secondDerivative( J_eq, self.x[0], self.x[1] ))
+
+        print('dJi_dxj_dxj')
+        print(self.secondDerivative( J_eq, self.x[1], self.x[1] ))
+
+        print('dJi_du_du')
+        print(self.secondDerivative( J_eq, self.u[0], self.u[0] ))
+
+
+
+
 
 if __name__=="__main__":
     test = SymbolicDynamics(3,2)
@@ -174,6 +225,7 @@ if __name__=="__main__":
     fx,fu = test.calcDerF(x0=[1,2,3], u0=[4,5])
     print(fx)
     print(fu)
+
     breakpoint()
 
 

@@ -1,12 +1,12 @@
 # apply CarDrift in a receding horizon style
-from CarDrift import CarDrift
+from OneCarDrift import OneCarDrift
 from math import radians, degrees
 import matplotlib.pyplot as plt
 import numpy as np
 
 
 
-class CarDriftMpc(CarDrift):
+class OneCarDriftMpc(OneCarDrift):
     def __init__(self):
         super().__init__()
         self.T = 100
@@ -16,22 +16,14 @@ class CarDriftMpc(CarDrift):
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
         vx = 0.5; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
+        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
+        self.guess = np.zeros((self.T,self.N,self.m))
+        self.guess[:,0,0] = -radians(0)
 
         self.mu_ref = radians(17); self.vx_ref = 1.0
         self.control_cost = 1e-2
         self.n_cost = 0.3
         self.vx_cost = 0.01
-        self.ds_cost = 0.02
-        self.dmu_cost = 0.02
-
-        self.ds_ref = 2.5 # desired distance between cars
-        self.mu_ref = radians(17);
-        self.vx_ref = 1.0
-
-        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br],[self.ds_ref,0,radians(17),vx,vy,r,theta,Br]])
-        self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = -radians(0)
-
 
     def simulate(self):
         overlap_steps = self.T//2
@@ -41,7 +33,7 @@ class CarDriftMpc(CarDrift):
         u_vec = []
         # set  x0, u_ref
 
-        for i in range(5):
+        for i in range(20):
             # find solution
             u_ref, full_x_ref = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward
@@ -71,5 +63,5 @@ class CarDriftMpc(CarDrift):
 
 
 if __name__=="__main__":
-    main = CarDriftMpc()
+    main = OneCarDriftMpc()
     main.simulate()

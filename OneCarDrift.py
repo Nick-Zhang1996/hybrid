@@ -19,12 +19,12 @@ from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cp
 from ResidualGame import ResidualGame
 from track.Skidpad import Skidpad
 
-from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
+from SymbolicDynamics import SymbolicDynamics
 import sympy
 
 # example: Car drifting (1/2 car)
 # uses dynamic bicycle model, defined on Frenet frame
-class CarDrift(ResidualGame):
+class OneCarDrift(ResidualGame):
     USE_CPP = False
     FORCE_PYTHON_SOLVER = False
     #DEBUG = True
@@ -48,7 +48,7 @@ class CarDrift(ResidualGame):
 
         # Problem formulation
         # decision variables:
-        self.N = 2
+        self.N = 1
         self.T = 100
         self.dt = dt = 0.05
 
@@ -60,28 +60,24 @@ class CarDrift(ResidualGame):
         self.mass = 1.0; self.Iz = 1.0; self.lf = 1.0; self.lr = 1.0;
         self.Tmax = 0.174;
 
+
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
         vx = 1.0; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
+        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
+        self.guess = np.zeros((self.T,self.N,self.m))
+        self.guess[:,0,0] = -radians(0)
 
-        self.ds_ref = 2.0 # desired distance between cars
-        self.mu_ref = radians(17);
-        self.vx_ref = 1.0
-
+        self.mu_ref = radians(17); self.vx_ref = 1.0
         self.control_cost = 1e-2
         self.n_cost = 0.3
         self.vx_cost = 0.1
-        self.ds_cost = 0.2
-        self.dmu_cost = 0.2
-
-        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br],[self.ds_ref,0,radians(17),vx,vy,r,theta,Br]])
-        self.guess = np.zeros((self.T,self.N,self.m))
 
         self.print_debug_enable()
 
         self.track = Skidpad()
-        self.car_img_vec = [mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+        self.car_img = mpimg.imread('./resources/porsche_orange.png')
         self.car_scale = 0.004/2
 
         # bounds for visualization
@@ -113,12 +109,11 @@ class CarDrift(ResidualGame):
         fig, ax = plt.subplots()
 
 
-        for index in range(0,len(X), len(X)//3):
-            for i in range(self.N):
-                pose = self.getCartesianFromFrenet(X[index,i])
-                rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(pose[2]),reshape=True), 0.0, 1.0)
-                L,W,_ = rotated_car_img.shape
-                ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
+        for index in range(0,len(X), len(X)//20):
+            pose = self.getCartesianFromFrenet(X[index,0])
+            rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
+            L,W,_ = rotated_car_img.shape
+            ax.imshow(rotated_car_img, extent=[pose[0]-W*car_scale, pose[0]+W*car_scale, pose[1]-L*car_scale, pose[1]+L*car_scale])
 
         '''
         # draw car initial and final pose
@@ -151,6 +146,7 @@ class CarDrift(ResidualGame):
             rr = normal_dir * nn + rr
             ax.plot(rr[0], rr[1],'*-')
 
+
         ax.set_aspect('equal', adjustable='box')
         return fig
 
@@ -182,22 +178,20 @@ class CarDrift(ResidualGame):
         # draw car sprite
         car_pose_vec = []
         for states in X:
-            car_pose_vec.append([self.getCartesianFromFrenet(states[i]) for i in range(self.N)])
+            pose = self.getCartesianFromFrenet(states[0])
+            car_pose_vec.append(pose)
 
         # plot initial pose
-        im_vec = []
-        for i in range(self.N):
-            rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[0][i][2]),reshape=True),0.0,1.0)
-            L,W,_ = rotated_car_img.shape
-            im_vec.append( ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale]) )
+        rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[0][2]),reshape=True),0.0,1.0)
+        L,W,_ = rotated_car_img.shape
+        im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][0]-W*car_scale, car_pose_vec[0][0]+W*car_scale, car_pose_vec[0][1]-L*car_scale, car_pose_vec[0][1]+L*car_scale])
 
         def update(frame):
-            for i in range(self.N):
-                rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
-                L,W,_ = rotated_car_img.shape
-                im_vec[i].set_data(rotated_car_img)
-                im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
-            return im_vec
+            rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[frame][2]),reshape=True), 0.0, 1.0)
+            L,W,_ = rotated_car_img.shape
+            im.set_data(rotated_car_img)
+            im.set_extent((car_pose_vec[frame][0]-W*car_scale, car_pose_vec[frame][0]+W*car_scale, car_pose_vec[frame][1]-L*car_scale, car_pose_vec[frame][1]+L*car_scale))
+            return [im]
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
@@ -235,12 +229,9 @@ class CarDrift(ResidualGame):
     def dJi_dxi(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
-        j = 1 if i==0 else 0
-        x0_0,x1_0,x2_0,x3_0,x4_0,x5_0,x6_0,x7_0 = x_k[i]
-        x0_1,x1_1,x2_1,x3_1,x4_1,x5_1,x6_1,x7_1 = x_k[j]
-        u0_0, u1_0 = u_k_i
-        ds_sign = x_k[i,0] - x_k[j,0]
-        val = np.array([[2*ds_sign*self.ds_cost*(ds_sign*(x0_0 - x0_1) - self.ds_ref), 2*self.n_cost*x1_0, self.dmu_cost*(2*x2_0 - 2*x2_1) - 2*self.mu_ref + 2*x2_0, self.vx_cost*(-2*self.vx_ref + 2*x3_0), 0, 0, 0, 0]])
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[0, 2*self.n_cost*x1, -2*self.mu_ref + 2*x2, self.vx_cost*(-2*self.vx_ref + 2*x3), 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -251,12 +242,7 @@ class CarDrift(ResidualGame):
     def dJi_dxj(self,x_k,u_k_i,i,j):
         if (self.USE_CPP):
             return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
-        j = 1 if i==0 else 0
-        x0_0,x1_0,x2_0,x3_0,x4_0,x5_0,x6_0,x7_0 = x_k[i]
-        x0_1,x1_1,x2_1,x3_1,x4_1,x5_1,x6_1,x7_1 = x_k[j]
-        u0_0, u1_0 = u_k_i
-        ds_sign = x_k[i,0] - x_k[j,0]
-        val = np.array([[-2*ds_sign*self.ds_cost*(ds_sign*(x0_0 - x0_1) - self.ds_ref), 0, self.dmu_cost*(-2*x2_0 + 2*x2_1), 0, 0, 0, 0, 0]])
+        val = 0
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -266,8 +252,9 @@ class CarDrift(ResidualGame):
     def dJi_du(self,x_k,u_k_i,i):
         if (self.USE_CPP):
             return self.cpp.dJi_du(x_k,u_k_i,i)
-        u0_0, u1_0 = u_k_i
-        val = np.array([[2*self.control_cost*u0_0, 2*self.control_cost*u1_0]])
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[self.control_cost*u0, self.control_cost*u1]])
 
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k,u_k_i,i)
@@ -279,9 +266,7 @@ class CarDrift(ResidualGame):
     def dJi_dxi_dxi(self,x_k,u,i):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k,u,i)
-        j = 1 if i==0 else 0
-        ds_sign = x_k[i,0] - x_k[j,0]
-        val = np.array([[2*ds_sign**2*self.ds_cost, 0, 0, 0, 0, 0, 0, 0], [0, 2*self.n_cost, 0, 0, 0, 0, 0, 0], [0, 0, 2*self.dmu_cost + 2, 0, 0, 0, 0, 0], [0, 0, 0, 2*self.vx_cost, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
+        val = np.array([[0, 0, 0, 0, 0, 0, 0, 0], [0, 2*self.n_cost, 0, 0, 0, 0, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 2*self.vx_cost, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -290,17 +275,11 @@ class CarDrift(ResidualGame):
 
     # dJi / dxi dxj
     def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
-        j = 1 if i==0 else 0
-        ds_sign = x_k[i,0] - x_k[j,0]
-        val = np.array([[-2*ds_sign**2*self.ds_cost, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, -2*self.dmu_cost, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
-        return val
+        return 0
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
-        j = 1 if i==0 else 0
-        ds_sign = x_k[i,0] - x_k[j,0]
-        val = np.array([[2*ds_sign**2*self.ds_cost, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 2*self.dmu_cost, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
-        return val
+        return 0
     def dJi_dudu(self, x_k, u_k_i, i):
-        return 2*np.eye(self.m)*self.control_cost
+        return np.eye(self.m)*self.control_cost
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
@@ -328,6 +307,7 @@ class CarDrift(ResidualGame):
         #print(f'ds = {ds}, dn = {dn}, dmu = {dmu}, dvx = {dvx}, dvy = {dvy}, dr = {dr}')
         return x+dx*self.dt
 
+    # TODO test
     def df_dx(self,x,u,i):
         m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
         s,n,mu,vx,vy,r,theta,Br = x
@@ -347,6 +327,7 @@ class CarDrift(ResidualGame):
             assert (np.linalg.norm(num-val)<1e-4)
         return val
 
+    # TODO test
     def df_du(self,x,u,i):
         B = np.zeros((self.n,self.m))
         B[6,0] = 1
@@ -567,6 +548,8 @@ class CarDrift(ResidualGame):
             print(f' bad saddle point: vx = {vx:.2f}, vy = {vy:.2f}, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
 
         # plotting for debug
+        breakpoint()
+
         '''
         fig,ax = plt.subplots()
         #ax.plot(valid_theta_vec, valid_r_vec, 'o-',label=f'slip: {slip_angle:.1f}deg')
@@ -608,35 +591,26 @@ class CarDrift(ResidualGame):
         dyn.symDerF()
         print(f'dfdx = {dyn.dfdx}')
         print(f'dfdu = {dyn.dfdu}')
-        return
 
-    def buildObjectiveJacobian(self):
         # almost verbatim copy of L
-        # NOTE this will mess up with normal operation of CarDrift
-        dyn = MultiAgentSymbolicDynamics(self.n, self.m,2)
-        # s_i - s_j
-        ds_sign = sympy.symbols(f'ds_sign')
+        mu_ref = sympy.symbols(f'mu_ref')
+        #mu_ref = radians(10);
+        vx_ref = sympy.symbols(f'vx_ref')
+        #vx_ref = 1.0
 
-        self.mu_ref = sympy.symbols(f'self.mu_ref')
-        self.vx_ref = sympy.symbols(f'self.vx_ref')
-        self.ds_ref = sympy.symbols(f'self.ds_ref')
+        dyn.l = (mu-mu_ref)**2 + (vx-vx_ref)**2 + n**2 + 1e-2*(dsteer**2 + dB**2)
+        dyn.symDerL()
+        print(f'lx = {dyn.lx}')
+        print(f'lxx = {dyn.lxx}')
 
-        self.n_cost = sympy.symbols(f'self.n_cost')
-        self.vx_cost = sympy.symbols(f'self.vx_cost')
-        self.ds_cost = sympy.symbols(f'self.ds_cost')
-        self.dmu_cost = sympy.symbols(f'self.dmu_cost')
-        self.control_cost = sympy.symbols(f'self.control_cost')
-
-        s_i,n_i,mu_i,vx_i,vy_i,r_i,theta_i,Br_i = dyn.x[0]
-        s_j,n_j,mu_j,vx_j,vy_j,r_j,theta_j,Br_j = dyn.x[1]
-        dsteer_i,dB_i = dyn.u[0]
-
-        J_eq = (mu_i-self.mu_ref)**2 + self.vx_cost*(vx_i-self.vx_ref)**2 + self.n_cost*n_i**2 + self.control_cost*(dsteer_i**2 + dB_i**2) + self.ds_cost*(ds_sign*(s_i-s_j)-self.ds_ref)**2 + self.dmu_cost* (mu_i-mu_j)**2
-        dyn.symDerJ(J_eq)
+        print(f'lu = {dyn.lu}')
+        print(f'luu = {dyn.luu}')
+        print(f'lux = {dyn.lux}')
+        return
 
 
 if __name__=="__main__":
-    main = CarDrift()
+    main = OneCarDrift()
     #main.testAnimation()
     #main.buildDynamicsJacobian()
     #main.phasePortrait_vx_r()
@@ -645,5 +619,4 @@ if __name__=="__main__":
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
-    #main.buildObjectiveJacobian()
 
