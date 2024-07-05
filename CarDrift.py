@@ -58,7 +58,7 @@ class CarDrift(ResidualGame):
 
         # dynamics parameters
         self.mass = 1.0; self.Iz = 1.0; self.lf = 1.0; self.lr = 1.0;
-        self.Tmax = 1.0;
+        self.Tmax = 0.174;
 
 
         # initial state,
@@ -84,7 +84,7 @@ class CarDrift(ResidualGame):
         self.visual_x_lim = [0,25]
         self.visual_y_lim = [0,25]
 
-        self.testAnimation(self.guess)
+        #self.testAnimation(self.guess)
 
     def setup(self):
         return
@@ -372,7 +372,7 @@ class CarDrift(ResidualGame):
         # setpoints, vy>0
         Br = radians(10); theta = radians(20);
         # variables
-        vx_range = np.linspace(0.1,0.8)
+        vx_range = np.linspace(0.05,0.4)
         r_range = np.linspace(-1.3,0.5)
         vx, r = np.meshgrid(vx_range, r_range)
 
@@ -391,7 +391,7 @@ class CarDrift(ResidualGame):
         print(f' dvy = {np.linalg.norm(dvy)} = 0?')
 
         fig,ax = plt.subplots()
-        ax.plot(0.38,-0.916,'ro')
+        ax.plot(0.152,-0.397,'ro')
         ax.streamplot(vx, r, dvx, dr,color='C0')
         ax.set_xlabel('vx')
         ax.set_ylabel('r')
@@ -408,6 +408,16 @@ class CarDrift(ResidualGame):
         print(f'vx,r = {root}')
         vx = root[0]; r = root[1];
         vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+
+        Fry = Tmax * np.sin(Br)
+        Frx = Tmax * np.cos(Br)
+        Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+        print(dvx, dvy, dr)
+        breakpoint()
+
         print(f'vy={vy}')
         plt.show()
 
@@ -462,59 +472,94 @@ class CarDrift(ResidualGame):
         dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
         print(f'dvx = {dvx}, dr = {dr}, dvy = {dvy}')
         return
-    def findSetpoints(self):
+
+    def findSaddlePoint(self):
+        ''' find saddle point given vx,
+        the result should satisfy: dmu, dvx, dvy, dr = 0
+        vx > 0, vy < 0, r > 0, theta < 0, 0 < Br < pi/2 (ccw drifting)
+        '''
+
         m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
-
-        def fun2(x, *data):
-            vx,vy,r = data
+        def ctrl_to_dvxdvy(x, *data):
+            ''' given x= (theta,Br) *data = (vx,vy,r), return dvx, dvy  '''
             theta = x[0]; Br = x[1];
-            Fry = Tmax * np.sin(Br)* (-1)
-            Frx = Tmax * np.cos(Br)
-            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
-            #dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
-            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
-            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
-            return [dvy, dr]
-
-        def fun3(x, *data):
-            vx,vy,r = data
-            theta = x[0]; Br = x[1];
-            Fry = Tmax * np.sin(Br)* (-1)
+            vx,vy,r, n, k_s = data
+            Fry = Tmax * sin(Br)
             Frx = Tmax * np.cos(Br)
             Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
             dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
             dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+            #dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+            print(f'\t theta {degrees(theta):.2f}deg, Br {degrees(theta):.2f}deg, dvx {dvx:.2f}, dvy {dvy:.2f}')
+            return [dvx, dvy]
+
+        def vy_to_dr(x, *data):
+            ''' given x = (vy) *data = (vx), return dr '''
+            vy, = x
+            vx, n, k_s = data
+            ds = (vx**2+vy**2)**0.5/(1-n*k_s)
+            r = k_s * ds
+            print(f'solver step: vx {vx:.2f}, vy {vy:.2f}, r {np.pi*2/r:.2f}sec/rev')
+            # DEBUG draw phase plot
+            mu = np.arctan(np.abs(vy)/vx)
+            theta_vec = np.linspace(-radians(40), radians(0))
+            Br_vec = np.linspace(0,mu)
+            theta, Br = np.meshgrid(theta_vec, Br_vec)
+            Fry = Tmax * np.sin(Br)
+            Frx = Tmax * np.cos(Br)
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+            fig,ax = plt.subplots()
+            ax.streamplot(theta/np.pi*180, Br/np.pi*180, dvx, dvy)
+            plt.show()
+            breakpoint()
+
+
+            theta, Br = fsolve(ctrl_to_dvxdvy, (-radians(10), radians(20)), args = (vx,vy,r,n,k_s) )
+            Fry = Tmax * np.sin(Br)
+            Frx = Tmax * np.cos(Br)
+            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+            #dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+            #dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
             dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
-            return [dvx, dvy, dr]
+            return [dr]
 
+        vx = 0.1; n = 0
+        k = lambda s: splev(s,self.track.curvature)[0].item()
+        k_s = k(0)
+        print(f'radius of curvature: {1/k_s}')
+        vy = fsolve(vy_to_dr, (-0.5), args = (vx,n,k_s) )[0]
+
+        # recover solution
+        ds = (vx**2+vy**2)**0.5/(1-n*k_s)
+        r = k_s * ds
+        theta, Br = fsolve(ctrl_to_dvxdvy, (-radians(10), radians(10)), args = (vx,vy,r,n,k_s) )
+        Fry = Tmax * np.sin(Br)
+        Frx = Tmax * np.cos(Br)
+        Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+
+        if (vx > 0 and vy < 0 and theta < 0 and Br > 0 and Br < np.pi/2 and np.linalg.norm(dvx)<1e-3 and np.linalg.norm(dvy)<1e-3 and np.linalg.norm(dr) ):
+            print(f' new saddle point: vx = {vx:.2f}, vy = {vy:.2f}, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
+        else:
+            print(f' bad saddle point: vx = {vx:.2f}, vy = {vy:.2f}, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
+
+        # plotting for debug
+        breakpoint()
+
+        '''
         fig,ax = plt.subplots()
-        vx = 1.0
-        print(f'vx = {vx}')
-        vy_vec = np.linspace(0,0.5,10)*vx
-        for vy in vy_vec:
-            print(f'\t vy = {vy}')
-            r_vec = np.linspace(0,-0.6,10)
-            valid_theta_vec = []; valid_r_vec = []; valid_Br_vec = []
-            for r in r_vec:
-                root = fsolve(fun2, (radians(10), radians(10)), args = (vx, vy, r) )
-                theta, Br = root
-                dvx, dvy, dr = fun3(root, *(vx,vy,r))
-                if (theta>0 and Br>0):
-                    print(f'\t\t theta = {degrees(theta):.2f}d, Br = {degrees(Br):.2f}d, r = {r:.4f}, dvx = {dvx:.4f}, dvy = {dvy:.4f}, dr = {dr:.4f}')
-                    valid_theta_vec.append(degrees(theta))
-                    valid_r_vec.append(degrees(r))
-                    valid_Br_vec.append(degrees(Br))
-
-            slip_angle = degrees(atan(vy/vx))
-            ax.plot(valid_theta_vec, valid_r_vec, 'o-',label=f'slip: {slip_angle:.1f}deg')
-            for i in range(len(valid_r_vec)):
-                ax.annotate(f'Br={valid_Br_vec[i]:.2f}deg', (valid_theta_vec[i], valid_r_vec[i]))
-
+        #ax.plot(valid_theta_vec, valid_r_vec, 'o-',label=f'slip: {slip_angle:.1f}deg')
+        #ax.annotate(f'Br={valid_Br_vec[i]:.2f}deg', (valid_theta_vec[i], valid_r_vec[i]))
         ax.set_xlabel('steering/theta (deg)')
         ax.set_ylabel('angular speed (deg/s)')
         ax.set_title(f'vx = {vx}')
         ax.legend()
         plt.show()
+        '''
 
     def buildDynamicsJacobian(self):
         ''' find dfdx, dfdu with symbolic math, note this finds df/dx, not dx+/dx '''
@@ -570,7 +615,7 @@ if __name__=="__main__":
     #main.buildDynamicsJacobian()
     #main.phasePortrait_vx_r()
     #main.phasePortrait_vy_r()
-    #main.findSetpoints()
+    #main.findSaddlePoint()
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()

@@ -10,6 +10,7 @@ class CarDriftMpc(CarDrift):
     def __init__(self):
         super().__init__()
         self.T = 100
+        self.Tmax = 0.174*0.4
         self.dt = dt = 0.05
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
@@ -51,12 +52,8 @@ class CarDriftMpc(CarDrift):
         self._visualize(u_vec,X=x_vec)
         plt.show()
 
-        self._visualize(u_vec)
-        plt.show()
-
-        #X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
-        rollout_x = self.rollout(self.x0,u_vec)
-
+        #self._visualize(u_vec)
+        #plt.show()
         breakpoint()
 
 
