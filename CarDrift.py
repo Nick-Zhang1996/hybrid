@@ -109,7 +109,7 @@ class CarDrift(ResidualGame):
         fig, ax = plt.subplots()
 
 
-        for index in range(0,len(X), len(X)//5):
+        for index in range(0,len(X), len(X)//20):
             pose = self.getCartesianFromFrenet(X[index,0])
             rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
             L,W,_ = rotated_car_img.shape
