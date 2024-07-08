@@ -65,11 +65,12 @@ class OneCarDrift(ResidualGame):
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
         vx = 1.0; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
-        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
         self.guess = np.zeros((self.T,self.N,self.m))
         self.guess[:,0,0] = -radians(0)
 
-        self.mu_ref = radians(17); self.vx_ref = 1.0
+        self.mu_ref = radians(17); self.vx_ref = vx;
+        self.x0 = np.array([[0,0,self.mu_ref,vx,vy,r,theta,Br]])
+
         self.control_cost = 1e-2
         self.n_cost = 0.3
         self.vx_cost = 0.1
@@ -87,6 +88,24 @@ class OneCarDrift(ResidualGame):
         #self.testAnimation(self.guess)
 
     def setup(self):
+        # find an appropriate equilibrium point
+        data = main.findSaddlePoint(plot=False)
+        #saddle_point_vec.append( (vx,vy,r, theta, Br, ds, k_s, mu) )
+        k = lambda s: splev(s,self.track.curvature)[0].item()
+        k_s = k(0)
+        best_idx_vec = np.argsort(np.abs(data[:,6]-k_s))[:5]
+        for idx in best_idx_vec:
+            vx = data[idx,0]; vy = data[idx,1]; r = data[idx,2]; theta = data[idx,3]; Br = data[idx,4]; ds = data[idx,5];
+            k_s = data[idx,6]; mu = data[idx,7];
+            print(f' candidate saddle: vx = {vx:.2f}, vy = {vy:.2f}, r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg, radius = {1/k_s:.2f}m, mu = {degrees(mu):.2f}deg')
+        # select the eq point with max slip angle
+        idx = best_idx_vec[np.argmax(data[best_idx_vec,7])]
+        vx = data[idx,0]; vy = data[idx,1]; r = data[idx,2]; theta = data[idx,3]; Br = data[idx,4]; ds = data[idx,5];
+        k_s = data[idx,6]; mu = data[idx,7];
+        print(f' selected saddle: vx = {vx:.2f}, vy = {vy:.2f}, r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg, radius = {1/k_s:.2f}m, mu = {degrees(mu):.2f}deg')
+
+        self.mu_ref = mu; self.vx_ref = vx;
+        self.x0 = np.array([[0,0,self.mu_ref,vx,vy,r,theta,Br]])
         return
 
     def getCartesianFromFrenet(self, states):
@@ -102,14 +121,14 @@ class OneCarDrift(ResidualGame):
         return (r[0], r[1], heading)
 
 
-    def _visualize(self,U,X=None):
+    def _visualize(self,U,X=None,snapshots=5):
         car_scale = self.car_scale
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
 
 
-        for index in range(0,len(X), len(X)//20):
+        for index in range(0,len(X), len(X)//snapshots):
             pose = self.getCartesianFromFrenet(X[index,0])
             rotated_car_img = np.clip(rotate(self.car_img,degrees(pose[2]),reshape=True), 0.0, 1.0)
             L,W,_ = rotated_car_img.shape
@@ -473,82 +492,92 @@ class OneCarDrift(ResidualGame):
         print(f'dvx = {dvx}, dr = {dr}, dvy = {dvy}')
         return
 
-    def findSaddlePoint(self):
+    def findSaddlePoint(self,plot=True):
         ''' find saddle point given vx,
         the result should satisfy: dmu, dvx, dvy, dr = 0
         vx > 0, vy < 0, r > 0, theta < 0, 0 < Br < pi/2 (ccw drifting)
         '''
 
         m = self.mass; Iz = self.Iz; lf = self.lf; lr = self.lr; Tmax = self.Tmax
-        def ctrl_to_dvxdvy(x, *data):
-            ''' given x= (theta,Br) *data = (vx,vy,r), return dvx, dvy  '''
-            theta = x[0]; Br = x[1];
-            vx,vy,r, n, k_s = data
-            Fry = Tmax * sin(Br)
-            Frx = Tmax * np.cos(Br)
-            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
-            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
-            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
-            #dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
-            print(f'\t theta {degrees(theta):.2f}deg, Br {degrees(theta):.2f}deg, dvx {dvx:.2f}, dvy {dvy:.2f}')
-            return [dvx, dvy]
+        #Br = radians(10); theta = -radians(20);
+        saddle_point_vec = []
+        for theta in np.linspace(-radians(40),radians(0)):
+            for Br in np.linspace(radians(0),radians(90)):
+                vy_sign = -1
+                Fry = Tmax * np.sin(Br) * (-vy_sign)
+                Frx = Tmax * np.cos(Br)
+                def dvxdr_fun(x):
+                    vx = x[0]; r = x[1];
+                    vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+                    Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+                    dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+                    dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+                    return [dvx,dr]
 
-        def vy_to_dr(x, *data):
-            ''' given x = (vy) *data = (vx), return dr '''
-            vy, = x
-            vx, n, k_s = data
-            ds = (vx**2+vy**2)**0.5/(1-n*k_s)
-            r = k_s * ds
-            print(f'solver step: vx {vx:.2f}, vy {vy:.2f}, r {np.pi*2/r:.2f}sec/rev')
-            # DEBUG draw phase plot
-            mu = np.arctan(np.abs(vy)/vx)
-            theta_vec = np.linspace(-radians(40), radians(0))
-            Br_vec = np.linspace(0,mu)
-            theta, Br = np.meshgrid(theta_vec, Br_vec)
-            Fry = Tmax * np.sin(Br)
-            Frx = Tmax * np.cos(Br)
-            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
-            dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
-            dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
-            fig,ax = plt.subplots()
-            ax.streamplot(theta/np.pi*180, Br/np.pi*180, dvx, dvy)
-            plt.show()
-            breakpoint()
+                root = fsolve(dvxdr_fun, (1.0,0.2))
+                vx = root[0]; r = root[1];
+                vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
+
+                vy_sign = (1 if vy>0 else -1)
+                Fry = Tmax * np.sin(Br) * (-vy_sign)
+                Frx = Tmax * np.cos(Br)
+                Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+                dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+                dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
+                dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
 
 
-            theta, Br = fsolve(ctrl_to_dvxdvy, (-radians(10), radians(20)), args = (vx,vy,r,n,k_s) )
-            Fry = Tmax * np.sin(Br)
-            Frx = Tmax * np.cos(Br)
-            Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
-            #dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
-            #dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
-            dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
-            return [dr]
+                if (vx > 0 and vy < 0 and theta < 0 and r>0 and Br > 0 and Br < np.pi-np.arctan(-vy/vx) and np.linalg.norm(dvx)<1e-3 and np.linalg.norm(dvy)<1e-3 and np.linalg.norm(dr) ):
+                    # find ds, mu, k_s that suits this saddle point
+                    ds = (vx**2+vy**2)**0.5
+                    k_s = r/ds
+                    mu = -np.arctan(vy/vx)
+                    saddle_point_vec.append( (vx,vy,r, theta, Br, ds, k_s, mu) )
+                    if (plot):
+                        print(f' new saddle point: vx = {vx:.2f}, vy = {vy:.2f}, r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg, radius = {1/k_s:.2f}m, mu = {degrees(mu):.2f}deg')
+                else:
+                    '''
+                    # plot for diagnosis
+                    print(f' BAD saddle point: vx = {vx:.2f}, vy = {vy:.2f},  r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
+                    print(f'\t {dvx, dvy, dr} = 0?')
+                    vx_range = np.linspace(0.05,2.0)
+                    r_range = np.linspace(-1.3,0.5)
+                    vx, r = np.meshgrid(vx_range, r_range)
+                    vy = np.tan( - ( (m*vx*r - Fry)/np.cos(theta) - theta ) )*vx - lf*r
 
-        vx = 0.1; n = 0
-        k = lambda s: splev(s,self.track.curvature)[0].item()
-        k_s = k(0)
-        print(f'radius of curvature: {1/k_s}')
-        vy = fsolve(vy_to_dr, (-0.5), args = (vx,n,k_s) )[0]
-
-        # recover solution
-        ds = (vx**2+vy**2)**0.5/(1-n*k_s)
-        r = k_s * ds
-        theta, Br = fsolve(ctrl_to_dvxdvy, (-radians(10), radians(10)), args = (vx,vy,r,n,k_s) )
-        Fry = Tmax * np.sin(Br)
-        Frx = Tmax * np.cos(Br)
-        Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
-        dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
-        dvy = 1/m*(Fry + Ffy*np.cos(theta) - m*vx*r)
-        dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
-
-        if (vx > 0 and vy < 0 and theta < 0 and Br > 0 and Br < np.pi/2 and np.linalg.norm(dvx)<1e-3 and np.linalg.norm(dvy)<1e-3 and np.linalg.norm(dr) ):
-            print(f' new saddle point: vx = {vx:.2f}, vy = {vy:.2f}, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
-        else:
-            print(f' bad saddle point: vx = {vx:.2f}, vy = {vy:.2f}, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg')
+                    vy_sign = np.ones_like(vy)
+                    vy_sign[vy<0] = -1
+                    Fry = Tmax * np.sin(Br) * (-vy_sign)
+                    Frx = Tmax * np.cos(Br)
+                    Ffy = Bf = -np.arctan( (vy+lf*r)/vx ) + theta
+                    dvx = 1/m*(Frx - Fry*np.sin(theta) + m*vy*r)
+                    dr = 1/Iz*(Ffy*np.cos(theta)*lf - Fry * lr)
+                    fig,ax = plt.subplots()
+                    ax.plot(root[0], root[1],'ro')
+                    ax.streamplot(vx, r, dvx, dr,color='C0')
+                    ax.set_xlabel('vx')
+                    ax.set_ylabel('r')
+                    plt.show()
+                    breakpoint()
+                    '''
+                    continue
 
         # plotting for debug
-        breakpoint()
+        data = np.array(saddle_point_vec)
+        if (plot):
+            vx_vec = data[:,0]
+            vy_vec = data[:,1]
+            ds = data[:,5]
+            k_s = data[:,6]
+            fig,ax = plt.subplots()
+            ax.plot(ds, 1/k_s,'o')
+            ax.set_xlabel('speed (m/s)')
+            ax.set_ylabel('radius')
+            ax.set_xlim([0,8])
+            ax.set_ylim([0,100])
+            plt.show()
+            breakpoint()
+        return data
 
         '''
         fig,ax = plt.subplots()
@@ -611,11 +640,11 @@ class OneCarDrift(ResidualGame):
 
 if __name__=="__main__":
     main = OneCarDrift()
+    #main.findSaddlePoint()
     #main.testAnimation()
     #main.buildDynamicsJacobian()
     #main.phasePortrait_vx_r()
     #main.phasePortrait_vy_r()
-    #main.findSaddlePoint()
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
