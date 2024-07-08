@@ -23,7 +23,7 @@ class OneCarDriftMpc(OneCarDrift):
         self.mu_ref = radians(17); self.vx_ref = 1.0
         self.control_cost = 1e-2
         self.n_cost = 0.3
-        self.vx_cost = 0.01
+        self.vx_cost = 0.1
 
     def simulate(self):
         overlap_steps = self.T//2
@@ -64,4 +64,21 @@ class OneCarDriftMpc(OneCarDrift):
 
 if __name__=="__main__":
     main = OneCarDriftMpc()
+    main.setup()
     main.simulate()
+
+    '''
+    u_vec = np.zeros((main.T*10, main.N, main.m))
+    main.T = len(u_vec)
+    main._visualize(u_vec)
+    plt.show()
+
+    X = np.vstack([main.x0[np.newaxis,:,:],main.rollout(main.x0,u_vec)])
+    name = ['s','n','mu','vx','vy','r']
+    for i in range(len(name)):
+        fig,ax = plt.subplots()
+        ax.plot(X[:,0,i])
+        ax.set_title(name[i])
+        plt.show()
+    breakpoint()
+    '''

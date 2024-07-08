@@ -18,6 +18,7 @@ from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 from track.Skidpad import Skidpad
+from OneCarDrift import OneCarDrift
 
 from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
 import sympy
@@ -91,6 +92,26 @@ class CarDrift(ResidualGame):
         #self.testAnimation(self.guess)
 
     def setup(self):
+        # find an appropriate equilibrium point
+        oneCarDrift = OneCarDrift()
+        data = oneCarDrift.findSaddlePoint(plot=False)
+        #saddle_point_vec.append( (vx,vy,r, theta, Br, ds, k_s, mu) )
+        k = lambda s: splev(s,self.track.curvature)[0].item()
+        k_s = k(0)
+        best_idx_vec = np.argsort(np.abs(data[:,6]-k_s))[:5]
+        for idx in best_idx_vec:
+            vx = data[idx,0]; vy = data[idx,1]; r = data[idx,2]; theta = data[idx,3]; Br = data[idx,4]; ds = data[idx,5];
+            k_s = data[idx,6]; mu = data[idx,7];
+            print(f' candidate saddle: vx = {vx:.2f}, vy = {vy:.2f}, r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg, radius = {1/k_s:.2f}m, mu = {degrees(mu):.2f}deg')
+        # select the eq point with max slip angle
+        idx = best_idx_vec[np.argmax(data[best_idx_vec,7])]
+        vx = data[idx,0]; vy = data[idx,1]; r = data[idx,2]; theta = data[idx,3]; Br = data[idx,4]; ds = data[idx,5];
+        k_s = data[idx,6]; mu = data[idx,7];
+        print(f' selected saddle: vx = {vx:.2f}, vy = {vy:.2f}, r = {r/np.pi*180}deg/s, theta = {degrees(theta):.2f}deg, Br = {degrees(Br):.2f}deg, radius = {1/k_s:.2f}m, mu = {degrees(mu):.2f}deg')
+
+        self.mu_ref = mu; self.vx_ref = vx;
+        self.x0 = np.array([[0,0,self.mu_ref,vx,vy,r,theta,Br]])
+        self.x0 = np.array([[0,0,self.mu_ref,vx,vy,r,theta,Br],[self.ds_ref,0,self.mu_ref,vx,vy,r,theta,Br]])
         return
 
     def getCartesianFromFrenet(self, states):
@@ -106,14 +127,14 @@ class CarDrift(ResidualGame):
         return (r[0], r[1], heading)
 
 
-    def _visualize(self,U,X=None):
+    def _visualize(self,U,X=None,snapshots=3):
         car_scale = self.car_scale
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
 
 
-        for index in range(0,len(X), len(X)//3):
+        for index in range(0,len(X), len(X)//snapshots):
             for i in range(self.N):
                 pose = self.getCartesianFromFrenet(X[index,i])
                 rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(pose[2]),reshape=True), 0.0, 1.0)

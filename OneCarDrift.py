@@ -89,7 +89,7 @@ class OneCarDrift(ResidualGame):
 
     def setup(self):
         # find an appropriate equilibrium point
-        data = main.findSaddlePoint(plot=False)
+        data = self.findSaddlePoint(plot=False)
         #saddle_point_vec.append( (vx,vy,r, theta, Br, ds, k_s, mu) )
         k = lambda s: splev(s,self.track.curvature)[0].item()
         k_s = k(0)

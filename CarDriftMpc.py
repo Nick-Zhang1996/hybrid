@@ -17,18 +17,18 @@ class CarDriftMpc(CarDrift):
         vx = 0.5; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
 
-        self.mu_ref = radians(17); self.vx_ref = 1.0
         self.control_cost = 1e-2
-        self.n_cost = 0.3
-        self.vx_cost = 0.01
-        self.ds_cost = 0.02
-        self.dmu_cost = 0.02
+        self.n_cost = 1.0
+        self.vx_cost = 1.0
+        self.ds_cost = 0.2
+        self.dmu_cost = 0.2
 
         self.ds_ref = 2.5 # desired distance between cars
-        self.mu_ref = radians(17);
-        self.vx_ref = 1.0
+        # NOTE setup will define ref and x0
+        #self.mu_ref = radians(17);
+        #self.vx_ref = 1.0
 
-        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br],[self.ds_ref,0,radians(17),vx,vy,r,theta,Br]])
+        #self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br],[self.ds_ref,0,radians(17),vx,vy,r,theta,Br]])
         self.guess = np.zeros((self.T,self.N,self.m))
         self.guess[:,0,0] = -radians(0)
 
@@ -72,4 +72,5 @@ class CarDriftMpc(CarDrift):
 
 if __name__=="__main__":
     main = CarDriftMpc()
+    main.setup()
     main.simulate()
