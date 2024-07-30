@@ -237,8 +237,8 @@ class ResidualGame(PrintObject):
         h_indices = []
         index = 0
         for i in range(self.N):
-            index += dim_x
-            index += dim_u
+            index += n*T
+            index += m*T
             index += n*T
             h_indices.append( range(index, index+np.sum(h_plus_mask[:,i])) )
             index += np.sum(h_plus_mask[:,i])
@@ -251,10 +251,10 @@ class ResidualGame(PrintObject):
         # extract control constraint F
         # assert that x,u are separated from the rest
         # F @ [x,u] = Fx @ x + Fu @ u= -r_F
-        '''
+        # NOTE this is pretty expensive, extremely expensive
         index = 0
         for i in range(self.N):
-            index += dim_x + dim_u
+            index += T*n + T*m
             # x: T*N*n
             x_indices = list(chain.from_iterable([list(range(t*N*n+i*n,t*N*n+(i+1)*n)) for t in range(T)]))
             # u: T*N*m
@@ -279,7 +279,6 @@ class ResidualGame(PrintObject):
             dy[u_indices] = du_i_after
             dy[x_indices] = dx_i_after
             index += n*T + np.sum(h_plus_mask[:,i])
-        '''
 
         # Backtracking line search
         t.s('line search')
@@ -315,10 +314,10 @@ class ResidualGame(PrintObject):
         self.print_debug(' r_0 breakdown ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
-            dLL_dx_res = np.linalg.norm(r0[index:index+dim_x])
-            index += dim_x
-            dLL_du_res = np.linalg.norm(r0[index:index+dim_u])
-            index += dim_u
+            dLL_dx_res = np.linalg.norm(r0[index:index+n*T])
+            index += n*T
+            dLL_du_res = np.linalg.norm(r0[index:index+m*T])
+            index += m*T
             fx_res = np.linalg.norm(r0[index:index+n*T])
             index += n*T
             h_res = np.linalg.norm(r0[index:index+np.sum(h_plus_mask[:,i])])
@@ -334,10 +333,10 @@ class ResidualGame(PrintObject):
         self.print_debug(f' r_t breakdown, step = {step} ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
-            dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
-            index += dim_x
-            dLL_du_res = np.linalg.norm(r_t[index:index+dim_u])
-            index += dim_u
+            dLL_dx_res = np.linalg.norm(r_t[index:index+n*T])
+            index += n*T
+            dLL_du_res = np.linalg.norm(r_t[index:index+m*T])
+            index += m*T
             fx_res = np.linalg.norm(r_t[index:index+n*T])
             index += n*T
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
