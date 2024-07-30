@@ -2,6 +2,7 @@ import numpy as np
 from UnstructuredDriving import UnstructuredDriving
 
 class CarMergeDoubleIntegrator(UnstructuredDriving):
+    USE_CPP = False
     def __init__(self, car_count=8):
         #super().__init__(car_count=5)
         # simplest, 3 car
@@ -34,12 +35,15 @@ class CarMergeDoubleIntegrator(UnstructuredDriving):
         self.target_y = [0]*(main_lane_n+merge_lane_n)
         self.J_Qr = np.diag([0,1,0.1,0])
         self.J_Q = np.diag([0,0,0,0.5])
+        self.print_debug_enable()
+        self.iterations = 30
+        self.final_resolution = 1e-10
 
 
 
 
 if __name__=="__main__":
-    main = CarMergeDoubleIntegrator(8)
+    main = CarMergeDoubleIntegrator(3)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()

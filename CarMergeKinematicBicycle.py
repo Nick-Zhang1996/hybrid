@@ -12,7 +12,7 @@ from matplotlib.patches import Rectangle
 from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from ImproveResidualGame import ResidualGame
+from ResidualGame import ResidualGame
 
 # example: Merging
 # uses kinematic bicycle model

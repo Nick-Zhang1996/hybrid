@@ -218,7 +218,7 @@ class ResidualGame(PrintObject):
         # extract control constraint F
         # assert that x,u are separated from the rest
         # F @ [x,u] = Fx @ x + Fu @ u= -r_F
-        if (False):
+        if (True):
             index = 0
             for i in range(self.N):
                 index += dim_x + dim_u

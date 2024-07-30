@@ -14,6 +14,8 @@ from itertools import chain
 from util import *
 from TimeUtil import TimeUtil
 #from src.build.particle_game import ParticleGame
+# TODO for cpp, change gradient for barrier function to cap at 1e20 instead of 1e10
+# TODO we should maybe build a map for h(xi, xj) values
 
 class ResidualGame(PrintObject):
     DEBUG = False
@@ -49,17 +51,18 @@ class ResidualGame(PrintObject):
         self.violations = None
         self.profiler = TimeUtil(False)
         #self.print_debug_enable()
+        self.final_resolution = 5e-4
 
     def init(self):
         ''' setup some dynamic solver parameters that changes between iterations, call this funtion to reset the solver '''
         # solver tuning parameters
         # barrier function scaling schedule
-        self.rho = 10.0
+        self.rho = 10.0 * 2
         self.rho_b = 2.0
         # backtracking line search param
         self.bc_a = 0.1 #alpha
         self.bc_b = 0.5 #beta
-        self.backtracking_max_iter = 10
+        self.backtracking_max_iter = 20
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -113,6 +116,7 @@ class ResidualGame(PrintObject):
                 except StopIteration:
                     self.print_ok('stopping criterion met!')
                     break
+            x_ref = self.rollout(self.x0,u_ref)
             t.e()
             self.print_info(f'------ iter {i} ------')
 
@@ -135,6 +139,7 @@ class ResidualGame(PrintObject):
         dim_x = T*N*n; dim_u = T*N*m
         # r0 + Dr*dr = 0
         h_plus_mask = self.getHplusMask(x_ref)
+
         r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
         y0 = np.hstack([x_ref.flatten(), u_ref.flatten(), lambda_ref.flatten(), mu_ref.flatten()])
         # x,u,lamda,mu = split_y(y)
@@ -143,6 +148,7 @@ class ResidualGame(PrintObject):
 
         t.e('setup')
         Dr = self.dr_dy( x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        # after we remove the cols associated with unused mu, Dr will be square
 
         if (self.DEBUG):
             t0 = time()
@@ -179,6 +185,22 @@ class ResidualGame(PrintObject):
         # use cpp's sparse QR
 
         '''
+        # DEBUG TODO can we focus on dLL/dx, dLL/du?
+        indices = []
+        index = 0
+        for i in range(self.N):
+            indices.append( range(index, index+dim_x+dim_u) )
+            index += dim_x + dim_u + n*T
+            index += np.sum(h_plus_mask[:,i])
+        indices = list(chain.from_iterable(indices))
+        new_Dr = Dr[indices,:]
+        sparse_Dr = scipy.sparse.csc_matrix(new_Dr, dtype=float)
+        alt_dy, _, _, small_r = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[indices])[:4]
+        self.print_debug(f'new norm: {small_r}')
+        '''
+
+
+        '''
         t.s('cpp SparseQR')
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp SparseQR')
@@ -209,10 +231,27 @@ class ResidualGame(PrintObject):
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
         self.print_debug(f' nonzero entries:  {nonzero_entries/total_entries}')
         '''
-        # TODO NEW FEATURE: projection onto dynamics null space
+        # TODO DEBUG does taking a full step resolve the h>0?
+        # what's the expected posterior
+        self.print_debug(f'expected posterior norm {normr}')
+        h_indices = []
+        index = 0
+        for i in range(self.N):
+            index += dim_x
+            index += dim_u
+            index += n*T
+            h_indices.append( range(index, index+np.sum(h_plus_mask[:,i])) )
+            index += np.sum(h_plus_mask[:,i])
+        h_indices = list(chain.from_iterable(h_indices))
+        apriori_h_res = np.linalg.norm(r0[h_indices], ord=1)
+        posterior_h_res = np.linalg.norm(Dr[h_indices,:] @ dy + r0[h_indices], ord=1)
+        self.print_debug(f'expected apriori h res: {apriori_h_res}, posterior: {posterior_h_res}')
+
+        # projection onto dynamics null space
         # extract control constraint F
         # assert that x,u are separated from the rest
         # F @ [x,u] = Fx @ x + Fu @ u= -r_F
+        '''
         index = 0
         for i in range(self.N):
             index += dim_x + dim_u
@@ -220,35 +259,31 @@ class ResidualGame(PrintObject):
             x_indices = list(chain.from_iterable([list(range(t*N*n+i*n,t*N*n+(i+1)*n)) for t in range(T)]))
             # u: T*N*m
             u_indices = list(chain.from_iterable([list(range(dim_x+t*N*m+i*m,dim_x+t*N*m+(i+1)*m)) for t in range(T)]))
+
             Fx = Dr[index:index+n*T,x_indices]
             Fu = Dr[index:index+n*T,u_indices]
             dx_i = dy[x_indices].flatten()
             du_i = dy[u_indices].flatten()
-            '''
-            # TODO DEBUG ensure this is correct
-            dx_full, du_full, _, _ = split_y(dy)
-            dx_i_alt = dx_full[:,i,:].flatten()
-            self.print_debug(f'dx err {np.linalg.norm(dx_i_alt - dx_i)}')
-            du_i_alt = du_full[:,i,:].flatten()
-            self.print_debug(f'du err {np.linalg.norm(du_i_alt - du_i)}')
-            '''
-            r_F = r0[index:index+n*T]
-            '''
-            # TODO assert that the rest of the row is empty
-            accounted_norm = np.linalg.norm(Fx)**2 + np.linalg.norm(Fu)**2
-            unaccounted_norm = np.linalg.norm(Dr[index:index+n*T])**2 - accounted_norm
-            self.print_debug(f'accoutned_norm {accounted_norm}, unaccounted {unaccounted_norm}')
-            '''
-            du, residuals, rank, s = np.linalg.lstsq(Fu,-r_F - Fx @ dx_i)
-            #self.print_debug(f'residuals {np.linalg.norm(residuals)}')
-            self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du)}')
-            dy[u_indices] = du
+            F = np.hstack([Fx, Fu])
+            z = np.hstack([dx_i,du_i])[:,np.newaxis]
+            FFT_inv = np.linalg.inv( F @ F.T) # TODO add regularization if this in singular
+            z_null = (np.eye(z.shape[0]) - F.T @ FFT_inv @ F) @ z
+            dx_i_after = z_null[:dx_i.shape[0],0]
+            du_i_after = z_null[dx_i.shape[0]:,0]
+
+            apriori = Fu @ du_i + Fx @ dx_i
+            posterior = Fu @ du_i_after + Fx @ dx_i_after
+            #self.print_debug(f'dynamics correction residuals {np.linalg.norm(apriori)} -> {np.linalg.norm(posterior)}')
+            #self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du_i_after)}')
+            #self.print_debug(f'dx change {np.linalg.norm(dy[x_indices]-dx_i_after)}')
+            dy[u_indices] = du_i_after
+            dy[x_indices] = dx_i_after
             index += n*T + np.sum(h_plus_mask[:,i])
-
-
+        '''
 
         # Backtracking line search
         t.s('line search')
+        before_h_res = self.getCollisionResidual(x_ref) # NOTE optimize
         # backtracking line search
         step = 1.0 # step size
         dy = dy.flatten()
@@ -256,19 +291,27 @@ class ResidualGame(PrintObject):
         for i in range(self.backtracking_max_iter):
             y_new = y0+step*dy
             # NOTE testing change: rollout in line search
-            _,u_new,_,_ = split_y(y_new)
-            x_new = self.rollout(self.x0, u_new)
-            y_new[:dim_x] = x_new.flatten()
+            # FIXME do we still need this? maybe for nonlinear dynamics
+            x_new,u_new,_,_ = split_y(y_new)
+            #x_new = self.rollout(self.x0, u_new)
+            #y_new[:dim_x] = x_new.flatten()
+            search_h_res = self.getCollisionResidual(x_new) # NOTE optimize
             r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1-self.bc_a*step)*r0_norm):
+            if (r_t_norm > (1-self.bc_a*step)*r0_norm or search_h_res > before_h_res):
                 step *= self.bc_b
             else:
                 break
         t.e('line search')
 
+        # NOTE debug
+        new_x_ref,_,_,_ = split_y(y_new)
+        after_h_res = self.getCollisionResidual(new_x_ref)
+        self.print_debug(f'after dyn correction before h_res = {before_h_res} -> after {after_h_res}')
+
         index = 0
         h_plus_violations = 0
+
         self.print_debug(' r_0 breakdown ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
@@ -309,7 +352,7 @@ class ResidualGame(PrintObject):
         self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
 
         # stopping criterion
-        if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
+        if (np.abs(r_t_norm - r0_norm)<self.final_resolution and self.violations<self.final_resolution):
             raise StopIteration
 
         self.rho *= self.rho_b
@@ -403,6 +446,16 @@ class ResidualGame(PrintObject):
             t.e('stack')
         return Dr
 
+    def getCollisionResidual(self, x):
+        h_res = 0
+        for k in range(1,self.T+1):
+            for i in range(self.N):
+                for j in range(i+1,self.N):
+                    this_h = self.h(x[k-1,i],x[k-1,j])
+                    if (this_h > 0):
+                        h_res += this_h
+        return h_res
+
     def getHplusMask(self,x):
         # h(i,i) should not be considered in either h_plus or h_minus
         # we check it in h_minux
@@ -440,7 +493,7 @@ class ResidualGame(PrintObject):
 
         val =  self.dJi_dxi(x_k,u_k_i,i) + lamda_k[i].T @ self.df_dx(x_k[i],u_k_i,i)
         val += np.sum( [ mu_k[i,j.item()] * ( self.dh_dxi(x_k[i], x_k[j.item()]) ) for j in np.nonzero(h_k_plus_mask[i])[0] ], axis=0)
-        val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e10) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
+        val += -1.0/self.rho*np.sum([min(1/self.h(x_k[i], x_k[j.item()]),1e20) * self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
         #h_val_alt = np.sum([ self.dBh_dxi(x_k[i], x_k[j.item()]) * (j.item()!=i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
 
         # NOTE the behavior of barrier function near boundary may need tuning
@@ -477,15 +530,20 @@ class ResidualGame(PrintObject):
     def dL_dx_ik1(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         ''' dL/dx_i_k+1 '''
         return -lamda_k[i].T
+
+    # NOTE unused/deprecated, only needed in dLLi_dxj, which is deprecated
     def dL_dx_jk(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i,j):
         assert (i!=j)
         return  self.dJi_dxj(x[k-1],u[k,i],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
-            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e10) * self.dh_dxi(x_k[i], x_k[j]) )
+            -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e20) * self.dh_dxi(x_k[i], x_k[j]) )
+
+    # NOTE unused, usually dJi_du is called directly
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i,i)
         return val
 
 
+    # only used in debug, LLi's derivative is used more prevalently
     def LLi(self,x,u,h_plus_mask,lamda,mu,i):
         T = self.T
         LLi_val = np.sum( [self.L(x[k-1],u[k,i], x[k,i],h_plus_mask[k-1], lamda[k], mu[k-1],i) for k in range(1,T)] ,axis=0)
@@ -498,6 +556,36 @@ class ResidualGame(PrintObject):
         LLi_val += h_plus + h_minus
         return LLi_val
 
+    def dLLi_dxi(self,x,u,h_plus_mask,lamda,mu,i):
+        if (self.USE_CPP):
+            return self.cpp.dLLi_dxi([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+        ''' return: 1*(T*n)  Note index of x starts with 1'''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        der = np.zeros(T*n)
+        submtx_k = lambda k:der[(k-1)*n:k*n]
+        # dLLi_dxi
+        for k in range(1,T):
+            sub = submtx_k(k)
+            sub[:] = self.dL_dx_ik(x[k-1],u[k,i],x[k,i],h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1,i].T
+            if (self.DEBUG):
+                num = jacobianNumerical(lambda xx:self.L(xx.reshape(N,n), u[k,i], x[k,i], h_plus_mask[k-1],lamda[k], mu[k-1],i),x[k-1].flatten())
+                num = num[0,i*n:(i+1)*n] - lamda[k-1,i].T
+                assert( np.linalg.norm(num-sub) < 1e-4)
+
+        # dLLi_dxi_T
+        sub = submtx_k(T)
+        sub[:] = -lamda[T-1,i].T + self.dJfi_dxi(x[T-1],i) \
+            + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
+            -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e20)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
+
+        val = der.reshape(1,-1)
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dLLi_dxi([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # NOTE deprecated, now we use dLLi_dxi
     def dLLi_dx(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -518,7 +606,7 @@ class ResidualGame(PrintObject):
         sub = submtx_i_k(i,T)
         sub[:] = -lamda[T-1,i].T + self.dJfi_dxi(x[T-1],i) \
             + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
-            -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e10)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
+            -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e20)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
 
         # dLLi_dxj
         for j in range(0,N):
@@ -527,11 +615,11 @@ class ResidualGame(PrintObject):
             for k in range(1,T):
                 sub = submtx_i_k(j,k)
                 sub[:] = self.dJi_dxj(x[k-1],u[k,i],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
-                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
+                    -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),2e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
             k = T
             sub = submtx_i_k(j,k)
             sub[:] = self.dJfi_dxj(x[k-1],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
-                -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),1e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
+                -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),2e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
         val = der.reshape(1,-1)
         if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -539,7 +627,29 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return val
 
-    # TODO check
+    def dLLi_dui(self,x,u,h_plus_mask,lamda,mu,i):
+        if (self.USE_CPP):
+            return self.cpp.dLLi_dui([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+        ''' return: 1*(T*m) '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        der = np.zeros(T*m)
+        submtx_k = lambda k:der[k*m:(k+1)*m]
+        # dLLi_dui_0
+        sub = submtx_k(0)
+        sub[:] = self.dJi_du(self.x0,u[0,i],i) + lamda[0,i].T @ self.df_du(self.x0[i],u[0,i],i)
+        # dLLi_dui_k
+        for k in range(1,T):
+            sub = submtx_k(k)
+            # dL_du
+            sub[:] = self.dJi_du(x[k-1],u[k,i],i) + lamda[k,i].T @ self.df_du(x[k-1,i],u[k,i],i)
+        val = der.reshape(1,-1)
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dLLi_dui([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-der)>1e-4):
+                breakpoint()
+        return der
+
+    # NOTE deprecated
     def dLLi_du(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_du([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -561,6 +671,25 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return der
 
+    def dLLi_dxi_dmu(self,x,u,h_plus_mask,lamda,mu,i):
+        if (self.USE_CPP):
+            return self.cpp.dLLi_dxi_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+        ''' return: dim: dim_x*dim_mu '''
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = T*N*n; dim_u = T*N*m
+        dim_mu = T*N*N
+        dLL_dxi_dmu = np.zeros((T*n,dim_mu))
+        for k in range(1,T+1):
+            for j in np.nonzero(h_plus_mask[k-1,i])[0]:
+                dLLi_dxki_dmuijk = self.dh_dxi(x[k-1,i],x[k-1,j])
+                dLL_dxi_dmu[(k-1)*n:k*n, (k-1)*N*N+i*N+j] = dLLi_dxki_dmuijk
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dLLi_dxi_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
+            if (np.linalg.norm(alt-dLL_dx_dmu)>1e-4):
+                breakpoint()
+        return dLL_dxi_dmu
+
+    # NOTE deprecated, use dLLi_dxi_dmu now
     def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -611,14 +740,17 @@ class ResidualGame(PrintObject):
         try:
             r = np.zeros(0)
             for i in range(self.N):
-                dLL_dx = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
-                dLL_du = self.dLLi_du(x,u,h_plus_mask,lamda,mu,i)
+                dLL_dxi = self.dLLi_dxi(x,u,h_plus_mask,lamda,mu,i)
+                dLL_dui = self.dLLi_dui(x,u,h_plus_mask,lamda,mu,i)
+                '''
+                # this needs to be updated
                 if (self.DEBUG):
                     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
                     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
                     assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
-                r = np.hstack([r,dLL_dx.flatten(), dLL_du.flatten()])
+                '''
+                r = np.hstack([r,dLL_dxi.flatten(), dLL_dui.flatten()])
                 # dynamics for f(x0,u0) = x1
                 r = np.hstack([r, self.dynamics_residual_weight * self.f(self.x0[i], u[0,i],i) - x[0,i]])
                 for k in range(1,self.T):
@@ -774,7 +906,78 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return val
 
+    def dLLi_dxi_dx(self,x,u,h_plus_mask,lamda,mu,i):
+        if (self.USE_CPP):
+            return self.cpp.dLLi_dxi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
+        T = self.T; N = self.N; n = self.n; m = self.m; dim_x = T*N*n
+        dLL_dxi_dx = np.zeros((T*n,dim_x))
+        submtx = lambda k,j: dLL_dxi_dx[(k-1)*n:k*n, (k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n]
+        submtx_num = lambda k,j: dLL_dxi_dx_num[(k-1)*n:k*n, (k-1)*N*n+j*n:(k-1)*N*n+(j+1)*n]
+        for k in range(1,T):
+            #dLLi_dxki_dxki
+            mtx = submtx(k,i)
+            val1 = self.dJi_dxi_dxi(x[k-1],u[k,i],i)
+            val2 = np.sum( [ mu[k-1,i,j.item()] * ( self.dh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) ) for j in np.nonzero(h_plus_mask[k-1,i])[0] ],axis=0)
+            val3 = np.sum([self.dBh_dxi_dxi(x[k-1,i], x[k-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[k-1,i])[0] ],axis=0)
+            mtx[:,:] = val1 + val2 + val3
 
+        #dLLi_dxki_dxki, k=T, u_T is undefined, use 0 to penalize J(x) only
+        mtx = submtx(T,i)
+        mtx[:,:] = self.dJfi_dxi_dxi(x[T-1],i) \
+                + np.sum( [ mu[T-1,i,j.item()] * ( self.dh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) ) for j in np.nonzero(h_plus_mask[T-1,i])[0] ],axis=0) \
+                + np.sum([self.dBh_dxi_dxi(x[T-1,i], x[T-1,j.item()]) * (j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
+
+        # dLLi_dxi_dxj
+        for k in range(1,T):
+            for j in range(N):
+                if i==j:
+                    continue
+                if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
+                    #dLLi_dxki_dxkj
+                    val = self.dJi_dxi_dxj(x[k-1],u[k,i],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,j)
+                    mtx[:,:] = val
+                else:
+                    #dLLi_dxki_dxkj
+                    val = self.dJi_dxi_dxj(x[k-1],u[k,i],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                    mtx = submtx(k,j)
+                    mtx[:,:] = val
+        k = T
+        for j in range(N):
+            if i==j:
+                continue
+            if (j in np.nonzero(h_plus_mask[k-1,i])[0]):
+                #dLLi_dxki_dxkj
+                val = self.dJfi_dxi_dxj(x[k-1],i,j) + mu[k-1,i,j] * self.dh_dxi_dxj(x[k-1,i], x[k-1,j])
+                mtx = submtx(k,j)
+                mtx[:,:] = val
+            else:
+                #dLLi_dxki_dxkj
+                val = self.dJfi_dxi_dxj(x[k-1],i,j) + self.dBh_dxi_dxj(x[k-1,i], x[k-1,j])
+                mtx = submtx(k,j)
+                mtx[:,:] = val
+
+        if (self.DEBUG):
+            '''
+            for k in range(1,T+1):
+                for ii in range(N):
+                    for j in range(N):
+                        mtx_num = submtx_num(k,ii,j)
+                        mtx = submtx(k,ii,j)
+                        if(not np.linalg.norm(mtx-mtx_num)<1e-4):
+                            self.print_debug(f'i = {i} ii={ii},j={j},k={k}')
+                            #breakpoint()
+            '''
+            dLL_dxi_dx_num = jacobianNumerical(lambda xx:self.dLLi_dxi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
+            self.print_debug(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
+            assert(np.linalg.norm(dLL_dxdx_num - dLL_dxdx)<1e-4)
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dLLi_dxi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
+            if (np.linalg.norm(alt-dLL_dxdx)>1e-4):
+                breakpoint()
+        return dLL_dxi_dx
+
+    # NOTE obselete
     def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
@@ -924,17 +1127,17 @@ class ResidualGame(PrintObject):
         ''' return: dim(r)*dim(x) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = N*T*m
-        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dim_r = N*(T*n+T*m+T*n)+np.sum(h_plus_mask)
         drdx = np.zeros((dim_r,dim_x))
         index = 0
         for i in range(self.N):
-            dLL_dxdx = self.dLLi_dxdx(x,u,h_plus_mask,lamda,mu,i)
+            dLL_dxi_dx = self.dLLi_dxi_dx(x,u,h_plus_mask,lamda,mu,i)
             # this item is identically zero
             #dLL_dudx = np.zeros((dim_u,dim_x))
             dF0dx = self.dF0_dx(x,u,i)
             # dynamics for f(x0,u0) = x1
-            drdx[index:index+dim_x,:] = dLL_dxdx
-            index += dim_x + dim_u
+            drdx[index:index+T*n,:] = dLL_dxi_dx
+            index += T*n + T*m
             drdx[index:index+n,:] = self.dynamics_residual_weight * dF0dx
             for k in range(1,self.T):
                 dFdx = self.dF_dx(x,u,i,k)
@@ -994,20 +1197,19 @@ class ResidualGame(PrintObject):
         ''' return: dim(r)*dim(u) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
-        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dim_r = N*(T*n+T*m+T*n)+np.sum(h_plus_mask)
 
 
         drdu = np.zeros((dim_r,dim_u))
         index = 0
         for i in range(self.N):
-            index += dim_x
+            index += T*n
             for k in range(self.T):
                 dLL_duik_duik = self.dJi_dudu(x[k-1],u[k,i],i)
-                drdu[index+k*N*m+i*m:index+k*N*m+(i+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
-            index += dim_u
+                drdu[index+k*m:index+(k+1)*m, k*N*m+i*m:k*N*m+(i+1)*m] = dLL_duik_duik
+            index += T*m
             k = 0
             drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.dynamics_residual_weight * self.df_du(self.x0[i],u[k,i],i)
-
             for k in range(1,self.T):
                 drdu[index+k*n:index+(k+1)*n, k*N*m+i*m:k*N*m+(i+1)*m] = self.dynamics_residual_weight * self.df_du(x[k-1,i],u[k,i],i)
             index += n*T + np.sum(h_plus_mask[:,i]) # skip  f(x,u)-x+,  h(x,x)
@@ -1035,25 +1237,24 @@ class ResidualGame(PrintObject):
         ''' return: dim(r)*dim(lamda) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m ; dim_lamda = T*N*n
-        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dim_r = N*(T*n+T*m+T*n)+np.sum(h_plus_mask)
         dr_dlamda = np.zeros((dim_r,dim_lamda))
         index = 0
         for i in range(N):
             for k in range(1,T):
                 # dLLi_dxki_dlamda_ki
-                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i],i).T
+                dr_dlamda[index+(k-1)*n:index+k*n,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_dx(x[k-1,i],u[k,i],i).T
                 # dLLi_dxki_dlamda_k-1,i
-                dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+                dr_dlamda[index+(k-1)*n:index+k*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
             k = T
-            dr_dlamda[index+(k-1)*N*n+i*n:index+(k-1)*N*n+(i+1)*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
-
-            index += dim_x # skip dLL_dx, index now points at dLLi_du
+            dr_dlamda[index+(k-1)*n:index+k*n,(k-1)*N*n+i*n:(k-1)*N*n+(i+1)*n] = -np.eye(n)
+            index += T*n # skip dLL_dxi, index now points at dLLi_dui
             k = 0
-            dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(self.x0[i],u[k,i],i).T
+            dr_dlamda[index+k*m:index+(k+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(self.x0[i],u[k,i],i).T
             for k in range(1,T):
-                dr_dlamda[index+k*N*m+i*m:index+k*N*m+(i+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(x[k-1,i],u[k,i],i).T
+                dr_dlamda[index+k*m:index+(k+1)*m,k*N*n+i*n:k*N*n+(i+1)*n] = self.df_du(x[k-1,i],u[k,i],i).T
 
-            index += dim_u + n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_du, f(x,u)-x+,  h(x,x)
+            index += T*m + n*T + np.sum(h_plus_mask[:,i]) # skip  dLL_dui, f(x,u)-x+,  h(x,x)
 
         if (self.DEBUG):
             dr_dlamda_num = jacobianNumerical(lambda ll:self.r(x,u,ll.reshape(lamda.shape),mu,h_plus_mask), lamda.flatten(),dim=dim_r)
@@ -1073,20 +1274,20 @@ class ResidualGame(PrintObject):
         ''' return: dim(r)*dim(mu) '''
         T = self.T; N = self.N; n = self.n; m = self.m
         dim_x = T*N*n; dim_u = T*N*m
-        dim_r = N*(dim_x+dim_u+T*n)+np.sum(h_plus_mask)
+        dim_r = N*(T*n+T*m+T*n)+np.sum(h_plus_mask)
         dim_mu = T*N*N
 
         dr_dmu = np.zeros((dim_r,dim_mu))
         index = 0
         for i in range(self.N):
             # dmu i,j,k
-            dLL_dx_dmu = self.dLLi_dx_dmu(x,u,h_plus_mask,lamda,mu,i)
-            dr_dmu[index:index+dim_x,:] = dLL_dx_dmu
+            dLL_dxi_dmu = self.dLLi_dxi_dmu(x,u,h_plus_mask,lamda,mu,i)
+            dr_dmu[index:index+T*n,:] = dLL_dxi_dmu
             if (self.DEBUG):
-                dLL_dx_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dx(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
-                assert(np.linalg.norm(dLL_dx_dmu-dLL_dx_dmu_num)<1e-4)
+                dLL_dxi_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dxi(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
+                assert(np.linalg.norm(dLL_dxi_dmu-dLL_dxi_dmu_num)<1e-4)
 
-            index += dim_x + dim_u + n*T + np.sum(h_plus_mask[:,i])
+            index += T*n + T*m + n*T + np.sum(h_plus_mask[:,i])
 
         if (self.DEBUG):
             dr_dmu_num = jacobianNumerical(lambda mm:self.r(x,u,lamda,mm.reshape(mu.shape),h_plus_mask), mu.flatten(),dim=dim_r)
