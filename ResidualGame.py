@@ -58,7 +58,7 @@ class ResidualGame(PrintObject):
         # solver tuning parameters
         # barrier function scaling schedule
         self.rho = 10.0 * 2
-        self.rho_b = 2.0
+        self.rho_b = 1.0 # 2.0
         # backtracking line search param
         self.bc_a = 0.1 #alpha
         self.bc_b = 0.5 #beta
@@ -199,7 +199,6 @@ class ResidualGame(PrintObject):
         self.print_debug(f'new norm: {small_r}')
         '''
 
-
         '''
         t.s('cpp SparseQR')
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
@@ -304,7 +303,7 @@ class ResidualGame(PrintObject):
         t.e('line search')
 
         # NOTE debug
-        new_x_ref,_,_,_ = split_y(y_new)
+        new_x_ref,new_u_ref,new_lambda,new_mu = split_y(y_new)
         after_h_res = self.getCollisionResidual(new_x_ref)
         self.print_debug(f'after dyn correction before h_res = {before_h_res} -> after {after_h_res}')
 
@@ -320,10 +319,8 @@ class ResidualGame(PrintObject):
             index += m*T
             fx_res = np.linalg.norm(r0[index:index+n*T])
             index += n*T
-            h_res = np.linalg.norm(r0[index:index+np.sum(h_plus_mask[:,i])])
-            h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.8f}, h_plus {np.sum(h_plus_mask[:,i])}')
 
         #check different parts of the residuals, with rho = infty
         original_rho = self.rho
@@ -339,11 +336,23 @@ class ResidualGame(PrintObject):
             index += m*T
             fx_res = np.linalg.norm(r_t[index:index+n*T])
             index += n*T
-            h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
-            h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.8f}, h_plus {np.sum(h_plus_mask[:,i])}')
         self.rho = original_rho
+
+        # NOTE debug, compare rollout vs current x_ref
+        try:
+            diff = self.rollout(self.x0, new_u_ref) - new_x_ref
+            dyn_res = np.linalg.norm(diff)
+            self.print_debug(f'dynamics residual {dyn_res}')
+            r_diff = np.abs(self.old_rt - r0)>1e-8
+        except AttributeError:
+            pass
+
+        # FIXME check agent 1
+        self.old_rt = r_t.copy()
+        self.old_y = y_new
+
 
         self.residuals = r_t_norm
         self.violations = np.sum(h_plus_mask)/2
