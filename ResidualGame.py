@@ -1,9 +1,11 @@
 # Base class for residual game
 # for an example of a subclass, see UnstructuredDriving.py
+
 import os
 import numpy as np
 from time import time
 from PIL import Image
+from abc import ABC,abstractmethod
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
 import matplotlib.pyplot as plt
@@ -14,44 +16,42 @@ from itertools import chain
 from util import *
 from TimeUtil import TimeUtil
 #from src.build.particle_game import ParticleGame
+# FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?
 # TODO for cpp, change gradient for barrier function to cap at 1e20 instead of 1e10
 # TODO we should maybe build a map for h(xi, xj) values
 
-class ResidualGame(PrintObject):
+class ResidualGame(PrintObject,ABC):
     DEBUG = False
     USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     CPP_DEBUG = False
-    def __init__(self):
 
+    @abstractmethod
+    def __init__(self):
+        ''' example of a constructor '''
         # application specific parameters, to be overridden in subclass
         # the numbers here are arbitrary
-        # TODO maybe set them to None?
-        self.N = 3
-        self.T = 20
-        self.dt = dt = 0.1
-        # dimension of x(state) and u(control) for single agent
-        self.n = 4
-        self.m = 2
-        # initial state, stated in unit of car size
-        self.x0 = np.array([[0,-0.9,1.5,0.5],[0,0.4,2.5,0.2],[0,2.0,1.7,-0.3]])
 
+        # number of agents
+        self.N = 0
+        # horizon length, excluding x0
+        self.T = 0
+        # discretization time step length
+        self.dt = dt = 0.1
+
+        # dimension of x(state) and u(control) for single agent
+        self.n = 0
+        self.m = 0
+        # initial state, dim: N*n
+        self.x0 = np.zeros((self.N,self.n))
+
+        # initialize default parameters
         self.init()
 
         # max iterations
         self.iterations = 10
-        # NOTE this is not implemented in cpp
-        self.dynamics_residual_weight = 1.0
         self.guess = np.zeros((self.T,self.N,self.m))
 
-
-        # solver variables
-        self.frame_vec = []
-        self.residuals = None
-        self.violations = None
-        self.profiler = TimeUtil(False)
-        #self.print_debug_enable()
-        self.final_resolution = 5e-4
 
     def init(self):
         ''' setup some dynamic solver parameters that changes between iterations, call this funtion to reset the solver '''
@@ -64,10 +64,21 @@ class ResidualGame(PrintObject):
         self.bc_b = 0.5 #beta
         self.backtracking_max_iter = 20
 
+        # NOTE this is not implemented in cpp
+        self.dynamics_residual_weight = 1.0
+
+        # solver variables
+        self.frame_vec = []
+        self.profiler = TimeUtil(False)
+        #self.print_debug_enable()
+        self.tolerance = 5e-4
+
     def setup(self):
-        # subclass responsible for loading cpp/eigen module
+        # subclass responsible for loading specific cpp/eigen module
         # and setting x0
+        self.print_info(" ---------------------------------------------------------------------------- ")
         self.print_info(" subclass did not define custom setup function, cpp module likely unavailable ")
+        self.print_info(" ---------------------------------------------------------------------------- ")
         # example usage:
         '''
         if (self.USE_CPP):
@@ -76,15 +87,20 @@ class ResidualGame(PrintObject):
         '''
 
     def solve(self,save_gif=False,visualize=False,animate=False):
+        ''' main entry point for solver, will call cpp version if available, will fallback to python if cpp does not provide a solution,
+            I forgot why I did the fallback
+        '''
+        #TODO does cpp lscg fallback to cpp sparseQR?
+
         self.print_ok(f'USE_CPP: {self.USE_CPP}')
         self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')
 
         N = self.N; T = self.T; n = self.n; m = self.m
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
-        self.print_debug(f'dim y: {(T*N*n) +(T*N*m)+ (N*T*n)+(T*N*N)}')
+        self.print_debug(f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}')
 
         u_ref = self.guess
-        # x_1 .. x_T, NOTE the array index is offset from the math notation
+        # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.rollout(self.x0,u_ref)
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
@@ -93,6 +109,7 @@ class ResidualGame(PrintObject):
         t0 = time()
         t = self.profiler
         for i in range(self.iterations):
+            self.print_info(f'------ iter {i+1} ------')
             t.s()
             if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
                 t.s('cpp step')
@@ -103,7 +120,9 @@ class ResidualGame(PrintObject):
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
+                        self.print_warning('-----------------------------------')
                         self.print_warning('LSCG failed, falling back to python')
+                        self.print_warning('-----------------------------------')
                         x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
                 except StopIteration:
                     self.print_ok('stopping criterion met!')
@@ -116,20 +135,17 @@ class ResidualGame(PrintObject):
                 except StopIteration:
                     self.print_ok('stopping criterion met!')
                     break
+            # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
             t.e()
-            self.print_info(f'------ iter {i} ------')
 
         t_solve = time()-t0
-        self.print_info(f'total solve time: {t_solve}')
+        self.print_info(f'Total solve time: {t_solve}s')
+        if (i == self.iterations-1):
+            self.print_warning(f' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
-        '''
-        self.print_info(full_x_ref[:,0,:])
-        self.print_info(u_ref[:,0,:])
-        breakpoint()
-        '''
         return u_ref, full_x_ref
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
@@ -156,54 +172,42 @@ class ResidualGame(PrintObject):
             self.print_debug(f't: Dr numerical {time()-t0}')
             self.print_debug(np.linalg.norm(Dr-Dr_alt))
             assert(np.linalg.norm(Dr-Dr_alt)<1e-4)
+
         # find newton direction, dense matrix
         '''
         t.s('lstsq')
         dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
         t.e('lstsq')
         '''
-        # find newton direction, Sparse
+        # find newton direction, Sparse lsqr
         '''
         t.s('sparse-lstsq')
         sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
         dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
         t.e('sparse-lstsq')
         '''
-        # find newton direction, remove zero col/rows first, then Sparse
+
+        # remove zero col/rows first, then use Sparse lsqr
+        # TODO what does the matrix looks like? how sparse?
         t.s('nonzero reduction')
         nonzero_rows = np.nonzero(np.sum(np.abs(Dr),axis=1))[0]
         nonzero_cols = np.nonzero(np.sum(np.abs(Dr),axis=0))[0]
         reduced_Dr = Dr[nonzero_rows,:][:,nonzero_cols]
         t.e('nonzero reduction')
 
-        # use python's sparse lsqr
+        # use python's Sparse lsqr
         t.s('reduced-sparse-lstsq')
         sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
         reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[nonzero_rows])[:4]
         t.e('reduced-sparse-lstsq')
-        self.print_debug(f'iter: {istop}, {itn}')
+        self.print_debug(f'Solver status: {"exact solution" if istop==1 else "Least Square Solution"}, iterations: {itn}')
         # use cpp's sparse QR
-
-        '''
-        # DEBUG TODO can we focus on dLL/dx, dLL/du?
-        indices = []
-        index = 0
-        for i in range(self.N):
-            indices.append( range(index, index+dim_x+dim_u) )
-            index += dim_x + dim_u + n*T
-            index += np.sum(h_plus_mask[:,i])
-        indices = list(chain.from_iterable(indices))
-        new_Dr = Dr[indices,:]
-        sparse_Dr = scipy.sparse.csc_matrix(new_Dr, dtype=float)
-        alt_dy, _, _, small_r = scipy.sparse.linalg.lsqr(sparse_Dr,-r0[indices])[:4]
-        self.print_debug(f'new norm: {small_r}')
-        '''
-
         '''
         t.s('cpp SparseQR')
         reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
         t.e('cpp SparseQR')
         '''
+
         # use cpp's lscg (fastest)
         '''
         if (self.USE_CPP):
@@ -211,98 +215,74 @@ class ResidualGame(PrintObject):
             reduced_dy = reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
             t.e('cpp lscg')
         '''
-        # DEBUG - compare residual of different methods
-        '''
-        r0_norm = np.linalg.norm(r0[nonzero_rows])
-        res =     np.linalg.norm(reduced_Dr @ reduced_dy.reshape(-1,1) + r0[nonzero_rows])
-        res_sqr = np.linalg.norm(reduced_Dr @ reduced_dy_sqr + r0[nonzero_rows])
-        res_lscg = np.linalg.norm(reduced_Dr @ reduced_dy_lscg + r0[nonzero_rows])
-        print(r0_norm,res,res_sqr,res_lscg)
-        '''
+
         dy = np.zeros_like(y0)
         dy[nonzero_cols] = reduced_dy.flatten()
 
-        # DEBUG - statistics on nonzero entries
-        '''
+        # FIXME DEBUG - statistics on nonzero entries
         self.print_debug(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
         self.print_debug(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
         total_entries = Dr.shape[0]*Dr.shape[1]
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
         self.print_debug(f' nonzero entries:  {nonzero_entries/total_entries}')
-        '''
-        # TODO DEBUG does taking a full step resolve the h>0?
-        # what's the expected posterior
-        self.print_debug(f'expected posterior norm {normr}')
-        h_indices = []
-        index = 0
-        for i in range(self.N):
-            index += n*T
-            index += m*T
-            index += n*T
-            h_indices.append( range(index, index+np.sum(h_plus_mask[:,i])) )
-            index += np.sum(h_plus_mask[:,i])
-        h_indices = list(chain.from_iterable(h_indices))
-        apriori_h_res = np.linalg.norm(r0[h_indices], ord=1)
-        posterior_h_res = np.linalg.norm(Dr[h_indices,:] @ dy + r0[h_indices], ord=1)
-        self.print_debug(f'expected apriori h res: {apriori_h_res}, posterior: {posterior_h_res}')
 
         # projection onto dynamics null space
         # extract control constraint F
         # assert that x,u are separated from the rest
         # F @ [x,u] = Fx @ x + Fu @ u= -r_F
-        # NOTE this is pretty expensive, extremely expensive
-        index = 0
-        for i in range(self.N):
-            index += T*n + T*m
-            # x: T*N*n
-            x_indices = list(chain.from_iterable([list(range(t*N*n+i*n,t*N*n+(i+1)*n)) for t in range(T)]))
-            # u: T*N*m
-            u_indices = list(chain.from_iterable([list(range(dim_x+t*N*m+i*m,dim_x+t*N*m+(i+1)*m)) for t in range(T)]))
+        # NOTE this is extremely expensive, only do this if we can't obtain an exact solution 
+        if (istop == 2):
+            index = 0
+            for i in range(self.N):
+                index += T*n + T*m
+                # x: T*N*n
+                x_indices = list(chain.from_iterable([list(range(t*N*n+i*n,t*N*n+(i+1)*n)) for t in range(T)]))
+                # u: T*N*m
+                u_indices = list(chain.from_iterable([list(range(dim_x+t*N*m+i*m,dim_x+t*N*m+(i+1)*m)) for t in range(T)]))
 
-            Fx = Dr[index:index+n*T,x_indices]
-            Fu = Dr[index:index+n*T,u_indices]
-            dx_i = dy[x_indices].flatten()
-            du_i = dy[u_indices].flatten()
-            F = np.hstack([Fx, Fu])
-            z = np.hstack([dx_i,du_i])[:,np.newaxis]
-            FFT_inv = np.linalg.inv( F @ F.T) # TODO add regularization if this in singular
-            z_null = (np.eye(z.shape[0]) - F.T @ FFT_inv @ F) @ z
-            dx_i_after = z_null[:dx_i.shape[0],0]
-            du_i_after = z_null[dx_i.shape[0]:,0]
+                Fx = Dr[index:index+n*T,x_indices]
+                Fu = Dr[index:index+n*T,u_indices]
+                dx_i = dy[x_indices].flatten()
+                du_i = dy[u_indices].flatten()
+                F = np.hstack([Fx, Fu])
+                z = np.hstack([dx_i,du_i])[:,np.newaxis]
+                FFT_inv = np.linalg.inv( F @ F.T) # TODO add regularization if this in singular, or use pseudoinverse
+                z_null = (np.eye(z.shape[0]) - F.T @ FFT_inv @ F) @ z
+                dx_i_after = z_null[:dx_i.shape[0],0]
+                du_i_after = z_null[dx_i.shape[0]:,0]
 
-            apriori = Fu @ du_i + Fx @ dx_i
-            posterior = Fu @ du_i_after + Fx @ dx_i_after
-            #self.print_debug(f'dynamics correction residuals {np.linalg.norm(apriori)} -> {np.linalg.norm(posterior)}')
-            #self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du_i_after)}')
-            #self.print_debug(f'dx change {np.linalg.norm(dy[x_indices]-dx_i_after)}')
-            dy[u_indices] = du_i_after
-            dy[x_indices] = dx_i_after
-            index += n*T + np.sum(h_plus_mask[:,i])
+                apriori = Fu @ du_i + Fx @ dx_i
+                posterior = Fu @ du_i_after + Fx @ dx_i_after
+                #self.print_debug(f'dynamics correction residuals {np.linalg.norm(apriori)} -> {np.linalg.norm(posterior)}')
+                #self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du_i_after)}')
+                #self.print_debug(f'dx change {np.linalg.norm(dy[x_indices]-dx_i_after)}')
+                dy[u_indices] = du_i_after
+                dy[x_indices] = dx_i_after
+                index += n*T + np.sum(h_plus_mask[:,i])
 
         # Backtracking line search
         t.s('line search')
-        before_h_res = self.getCollisionResidual(x_ref) # NOTE optimize
+        apriori_h_res = self.getCollisionResidual(x_ref) # NOTE optimize?
         # backtracking line search
         step = 1.0 # step size
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
         for i in range(self.backtracking_max_iter):
             y_new = y0+step*dy
-            # NOTE testing change: rollout in line search
-            # FIXME do we still need this? maybe for nonlinear dynamics
             x_new,u_new,_,_ = split_y(y_new)
+            # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
             #x_new = self.rollout(self.x0, u_new)
             #y_new[:dim_x] = x_new.flatten()
-            search_h_res = self.getCollisionResidual(x_new) # NOTE optimize
+            search_h_res = self.getCollisionResidual(x_new)
             r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1-self.bc_a*step)*r0_norm or search_h_res > before_h_res):
+            if (r_t_norm > (1-self.bc_a*step)*r0_norm or search_h_res > apriori_h_res):
                 step *= self.bc_b
             else:
                 break
         t.e('line search')
 
-        # NOTE debug
+        # FIXME debug
         new_x_ref,new_u_ref,new_lambda,new_mu = split_y(y_new)
         after_h_res = self.getCollisionResidual(new_x_ref)
         self.print_debug(f'after dyn correction before h_res = {before_h_res} -> after {after_h_res}')
@@ -310,6 +290,7 @@ class ResidualGame(PrintObject):
         index = 0
         h_plus_violations = 0
 
+        # FIXME debug
         self.print_debug(' r_0 breakdown ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
@@ -340,7 +321,7 @@ class ResidualGame(PrintObject):
             self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.8f}, h_plus {np.sum(h_plus_mask[:,i])}')
         self.rho = original_rho
 
-        # NOTE debug, compare rollout vs current x_ref
+        # FIXME debug, compare rollout vs current x_ref
         try:
             diff = self.rollout(self.x0, new_u_ref) - new_x_ref
             dyn_res = np.linalg.norm(diff)
@@ -348,8 +329,6 @@ class ResidualGame(PrintObject):
             r_diff = np.abs(self.old_rt - r0)>1e-8
         except AttributeError:
             pass
-
-        # FIXME check agent 1
         self.old_rt = r_t.copy()
         self.old_y = y_new
 
@@ -360,7 +339,7 @@ class ResidualGame(PrintObject):
         self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
 
         # stopping criterion
-        if (np.abs(r_t_norm - r0_norm)<self.final_resolution and self.violations<self.final_resolution):
+        if (np.abs(r_t_norm)<self.tolerance and self.violations == 0):
             raise StopIteration
 
         self.rho *= self.rho_b
@@ -539,13 +518,13 @@ class ResidualGame(PrintObject):
         ''' dL/dx_i_k+1 '''
         return -lamda_k[i].T
 
-    # NOTE unused/deprecated, only needed in dLLi_dxj, which is deprecated
+    # NOTE obsolete only needed in dLLi_dxj, which is obsolete
     def dL_dx_jk(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i,j):
         assert (i!=j)
         return  self.dJi_dxj(x[k-1],u[k,i],i,j) + ( mu_k[i,j] * ( self.dh_dxj(x_k[i], x_k[j]) ) if h_k_plus_mask[i,j] else \
             -1/self.rho*min(1/self.h(x_k[i], x_k[j]),1e20) * self.dh_dxi(x_k[i], x_k[j]) )
 
-    # NOTE unused, usually dJi_du is called directly
+    # NOTE deprecated, usually dJi_du is called directly
     def dL_du(self,x_k, u_k_i, x_k1_i, h_k_plus_mask,lamda_k, mu_k,i):
         val = self.dJi_du(x_k,u_k_i,i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i,i)
         return val
@@ -593,7 +572,7 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return val
 
-    # NOTE deprecated, now we use dLLi_dxi
+    # NOTE obsolete, now we use dLLi_dxi
     def dLLi_dx(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -657,7 +636,7 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return der
 
-    # NOTE deprecated
+    # NOTE obsolete
     def dLLi_du(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_du([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -697,7 +676,7 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return dLL_dxi_dmu
 
-    # NOTE deprecated, use dLLi_dxi_dmu now
+    # NOTE obsolete, use dLLi_dxi_dmu now
     def dLLi_dx_dmu(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dx_dmu([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mmm for mmm in mu],i)
@@ -985,7 +964,7 @@ class ResidualGame(PrintObject):
                 breakpoint()
         return dLL_dxi_dx
 
-    # NOTE obselete
+    # NOTE obsolete
     def dLLi_dxdx(self,x,u,h_plus_mask,lamda,mu,i):
         if (self.USE_CPP):
             return self.cpp.dLLi_dxdx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
@@ -1327,20 +1306,28 @@ class ResidualGame(PrintObject):
         return self.dJi_dxj_dxj(x_T,np.zeros(self.m),i,j)
 
     # step cost function
+    @abstractmethod
     def J(self,x_k,u_k_i,i):
         return 0
+    @abstractmethod
     def dJi_dxi(self,x_k,u_k_i,i):
         return np.zeros((1,self.n))
+    @abstractmethod
     def dJi_dxj(self,x_k,u_k_i,i,j):
         return np.zeros((1,self.n))
+    @abstractmethod
     def dJi_dxi_dxi(self,x_k,u_k_i,i):
         return np.zeros((self.n,self.n))
+    @abstractmethod
     def dJi_dxi_dxj(self,x_k,u_k_i,i,j):
         return np.zeros((self.n,self.n))
+    @abstractmethod
     def dJi_dxj_dxj(self,x_k,u_k_i,i,j):
         return np.zeros((self.n,self.n))
+    @abstractmethod
     def dJi_du(self,x_k,u_k_i,i):
         return np.zeros((1,self.m))
+    @abstractmethod
     def dJi_dudu(self, x_k, u_k_i, i):
         return np.zeros((self.m,self.m))
 
