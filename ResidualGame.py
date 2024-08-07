@@ -49,7 +49,7 @@ class ResidualGame(PrintObject,ABC):
         self.init()
 
         # max iterations
-        self.iterations = 10
+        self.iterations = 50
         self.guess = np.zeros((self.T,self.N,self.m))
 
 
@@ -285,7 +285,7 @@ class ResidualGame(PrintObject,ABC):
         # FIXME debug
         new_x_ref,new_u_ref,new_lambda,new_mu = split_y(y_new)
         after_h_res = self.getCollisionResidual(new_x_ref)
-        self.print_debug(f'after dyn correction before h_res = {before_h_res} -> after {after_h_res}')
+        self.print_debug(f'after dyn correction before h_res = {apriori_h_res} -> after {after_h_res}')
 
         index = 0
         h_plus_violations = 0
@@ -322,6 +322,7 @@ class ResidualGame(PrintObject,ABC):
         self.rho = original_rho
 
         # FIXME debug, compare rollout vs current x_ref
+        '''
         try:
             diff = self.rollout(self.x0, new_u_ref) - new_x_ref
             dyn_res = np.linalg.norm(diff)
@@ -331,6 +332,7 @@ class ResidualGame(PrintObject,ABC):
             pass
         self.old_rt = r_t.copy()
         self.old_y = y_new
+        '''
 
 
         self.residuals = r_t_norm
