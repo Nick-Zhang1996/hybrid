@@ -48,6 +48,9 @@ class CarMergeKinematicBicycle(ResidualGame):
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
 
+        self.tolerance = 1e-16
+        self.iterations = 100
+
         # dimension of x and u for single agent
         self.n = 4
         self.m = 2

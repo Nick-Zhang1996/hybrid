@@ -72,6 +72,7 @@ class ResidualGame(PrintObject,ABC):
         self.profiler = TimeUtil(False)
         #self.print_debug_enable()
         self.tolerance = 5e-4
+        self.residual_vec = []
 
     def setup(self):
         # subclass responsible for loading specific cpp/eigen module
@@ -335,10 +336,12 @@ class ResidualGame(PrintObject,ABC):
         '''
 
 
-        self.residuals = r_t_norm
-        self.violations = np.sum(h_plus_mask)/2
+        # FIXME debug
+        self.residual_vec.append(r0_norm)
 
-        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
+        violations = np.sum(h_plus_mask)/2
+
+        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {violations}')
 
         # stopping criterion
         if (np.abs(r_t_norm)<self.tolerance and self.violations == 0):
@@ -388,6 +391,12 @@ class ResidualGame(PrintObject,ABC):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
             self.print_debug(f'GIf saved to {gif_filename}')
+        plt.plot(self.residual_vec,'*-')
+        plt.yscale('log')
+        plt.xlabel('Iteration')
+        plt.ylabel('Residual (exp)')
+        plt.show()
+        breakpoint()
 
     def resolveLogname(self,logPrefix='run'):
         # setup log file
