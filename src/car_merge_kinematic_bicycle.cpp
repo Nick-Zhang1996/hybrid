@@ -13,7 +13,7 @@ PYBIND11_MODULE(car_merge_kinematic_bicycle,m)
 {
   m.doc() = "pybind11 interface for c++/Eigen particle_game";
   py::class_<ClassName>(m,"CarMergeKinematicBicycle")
-      .def(py::init<int,int, Scalar,Scalar,Scalar,Scalar,Scalar, Matrix,Matrix,Matrix,Matrix,Matrix>())
+      .def(py::init<int,int, Scalar,Scalar,Scalar,Scalar,Scalar, Scalar, int, Matrix,Matrix,Matrix,Matrix,Matrix>())
       .def("set_x0", &ClassName::set_x0)
       .def("post_step_update", &ClassName::post_step_update)
 

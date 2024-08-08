@@ -82,7 +82,7 @@ class UnstructuredDriving(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            self.cpp = cpp_UnstructuredDriving(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
+            self.cpp = cpp_UnstructuredDriving(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh, self.target_y)
             self.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):

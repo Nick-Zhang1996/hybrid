@@ -43,14 +43,17 @@ class ResidualGame {
     protected:
         int N,T;
         Scalar dt,rho,rho_b,bc_a,bc_b;
+        Scalar tolerance;
+        int backtracking_max_iter;
         Matrix x0;
         Profiler<false> profiler;
 
     public:
         ResidualGame(const int _N, const int _T,
-                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b):
+                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter):
             N(_N), T(_T),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
+            tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
             x0(),profiler() {
         }
 
@@ -654,6 +657,21 @@ class ResidualGame {
             return h_plus_mask;
         }
 
+        Scalar getCollisionResidual(const std::vector<Matrix>& x) {
+            Scalar h_res = 0;
+            for (int k = 1; k < T+1; ++k) {
+                for (int i = 0; i < N; ++i) {
+                    for (int j = i + 1; j < N; ++j) {
+                        Scalar this_h = h(x[k-1].row(i).transpose(), x[k-1].row(j).transpose());
+                        if (this_h > 0){
+                            h_res += this_h;
+                        }
+                    }
+                }
+            }
+            return h_res;
+        }
+
         Matrix r(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -801,8 +819,9 @@ class ResidualGame {
             profiler.s("line search");
             Scalar step = 1.0; // step size
             Scalar r0_norm = r0.norm();
-
             Scalar rt_norm = r0_norm;
+            Scalar apriori_h_res = getCollisionResidual(x);
+
             auto split_y = [&](const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const Matrix& dy, Scalar my_step){
                 const auto x_size = x.size();
                 std::vector<Matrix> xx(x_size);
@@ -834,13 +853,21 @@ class ResidualGame {
             };
 
 
-            // TODO update to new python version
-            for (int i=0; i<10; i++){
-                rt_norm = r_t_norm(step);
+            bool flag_no_step = true;
+            for (int i=0; i<backtracking_max_iter; i++){
+                //rt_norm = r_t_norm(step);
+                auto y_tuple = split_y(x, u, lamda, mu, dy, step);
+                rt_norm = r(std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple), h_plus_mask).norm();
                 if (rt_norm > (1-bc_a*step)*r0_norm){
                     step *= bc_b;
                 } else {
-                    break;
+                    Scalar search_h_res = getCollisionResidual(std::get<0>(y_tuple));
+                    if (search_h_res > apriori_h_res){
+                        step *= bc_b;
+                    } else {
+                        flag_no_step = false;
+                        break;
+                    }
                 }
             }
             profiler.e("line search");
@@ -848,10 +875,12 @@ class ResidualGame {
             profiler.e();
             // stopping criteria
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
-            if ( abs(rt_norm - r0_norm) < 5e-4 and h_plus_sum == 0){
+            if ( abs(rt_norm) < tolerance and h_plus_sum == 0){
                 // stopping
                 throw pybind11::stop_iteration("stopping criteria met");
                 //return std::vector<std::vector<Matrix>>();
+            } else if ( flag_no_step){
+                throw pybind11::stop_iteration("iteration not making progress");
             } else {
                 auto xx = std::get<0>(y_tuple);
                 auto uu = std::get<1>(y_tuple);

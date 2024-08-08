@@ -118,11 +118,13 @@ class ResidualGame(PrintObject,ABC):
                     try:
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+                        '''
                         # FIXME debug
                         h_plus_mask = self.getHplusMask(x_ref)
                         r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
                         r0_norm = np.linalg.norm(r0)
                         self.print_debug(f' residual = {r0_norm}')
+                        '''
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
