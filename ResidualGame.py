@@ -125,16 +125,16 @@ class ResidualGame(PrintObject,ABC):
                         self.print_warning('LSCG failed, falling back to python')
                         self.print_warning('-----------------------------------')
                         x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
-                except StopIteration:
-                    self.print_ok('stopping criterion met!')
+                except StopIteration as e:
+                    self.print_ok(e)
                     break
                 finally:
                     t.e('cpp step')
             else:
                 try:
                     x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
-                except StopIteration:
-                    self.print_ok('stopping criterion met!')
+                except StopIteration as e:
+                    self.print_ok(e)
                     break
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
@@ -189,12 +189,23 @@ class ResidualGame(PrintObject,ABC):
         '''
 
         # remove zero col/rows first, then use Sparse lsqr
-        # TODO what does the matrix looks like? how sparse?
         t.s('nonzero reduction')
         nonzero_rows = np.nonzero(np.sum(np.abs(Dr),axis=1))[0]
         nonzero_cols = np.nonzero(np.sum(np.abs(Dr),axis=0))[0]
         reduced_Dr = Dr[nonzero_rows,:][:,nonzero_cols]
         t.e('nonzero reduction')
+        '''
+        # NOTE debug heatmap
+        abs_matrix = np.abs(reduced_Dr)
+        # Plotting the heatmap
+        plt.imshow(abs_matrix, cmap='viridis', interpolation='none')
+        # Adding a color bar
+        plt.colorbar(label='Absolute Value')
+        plt.title('Heatmap of Matrix Values')
+        plt.xlabel('Column Index')
+        plt.ylabel('Row Index')
+        plt.show()
+        '''
 
         # use python's Sparse lsqr
         t.s('reduced-sparse-lstsq')
@@ -268,6 +279,7 @@ class ResidualGame(PrintObject,ABC):
         step = 1.0 # step size
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
+        flag_no_step = True
         for i in range(self.backtracking_max_iter):
             y_new = y0+step*dy
             x_new,u_new,_,_ = split_y(y_new)
@@ -280,13 +292,16 @@ class ResidualGame(PrintObject,ABC):
             if (r_t_norm > (1-self.bc_a*step)*r0_norm or search_h_res > apriori_h_res):
                 step *= self.bc_b
             else:
+                flag_no_step = False
                 break
         t.e('line search')
 
-        # FIXME debug
+        '''
+        # debug
         new_x_ref,new_u_ref,new_lambda,new_mu = split_y(y_new)
         after_h_res = self.getCollisionResidual(new_x_ref)
         self.print_debug(f'after dyn correction before h_res = {apriori_h_res} -> after {after_h_res}')
+        '''
 
         index = 0
         h_plus_violations = 0
@@ -338,14 +353,16 @@ class ResidualGame(PrintObject,ABC):
 
         # FIXME debug
         self.residual_vec.append(r0_norm)
-
         violations = np.sum(h_plus_mask)/2
+        expected_posterior_norm = np.linalg.norm(r0 + Dr @ dy)
 
-        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {violations}')
+        self.print_debug(f'r0_norm {r0_norm} expected full step {expected_posterior_norm} rt_norm {r_t_norm}, h>0 {violations}')
 
         # stopping criterion
         if (np.abs(r_t_norm)<self.tolerance and self.violations == 0):
-            raise StopIteration
+            raise StopIteration('stopping criterion met!')
+        if (flag_no_step):
+            raise StopIteration('iteration not making progress')
 
         self.rho *= self.rho_b
 
