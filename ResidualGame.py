@@ -118,11 +118,16 @@ class ResidualGame(PrintObject,ABC):
                     try:
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+                        # FIXME debug
+                        h_plus_mask = self.getHplusMask(x_ref)
+                        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
+                        r0_norm = np.linalg.norm(r0)
+                        self.print_debug(f' residual = {r0_norm}')
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
                         self.print_warning('-----------------------------------')
-                        self.print_warning('LSCG failed, falling back to python')
+                        self.print_warning(f'cpp.step() error: {e}')
                         self.print_warning('-----------------------------------')
                         x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
                 except StopIteration as e:
@@ -359,7 +364,7 @@ class ResidualGame(PrintObject,ABC):
         self.print_debug(f'r0_norm {r0_norm} expected full step {expected_posterior_norm} rt_norm {r_t_norm}, h>0 {violations}')
 
         # stopping criterion
-        if (np.abs(r_t_norm)<self.tolerance and self.violations == 0):
+        if (np.abs(r_t_norm)<self.tolerance and violations == 0):
             raise StopIteration('stopping criterion met!')
         if (flag_no_step):
             raise StopIteration('iteration not making progress')

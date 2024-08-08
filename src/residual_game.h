@@ -84,8 +84,36 @@ class ResidualGame {
         //u_i_k: 0..T-1, T*N*m
         //lamda_i_k: 0..T-1 T*N*n
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
-        Matrix dLLi_dx(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
+        Matrix dLLi_dxi(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
             // TODO is this the best approach?
+            Matrix der(1,T*n);
+            der.setZero();
+            // dLLi_dxi
+            for (int k=1; k<T; k++){
+                der.template block<1,n>(0,(k-1)*n) = dL_dx_ik(x[k-1],u[k,i],x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
+            }
+            // dLLi_dxi_T
+            der.template block<1,n>(0,(T-1)*n) = -lamda[T-1].row(i) + dJi_dxi(x[T-1],Matrix::Zero(m,1),i);
+            for (int j=0; j<N; j++){
+                if (i==j){continue;}
+                if (h_plus_mask[T-1](i,j)){
+                der.template block<1,n>(0,(T-1)*n) +=  mu[T-1](i,j) *  dh_dxi(x[T-1].row(i).transpose(), x[T-1].row(j).transpose());
+                } else {
+                der.template block<1,n>(0,(T-1)*n) += -1/rho*min(1.0/h(x[T-1].row(i).transpose(), x[T-1].row(j).transpose()),1e10)*dh_dxi(x[T-1].row(i).transpose(),x[T-1].row(j).transpose());
+                }
+            }
+            return der;
+        }
+
+        // for 3d array, first dimension is list() -> std::vector
+        //x_i_k: 1..T, T*N*n  NOTE starts from 1
+        //u_i_k: 0..T-1, T*N*m
+        //lamda_i_k: 0..T-1 T*N*n
+        //mu_k_i_j: 1..T T*N*N NOTE starts from 1
+        // TODO obsolete
+        Matrix dLLi_dx(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
+            throw std::runtime_error("obsolete function called");
+
             Matrix der(1,T*N*n);
             der.setZero();
             // dLLi_dxi
@@ -125,8 +153,24 @@ class ResidualGame {
             return der;
         }
 
-        // TODO remember to set x0
+        Matrix dLLi_dui(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            Matrix der(1, T * m); // Initialize derivative vector as row vector
+            der.setZero(); // Ensure all items are properly zero-initialized
+
+            // dLLi_dui_0
+            der.template block<1,m>(0,  0) = dJi_du(x0, u[0].row(i).transpose(), i) + lamda[0].row(i) * df_du(x0.row(i).transpose(), u[0].row(i).transpose(), i);
+
+            // dLLi_dui_k
+            for (int k = 1; k < T; ++k) {
+                der.template block<1,m>(0, k * m) = dJi_du(x[k - 1], u[k].row(i).transpose(), i) + lamda[k].row(i) * df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i);
+            }
+
+            return der;
+        }
+
+        // TODO obsolete
         Matrix dLLi_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            throw std::runtime_error("obsolete function called");
             Matrix der(1, T * N* m); // Initialize derivative vector as row vector
             der.setZero(); // Ensure all items are properly zero-initialized
 
@@ -219,8 +263,80 @@ class ResidualGame {
             return dhdx;
         }
 
+        Matrix dLLi_dxi_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            //cout << "dLLi_dxdx " << endl;
+            Matrix dLL_dxi_dx = Matrix::Zero(T*n, T*N*n);
 
+            auto submtx = [&](int k, int j) {
+                return dLL_dxi_dx.template block<n,n>((k - 1) * n, (k - 1) * N * n + j * n);
+            };
+
+            // dJi_dxi_dxi
+            //cout << "dJi_dxi_dxi " << endl;
+            for (int k = 1; k < T; ++k) {
+                auto mtx = submtx(k, i);
+                mtx = dJi_dxi_dxi(x[k - 1], u[k].row(i).transpose(), i);
+                for (int j=0; j<N; ++j){
+                    if (i==j){continue;}
+                    if (h_plus_mask[k-1](i,j)){
+                        mtx += mu[k - 1](i,j) * dh_dxi_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    } else {
+                        mtx += dBh_dxi_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    }
+                }
+            }
+
+            // dJi_dxi_dxi, k = T
+            //cout << "dJi_dxi_dxi k=T " << endl;
+            auto mtx = submtx(T, i);
+            mtx = dJi_dxi_dxi(x[T - 1], Matrix::Zero(m,1), i);
+            for (int j=0; j<N; ++j){
+                if (i==j){continue;}
+                if (h_plus_mask[T-1](i,j)){
+                    mtx += mu[T - 1](i,j) * dh_dxi_dxi(x[T - 1].row(i).transpose(), x[T - 1].row(j).transpose());
+                } else {
+                    mtx += dBh_dxi_dxi(x[T - 1].row(i).transpose(), x[T - 1].row(j).transpose());
+                }
+            }
+
+            // dJi_dxi_dxj
+            //cout << "dJi_dxi_dxj " << endl;
+            for (int k = 1; k < T; ++k) {
+                for (int j = 0; j < N; ++j) {
+                    if (i == j) {
+                        continue;
+                    }
+                    Matrix val = Matrix::Zero(n, n);
+                    if (h_plus_mask[k-1](i,j)){
+                        val = dJi_dxi_dxj(x[k-1], u[k].row(i).transpose(), i, j) + mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    } else {
+                        val = dJi_dxi_dxj(x[k-1], u[k].row(i).transpose(), i, j) + dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                    }
+                    submtx(k,j) = val;
+                }
+            }
+
+            //cout << "dJi_dxi_dxj k=T" << endl;
+            const int k = T;
+            for (int j = 0; j < N; ++j) {
+                if (i == j) {
+                    continue;
+                }
+                Matrix val = Matrix::Zero(n, n);
+                if (h_plus_mask[k-1](i,j)){
+                    val = dJi_dxi_dxj(x[k-1], Matrix::Zero(m,1), i, j) + mu[k - 1](i,j) * dh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                } else {
+                    val = dJi_dxi_dxj(x[k-1], Matrix::Zero(m,1), i, j) + dBh_dxi_dxj(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                }
+                submtx(k,j) = val;
+            }
+            return dLL_dxi_dx;
+        }
+
+
+        // TODO obsolete
         Matrix dLLi_dxdx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
+            throw std::runtime_error("obsolete function called");
             //cout << "dLLi_dxdx " << endl;
             Matrix dLL_dxdx = Matrix::Zero(T*N*n, T*N*n);
 
@@ -296,7 +412,30 @@ class ResidualGame {
             return dLL_dxdx;
         }
 
+        Matrix dLLi_dxi_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, int i) {
+            // Calculate dimensions
+            const int dim_x = T * N * n;
+            const int dim_u = T * N * m;
+            const int dim_mu = T * N * N;
+
+            // Initialize dLL_dx_dmu matrix
+            Matrix dLL_dxi_dmu = Matrix::Zero(T*n, dim_mu);
+
+            for (int k = 1; k < T+1; ++k) {
+                for (int j=0; j<N; j++) {
+                    if (h_plus_mask[k-1](i,j)){
+                        Matrix dLLi_dxki_dmuijk = dh_dxi(x[k - 1].row(i).transpose(), x[k - 1].row(j).transpose());
+                        dLL_dxi_dmu.template block<n,1>((k - 1) * n, (k - 1) * N * N + i * N + j) = dLLi_dxki_dmuijk.transpose();
+                    }
+                }
+            }
+
+            return dLL_dxi_dmu;
+        }
+
+        // TODO obsolete
         Matrix dLLi_dx_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, int i) {
+            throw std::runtime_error("obsolete function called");
             // Calculate dimensions
             const int dim_x = T * N * n;
             const int dim_u = T * N * m;
@@ -320,6 +459,8 @@ class ResidualGame {
             return dLL_dx_dmu;
         }
 
+
+        // fill-in style
         template<typename Derived>
         void dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             int dim_x = N * T * n;
@@ -330,9 +471,9 @@ class ResidualGame {
 
             for (int i = 0; i < N; ++i) {
                 // Calculate dLL_dxdx
-                Matrix dLL_dxdx = dLLi_dxdx(x, u, h_plus_mask, lamda, mu, i);
-                drdx.block(index, 0, dim_x, dim_x) = dLL_dxdx;
-                index += dim_x + dim_u;
+                Matrix dLL_dxi_dx = dLLi_dxi_dx(x, u, h_plus_mask, lamda, mu, i);
+                drdx.block(index, 0, T * n, dim_x) = dLL_dxi_dx;
+                index += T*n + T*m;
 
                 Matrix dF0dx = dF0_dx(x, u, i);
                 drdx.block(index, 0, n, dim_x) = dF0dx;
@@ -360,6 +501,7 @@ class ResidualGame {
             }
         }
 
+        // copy style
         Matrix dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = N * T * n;
@@ -368,7 +510,7 @@ class ResidualGame {
             for (const auto& mask: h_plus_mask){
                 h_plus_sum += mask.count();
             }
-            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             // Initialize dr_dx matrix
             Matrix drdx = Matrix::Zero(dim_r, dim_x);
@@ -379,20 +521,18 @@ class ResidualGame {
         template<typename Derived>
         void dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdu = const_cast<MatrixBase<Derived>&>(mtx);
-            int dim_x = N * T * n;
-            int dim_u = N * T * m;
             int index = 0;
             for (int i = 0; i < N; ++i) {
-                index += dim_x;
+                index += T*n;
                 int k = 0;
                 Matrix dLL_duik_duik = dJi_dudu(x0,u[k].row(i).transpose(),i);
-                drdu.template block<m,m>(index + k * N * m + i * m, k * N * m + i * m) = dLL_duik_duik;
+                drdu.template block<m,m>(index + k * m, k * N * m + i * m) = dLL_duik_duik;
                 for (int k = 1; k < T; ++k) {
                     // dLL_duik_duik
                     Matrix dLL_duik_duik = dJi_dudu(x[k-1],u[k].row(i).transpose(),i);
-                    drdu.template block<m,m>(index + k * N * m + i * m, k * N * m + i * m) = dLL_duik_duik;
+                    drdu.template block<m,m>(index + k * m, k * N * m + i * m) = dLL_duik_duik;
                 }
-                index += dim_u;
+                index += T*m;
 
                 drdu.template block<n,m>(index + 0 * n, 0 * N * m + i * m) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i);
                 for (int k = 1; k < T; ++k) {
@@ -409,13 +549,12 @@ class ResidualGame {
 
         Matrix dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
-            int dim_x = N * T * n;
             int dim_u = T * N * m;
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
-            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
             Matrix drdu = Matrix::Zero(dim_r, dim_u);
             dr_du(x, u, lamda, mu, h_plus_mask, drdu);
             return drdu;
@@ -424,25 +563,23 @@ class ResidualGame {
         template<typename Derived>
         void dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdlamda = const_cast<MatrixBase<Derived>&>(mtx);
-            int dim_x = T * N * n;
-            int dim_u = T * N * m;
             int index = 0;
             for (int i = 0; i < N; ++i) {
                 for (int k = 1; k < T; ++k) {
                     // dLLi_dxki_dlamda_ki
-                    drdlamda.template block<n,n>(index + (k - 1) * N * n + i * n, k * N * n + i * n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
+                    drdlamda.template block<n,n>(index + (k - 1) * n, k * N * n + i * n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
                     // dLLi_dxki_dlamda_k-1,i
-                    drdlamda.template block<n,n>(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
+                    drdlamda.template block<n,n>(index + (k - 1) * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
                 }
 
                 const int k = T;
-                drdlamda.template block<n,n>(index + (k - 1) * N * n + i * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
+                drdlamda.template block<n,n>(index + (k - 1) * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
                 // skip dLL_dx, index now points at dLLi_du
-                index += dim_x;
+                index += T * n;
 
-                drdlamda.template block<m,n>(index + 0 * N * m + i * m, 0 * N * n + i * n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i).transpose();
+                drdlamda.template block<m,n>(index + 0 * m, 0 * N * n + i * n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i).transpose();
                 for (int k = 1; k < T; ++k) {
-                    drdlamda.template block<m,n>(index + k * N * m + i * m, k * N * n + i * n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
+                    drdlamda.template block<m,n>(index + k * m, k * N * n + i * n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
                 }
 
                 // skip count for h_plus_mask[all k, i, all j]
@@ -450,20 +587,18 @@ class ResidualGame {
                 for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
-                index += dim_u + n * T + skip_count;
+                index += T * m + n * T + skip_count;
             }
 
         }
         Matrix dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
-            int dim_x = T * N * n;
-            int dim_u = T * N * m;
             int dim_lamda = T * N * n;
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
-            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
             Matrix drdlamda = Matrix::Zero(dim_r, dim_lamda);
             dr_dlamda(x, u, lamda, mu, h_plus_mask, drdlamda);
             return drdlamda;
@@ -473,33 +608,29 @@ class ResidualGame {
         template<typename Derived>
         void dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdmu = const_cast<MatrixBase<Derived>&>(mtx);
-            const int dim_x = T * N * n;
-            const int dim_u = T * N * m;
             const int dim_mu = T * N * N;
             int index = 0;
             for (int i = 0; i < N; ++i) {
                 // Calculate dLL_dx_dmu
-                Matrix dLL_dx_dmu = dLLi_dx_dmu(x, u, h_plus_mask, lamda, mu, i);
-                drdmu.block(index, 0, dim_x, dim_mu) = dLL_dx_dmu;
+                Matrix dLL_dxi_dmu = dLLi_dxi_dmu(x, u, h_plus_mask, lamda, mu, i);
+                drdmu.block(index, 0, T*n, dim_mu) = dLL_dxi_dmu;
                 // skip count for h_plus_mask[all k, i, all j]
                 int skip_count = 0;
                 for (int k = 1; k < T+1; ++k) {
                     skip_count +=h_plus_mask[k-1].row(i).count();
                 }
-                index += dim_x + dim_u + n * T + skip_count;
+                index += T*n + T*m + n * T + skip_count;
             }
 
         }
         Matrix dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
-            const int dim_x = T * N * n;
-            const int dim_u = T * N * m;
             const int dim_mu = T * N * N;
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
-            int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             // Initialize dr_dmu matrix
             Matrix drdmu = Matrix::Zero(dim_r, dim_mu);
@@ -524,23 +655,21 @@ class ResidualGame {
         }
 
         Matrix r(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
-            const int dim_x = N * T * n;
-            const int dim_u = N * T * m;
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
             }
-            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             Matrix r = Matrix::Zero(dim_r,1);
             int index = 0;
             for (int i = 0; i < N; ++i) {
-                Matrix dLL_dx = dLLi_dx(x, u, h_plus_mask, lamda, mu, i).transpose();
-                Matrix dLL_du = dLLi_du(x, u, h_plus_mask, lamda, mu, i).transpose();
-                r.block(index, 0, dim_x, 1) = dLL_dx;
-                index += dim_x;
-                r.block(index, 0, dim_u, 1) = dLL_du;
-                index += dim_u;
+                Matrix dLL_dxi = dLLi_dxi(x, u, h_plus_mask, lamda, mu, i).transpose();
+                Matrix dLL_dui = dLLi_dui(x, u, h_plus_mask, lamda, mu, i).transpose();
+                r.block(index, 0, T*n, 1) = dLL_dxi;
+                index += T*n;
+                r.block(index, 0, T*m, 1) = dLL_dui;
+                index += T*m;
 
                 // Dynamics for f(x0,u0) = x1
                 r.template block<n,1>(index, 0) = f(x0.row(i).transpose(), u[0].row(i).transpose()) - x[0].row(i).transpose();
@@ -573,7 +702,7 @@ class ResidualGame {
             const int dim_u = N * T * m;
             const int dim_lamda = T * N * n;
             const int dim_mu = T * N * N;
-            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
             Matrix Dr(dim_r,dim_y);
@@ -605,7 +734,7 @@ class ResidualGame {
             const int dim_u = N * T * m;
             const int dim_lamda = T * N * n;
             const int dim_mu = T * N * N;
-            const int dim_r = N * (dim_x + dim_u + T * n) + h_plus_sum;
+            const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
 
             //cout << "r()" << endl;
@@ -622,6 +751,12 @@ class ResidualGame {
 
             Matrix Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
             Matrix r0_reduced = r0(nonzero_rows_idx,Eigen::all);
+            // FIXME debug check square matrix
+            if (Dr_reduced.cols() != Dr_reduced.rows()){
+                std::cout << "Dr rows " << Dr.rows() << "cols " << Dr.cols() << endl;
+                std::cout << "Dr_reduced rows " << Dr_reduced.rows() << "cols " << Dr_reduced.cols() << endl;
+                throw std::runtime_error("Dr is not square");
+            }
             profiler.e("nonzeros");
 
             profiler.s("sparse");
@@ -699,6 +834,7 @@ class ResidualGame {
             };
 
 
+            // TODO update to new python version
             for (int i=0; i<10; i++){
                 rt_norm = r_t_norm(step);
                 if (rt_norm > (1-bc_a*step)*r0_norm){

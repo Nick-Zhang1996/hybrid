@@ -18,7 +18,7 @@ from ResidualGame import ResidualGame
 # uses kinematic bicycle model
 # this version use U as decision variable only
 class CarMergeKinematicBicycle(ResidualGame):
-    USE_CPP = False
+    USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
         super().__init__()
@@ -49,7 +49,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.dynamics_residual_weight = 1.0
 
         self.tolerance = 5e-4
-        self.iterations = 20
+        self.iterations = 50
 
         # dimension of x and u for single agent
         self.n = 4
@@ -356,7 +356,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=3)
+    main = CarMergeKinematicBicycle(car_count=8)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
