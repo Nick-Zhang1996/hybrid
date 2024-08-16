@@ -49,7 +49,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.dynamics_residual_weight = 1.0
 
         self.tolerance = 5e-4
-        self.iterations = 50
+        self.iterations = 20
 
         # dimension of x and u for single agent
         self.n = 4

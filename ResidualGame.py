@@ -238,12 +238,14 @@ class ResidualGame(PrintObject,ABC):
         dy = np.zeros_like(y0)
         dy[nonzero_cols] = reduced_dy.flatten()
 
+        '''
         # FIXME DEBUG - statistics on nonzero entries
         self.print_debug(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
         self.print_debug(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
         total_entries = Dr.shape[0]*Dr.shape[1]
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
         self.print_debug(f' nonzero entries:  {nonzero_entries/total_entries}')
+        '''
 
         # projection onto dynamics null space
         # extract control constraint F
