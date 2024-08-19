@@ -15,7 +15,7 @@ from TimeUtil import TimeUtil
 from LQGame import LQGame
 
 # NOTE: Adjust car count here
-car_count = 5
+car_count = 2
 
 class CarMergeKinematicBicycle(LQGame):
     
@@ -80,10 +80,11 @@ class CarMergeKinematicBicycle(LQGame):
         np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
-        # x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        # x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*8,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 4.0+np.linspace(0,(merge_lane_n-1)*8,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        # NOTE: Starting position: below is greater spacing, can be adjusted. Recommended to keep 2:1 scale
+        # x_pos_main_lane = np.linspace(0,(main_lane_n-1)*8,main_lane_n) + np.random.random(main_lane_n)
+        # x_pos_merge_lane = 4.0+np.linspace(0,(merge_lane_n-1)*8,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T

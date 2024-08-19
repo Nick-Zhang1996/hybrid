@@ -84,7 +84,7 @@ class LQGame(PrintObject):
             t.e()
             self.print_info(f'------ {N} agents, iter {i}------')
             
-            # NOTE: For debugging: see every iteration
+            # NOTE: For debugging to view every iteration:
             # full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
             # self.visualize(np.array(u_ref), full_x_ref, visualize, save_gif, gif_prefix = 'after')
 
@@ -160,7 +160,7 @@ class LQGame(PrintObject):
         x_new = self.rollout(self.x0, np.array(u_ref))
         
         
-        # Basic backtracking line search implementation - this doesnt work lol:
+        # Basic backtracking line search implementation - this doesnt work lol. See readme:
         cost = 0
         for t in range(T):
             for i in range(N):
@@ -185,17 +185,12 @@ class LQGame(PrintObject):
                 x_ls.append(x_ls_t)
                 u_ls.append(u_ls_t)
             
-            db(np.linalg.norm(cost_ls), 'cost ls')
-            db(np.linalg.norm(cost), 'cost')
-            
             if np.linalg.norm(cost_ls) <= np.linalg.norm(cost) * 0.75:
-                print('back track workin lol')
                 x_new = self.rollout(self.x0, np.array(u_ls))
                 u_ref = u_ls
                 break
             else:
                 step_size *= 0.50
-                print('step size dec')
             
         
         # We want to stop the loop early if converged upon a viable solution. This is defined when the last
