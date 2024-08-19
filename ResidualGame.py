@@ -3,6 +3,7 @@
 import os
 import numpy as np
 from time import time
+import time as time2
 from PIL import Image
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
@@ -80,7 +81,7 @@ class ResidualGame(PrintObject):
         lambda_ref = np.zeros((T,N,self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T,N,N))
-        self.visualize(u_ref,animate=animate,gif_prefix='before')
+        # self.visualize(u_ref,animate=animate,gif_prefix='before')
         t0 = time()
         t = self.profiler
         for i in range(self.iterations):
@@ -108,11 +109,13 @@ class ResidualGame(PrintObject):
                     self.print_ok('stopping criterion met!')
                     break
             t.e()
-            self.print_info(f'------ iter {i} ------')
+            self.print_info(f'------ {N} agents, iter {i} ------')
 
         t_solve = time()-t0
         self.print_info(f'total solve time: {t_solve}')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+        # self.print_info(f'fulll xref: \n{full_x_ref}')
+        # pause()
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
         '''
@@ -262,9 +265,9 @@ class ResidualGame(PrintObject):
 
         index = 0
         h_plus_violations = 0
-        self.print_debug(' r_0 breakdown ')
+        # self.print_debug(' r_0 breakdown ')
         for i in range(self.N):
-            self.print_debug(f'agent {i}')
+            # self.print_debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r0[index:index+dim_x])
             index += dim_x
             dLL_du_res = np.linalg.norm(r0[index:index+dim_u])
@@ -274,16 +277,16 @@ class ResidualGame(PrintObject):
             h_res = np.linalg.norm(r0[index:index+np.sum(h_plus_mask[:,i])])
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            # self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
 
         #check different parts of the residuals, with rho = infty
         original_rho = self.rho
         #self.rho = 1e4
         index = 0
         h_plus_violations = 0
-        self.print_debug(f' r_t breakdown, step = {step} ')
+        # self.print_debug(f' r_t breakdown, step = {step} ')
         for i in range(self.N):
-            self.print_debug(f'agent {i}')
+            # self.print_debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index+dim_x])
             index += dim_x
             dLL_du_res = np.linalg.norm(r_t[index:index+dim_u])
@@ -293,13 +296,13 @@ class ResidualGame(PrintObject):
             h_res = np.linalg.norm(r_t[index:index+np.sum(h_plus_mask[:,i])])
             h_plus_violations += h_res
             index += np.sum(h_plus_mask[:,i])
-            self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
+            # self.print_debug(f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.4f}, h_res {h_res:.1f}, h_plus {np.sum(h_plus_mask[:,i])}')
         self.rho = original_rho
 
         self.residuals = r_t_norm
         self.violations = np.sum(h_plus_mask)/2
 
-        self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
+        # self.print_debug(f'r0_norm {r0_norm} rt_norm {r_t_norm}, h>0 {self.violations}')
 
         # stopping criterion
         if (np.abs(r_t_norm - r0_norm)<5e-4 and self.violations<1e-3):
@@ -311,8 +314,15 @@ class ResidualGame(PrintObject):
             # normally we won't reach here because we'd use  the cpp.step(),
             # but if we are only using the "subfunctions", then this will be called
             self.cpp.post_step_update()
+            
 
         return split_y(y_new)
+    
+    def Jdebug(self, x_k, u_k_i, i, t):
+        # For debugging purposes only. Viewing the actual cost for each time step.
+        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        db(t, 'T')
+        db(val, 'cost')
 
     def rollout(self,x0,U):
         ''' given x0 and u0..u_T-1 (T*N*m), find x1..xT '''

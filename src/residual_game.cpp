@@ -1,7 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/eigen.h>
 
-#include <Eigen/LU>
+#include <eigen3/Eigen/LU>
 #include "residual_game.h"
 
 // N.B. this would equally work with Eigen-types that are not predefined. For example replacing
