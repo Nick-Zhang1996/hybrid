@@ -42,6 +42,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # decision variables:
         self.N = car_count
         self.T = 20
+        self.iterations = 10
         self.track_width = 2.2
         self.track_length = 20
         self.dt = dt = 0.2

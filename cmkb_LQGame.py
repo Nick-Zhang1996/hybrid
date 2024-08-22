@@ -15,11 +15,11 @@ from TimeUtil import TimeUtil
 from LQGame import LQGame
 
 # NOTE: Adjust car count here
-car_count = 2
+car_count = 5
 
 class CarMergeKinematicBicycle(LQGame):
     
-    def __init__(self, car_count=3):
+    def __init__(self, car_count):
         super().__init__()
         """
         The following notation is used:
@@ -70,14 +70,21 @@ class CarMergeKinematicBicycle(LQGame):
         self.h_Qh = np.diag([-0.1, -0.1, 0, 0])
 
         # Step cost parameters
-        self.J_Qr = np.diag([0, 0.070, 0.01, 0])
-        self.J_Q = np.diag([0,0,0,1.0])
-        self.J_R_merge = np.diag([0.2, 1.5])
-        self.J_R_main = np.diag([1.0, 10.0])
-        # self.J_R_main = np.diag([2.0, 20.0])
+        #self.J_Qr = np.diag([0, 0.070, 0.01, 0])
+        #self.J_Q = np.diag([0,0,0,1.0])
+        #self.J_R_merge = np.diag([0.2, 1.5])
+        #self.J_R_main = np.diag([1.0, 10.0])
+        #self.J_R = np.diag([2.0, 20.0])
+
+        # FIXME
+        self.J_Qr = np.diag([0,0.1,0.01,0]) * 0
+        #self.J_Q = np.diag([0,0,0,1.0]) 
+        self.J_Q = np.diag([0,10,0,0])
+        self.J_R = np.eye(self.m)*0.3
+        self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        np.random.seed(0)
+        #np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
@@ -194,7 +201,7 @@ class CarMergeKinematicBicycle(LQGame):
         gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         anim.save(gif_filename, writer='pillow')
         plt.show()
-        
+
     def f(self, x, u, i):
         """Advances the dynamics by one time step according to the kinematic bicycle model.
 
@@ -210,7 +217,7 @@ class CarMergeKinematicBicycle(LQGame):
         beta = atan(tan(u[1]) * lr / (lf+lr))
         dx = np.array([x[2] * cos(x[3] + beta), x[2] * sin(x[3] + beta), u[0], x[2] / lr*sin(beta)])
         return x + dx * self.dt
-    
+
     def df_dx(self,x,u,i):
         """Jacobian of dynamics with respect to x.
 
@@ -249,9 +256,80 @@ class CarMergeKinematicBicycle(LQGame):
             [0, x[2]/1.0*cos(beta)*dbeta_dst]])
         val = B*self.dt
         return val
-        
+
+    def J(self,x_k,u_k_i,i):
+        '''
+        step cost for an agent, given x,u
+        x_k.shape (N*n) x_k_i = [x,y,vx,vy]
+        u_k_i.shape (m) u_k_i = [ax, ay]
+        i: agent id
+        '''
+        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
+        if (self.USE_CPP):
+            return self.cpp.J(x_k,u_k_i,i)
+        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        if (self.CPP_DEBUG):
+            alt = self.cpp.J(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJi dxi
+    def dJi_dxi(self,x_k,u_k_i,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxi(x_k,u_k_i,i)
+        val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+        # if (i == 1):
+        #     print('x_k[i]: ', x_k[i])
+        #     print('y diff: ', x_k[i][1] - self.J_x_ref_fun(i)[1])
+        #     print('val: ', val)
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJi dxj
+    def dJi_dxj(self,x_k,u_k_i,i,j):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+        val = 0
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    def dJi_du(self,x_k,u_k_i,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_du(x_k,u_k_i,i)
+        val = 2* u_k_i.T @ self.J_R
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_du(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJ^i / dxi dxi
+    def dJi_dxi_dxi(self,x_k,u,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxi_dxi(x_k,u,i)
+        val = 2*self.J_Qr + 2*self.J_Q
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJi / dxi dxj
+    def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dudu(self, x_k, u_k_i, i):
+        return 2*self.J_R
+
 if __name__ == "__main__":
     main = CarMergeKinematicBicycle(car_count)
-    main.solve(save_gif=True, visualize=True, animate=True)
-    main.final() 
-    
+    main.solve(save_gif=False, visualize=True, animate=True)
+    main.final()
