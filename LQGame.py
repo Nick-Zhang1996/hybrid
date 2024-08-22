@@ -17,8 +17,6 @@ from util import *
 from TimeUtil import TimeUtil
 import pickle
 
-crashed = False # TODO: This can be turned into an instance variable
-
 class LQGame(PrintObject):
     DEBUG = False
     USE_CPP = False
@@ -27,9 +25,9 @@ class LQGame(PrintObject):
     def __init__(self):
 
         # NOTE: Most of these numbers will be overridden
-        self.N = 2
+        #self.N = 2
         self.dt = dt = 0.2
-        self.tolerance = 1e-2
+        self.tolerance = 5e-4
         # penalty on dx
         self.normalization_cost = 100
 
@@ -41,7 +39,7 @@ class LQGame(PrintObject):
         self.x0 = None
 
         # Max iterations
-        self.iterations = 5
+        self.iterations = 20
 
         # Solver variables
         self.frame_vec = []
@@ -59,8 +57,6 @@ class LQGame(PrintObject):
             animate: Boolean to toggle feature. Defaults to False.
         """
         N = self.N; T = self.T; n = self.n; m = self.m
-
-        global crashed
 
         Ps = [np.array([np.zeros((m, n * N))] * T) for i in range(N)]
         alphas = [np.array([np.zeros((m, 1))] * T) for i in range(N)]
@@ -147,7 +143,7 @@ class LQGame(PrintObject):
         Bs = [[np.vstack([Bs_agents[i][t] if i == j else np.zeros((n, m)) for i in range(N)]) for t in range(T)] for j in range(N)]
 
         # 2. Find cost matrices using new trajectory and controls
-        Qs, qs, Rs, rs = self.getCostMatrices(x_ref, u_ref, iteration)
+        Qs, qs, Rs, rs, has_collision = self.getCostMatrices(x_ref, u_ref, iteration)
 
         # 3. Find optimal solution
         new_Ps, new_alphas = my_solve_lq_game(As, Bs, Qs, qs, Rs, rs, self.profiler)
@@ -218,7 +214,7 @@ class LQGame(PrintObject):
         # We want to stop the loop early if converged upon a viable solution. This is defined when the last
         # 3 iterations have produced solutions that are close enough to each other (norm < 0.1). This tolerance can be adjusted.
         full_x.append(x_ref)
-        if not crashed:
+        if not has_collision:
             if iteration >= 3:
                 norm_a = np.linalg.norm(np.array(x_ref) - np.array(full_x[-1]))
                 norm_b = np.linalg.norm(np.array(x_ref) - np.array(full_x[-2]))
@@ -238,7 +234,6 @@ class LQGame(PrintObject):
         Returns:
             Quadratic and linear cost terms with respect to state and controls
         """
-        global crashed
         global scalar
         N = self.N; T = horizon = self.T; m = self.m; n = self.n
         # first we formulate cost on x,u, and later transform it to cost on dx, du
@@ -250,7 +245,7 @@ class LQGame(PrintObject):
         II = np.hstack([np.eye(n), -np.eye(n)])
         R0 = np.zeros((m, m))
 
-        crashed = False
+        has_collision = False
 
         for t in range(horizon):
             for i in range(N):
@@ -260,12 +255,12 @@ class LQGame(PrintObject):
                 R_i = np.zeros((m, m))
                 r_i = np.zeros((m, 1))
 
-                # Check crash condition + apply cost
-                '''
+                # Check collision violation + apply cost
                 for j in range(i + 1, N):
                     h = -((xx[t][i][0] - xx[t][j][0]) / 1.0) ** 2 - (xx[t][i][1] - xx[t][j][1]) ** 2 + 7
                     if h >= 0:
-                        crashed = True
+                        has_collision = True
+                        # for agent i
                         # Hessian dh/dxdx
                         Q_i_col = 2 * self.h_Qh.T
                         Q_i[i * n:(i+1) * n, i * n:(i+1) * n] += Q_i_col
@@ -274,7 +269,15 @@ class LQGame(PrintObject):
                         q_i_col = 2 * (xx[t][i] - xx[t][j]).T @ self.h_Qh
                         q_i[0, i * n:(i+1) * n] += q_i_col
 
-                '''
+                        # for agent j
+                        # Hessian dh/dxdx
+                        Q_j_col = 2 * self.h_Qh.T
+                        Q_i[j * n:(j+1) * n, j * n:(j+1) * n] += Q_j_col
+
+                        #Gradient dh/dx
+                        q_j_col = 2 * (xx[t][j] - xx[t][i]).T @ self.h_Qh
+                        q_i[0, j * n:(j+1) * n] += q_j_col
+
                 # Step cost
 
                 # Hessian dJ/dxdx
@@ -305,7 +308,7 @@ class LQGame(PrintObject):
                 qs[i].append(q_i.reshape(-1, 1))
                 Rs[i].append(R_i)
                 rs[i].append(r_i.reshape(-1, 1))
-        return Qs, qs, Rs, rs
+        return Qs, qs, Rs, rs, has_collision
 
     def J(self, x_k, u_k_i, i):
         """_summary_

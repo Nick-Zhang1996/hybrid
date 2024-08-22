@@ -76,10 +76,9 @@ class CarMergeKinematicBicycle(LQGame):
         #self.J_R_main = np.diag([1.0, 10.0])
         #self.J_R = np.diag([2.0, 20.0])
 
-        # FIXME
-        self.J_Qr = np.diag([0,0.1,0.01,0]) * 0
-        #self.J_Q = np.diag([0,0,0,1.0]) 
-        self.J_Q = np.diag([0,10,0,0])
+        #self.J_Qr = np.diag([0,0.1,0.01,0])
+        self.J_Qr = np.diag([0,0.3,0.01,0])
+        self.J_Q = np.diag([0,0,0,1.0])
         self.J_R = np.eye(self.m)*0.3
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
 
