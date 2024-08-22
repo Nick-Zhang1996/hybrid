@@ -1,7 +1,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/eigen.h>
 
-#include <Eigen/LU>
+#include <eigen3/Eigen/LU>
 #include "car_merge_kinematic_bicycle.h"
 
 namespace py = pybind11;

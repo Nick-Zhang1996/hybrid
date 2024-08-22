@@ -4,6 +4,7 @@
 import os
 import numpy as np
 from time import time
+import time as time2
 from PIL import Image
 from abc import ABC,abstractmethod
 from scipy import interpolate
@@ -146,12 +147,15 @@ class ResidualGame(PrintObject,ABC):
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
             t.e()
+            self.print_info(f'------ {N} agents, iter {i} ------')
 
         t_solve = time()-t0
         self.print_info(f'Total solve time: {t_solve}s')
         if (i == self.iterations-1):
             self.print_warning(f' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+        # self.print_info(f'fulll xref: \n{full_x_ref}')
+        # pause()
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
         return u_ref, full_x_ref
@@ -333,7 +337,7 @@ class ResidualGame(PrintObject,ABC):
         #self.rho = 1e4
         index = 0
         h_plus_violations = 0
-        self.print_debug(f' r_t breakdown, step = {step} ')
+        # self.print_debug(f' r_t breakdown, step = {step} ')
         for i in range(self.N):
             self.print_debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index+n*T])
@@ -359,7 +363,6 @@ class ResidualGame(PrintObject,ABC):
         self.old_y = y_new
         '''
 
-
         # FIXME debug
         self.residual_vec.append(r0_norm)
         violations = np.sum(h_plus_mask)/2
@@ -380,7 +383,14 @@ class ResidualGame(PrintObject,ABC):
             # but if we are only using the "subfunctions", then this will be called
             self.cpp.post_step_update()
 
+
         return split_y(y_new)
+
+    def Jdebug(self, x_k, u_k_i, i, t):
+        # For debugging purposes only. Viewing the actual cost for each time step.
+        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        db(t, 'T')
+        db(val, 'cost')
 
     def rollout(self,x0,U):
         ''' given x0 and u0..u_T-1 (T*N*m), find x1..xT '''

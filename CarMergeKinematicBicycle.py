@@ -11,7 +11,7 @@ from matplotlib.patches import Rectangle
 
 from util import *
 from TimeUtil import TimeUtil
-from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
+# from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 
 # example: Merging
@@ -42,6 +42,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # decision variables:
         self.N = car_count
         self.T = 20
+        self.iterations = 10
         self.track_width = 2.2
         self.track_length = 20
         self.dt = dt = 0.2
@@ -72,6 +73,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
+        # self.J_x_ref_fun = lambda i: np.array([0.0, 1.0, 2.0, 0.0]) if i == 0 else np.array([0.0, -1.0, 2.0, 0.0])
         self.J_Qr = np.diag([0,0.1,0.01,0])
         self.J_Q = np.diag([0,0,0,1.0])
         self.J_R = np.eye(self.m)*0.3
@@ -81,8 +83,9 @@ class CarMergeKinematicBicycle(ResidualGame):
         np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.5,main_lane_n) + np.random.random(main_lane_n)
+        # x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_merge_lane = 3.0+np.linspace(0,(merge_lane_n-1)*5.5,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
@@ -199,6 +202,10 @@ class CarMergeKinematicBicycle(ResidualGame):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
         val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+        # if (i == 1):
+        #     print('x_k[i]: ', x_k[i])
+        #     print('y diff: ', x_k[i][1] - self.J_x_ref_fun(i)[1])
+        #     print('val: ', val)
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -356,7 +363,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=3)
+    main = CarMergeKinematicBicycle(car_count=4)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
