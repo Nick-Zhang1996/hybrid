@@ -39,7 +39,7 @@ class LQGame(PrintObject):
         self.x0 = None
 
         # Max iterations
-        self.iterations = 20
+        self.iterations = 100
 
         # Solver variables
         self.frame_vec = []
@@ -69,10 +69,11 @@ class LQGame(PrintObject):
 
         full_x = []
 
-        self.visualize(np.array(u_ref), animate = animate, gif_prefix = 'before')
+        self.visualize(np.array(u_ref), visualize=visualize, animate = animate, gif_prefix = 'before')
         t0 = time()
         t = self.profiler
         i = 0
+        has_converged = False
 
         while True:
             t.s()
@@ -87,6 +88,7 @@ class LQGame(PrintObject):
                 '''
             except StopIteration:
                 self.print_ok('Stopping criterion met!')
+                has_converged = True
                 break
             t.e()
             self.print_info(f'------ {N} agents, iter {i}------')
@@ -97,6 +99,7 @@ class LQGame(PrintObject):
         self.print_info(f'total solve time: {t_solve}')
         #full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
         self.visualize(np.array(u_ref), x_ref, visualize, save_gif, animate, gif_prefix = 'after')
+        return u_ref, x_ref, has_converged
 
     def solve_iteration(self, x_ref, u_ref, Ps, alphas, iteration, full_x):
         """Solves a single iteration of LQGame.

@@ -4,7 +4,6 @@
 import os
 import numpy as np
 from time import time
-import time as time2
 from PIL import Image
 from abc import ABC,abstractmethod
 from scipy import interpolate
@@ -110,6 +109,7 @@ class ResidualGame(PrintObject,ABC):
         self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
         t0 = time()
         t = self.profiler
+        has_converged = False
         for i in range(self.iterations):
             self.print_info(f'------ iter {i+1} ------')
             t.s()
@@ -135,6 +135,8 @@ class ResidualGame(PrintObject,ABC):
                         x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
                 except StopIteration as e:
                     self.print_ok(e)
+                    if 'criteria met' in str(e):
+                        has_converged = True
                     break
                 finally:
                     t.e('cpp step')
@@ -143,6 +145,7 @@ class ResidualGame(PrintObject,ABC):
                     x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref,u_ref,lambda_ref,mu_ref)
                 except StopIteration as e:
                     self.print_ok(e)
+                    has_converged = True
                     break
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
@@ -154,11 +157,9 @@ class ResidualGame(PrintObject,ABC):
         if (i == self.iterations-1):
             self.print_warning(f' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
-        # self.print_info(f'fulll xref: \n{full_x_ref}')
-        # pause()
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
-        return u_ref, full_x_ref
+        return u_ref, full_x_ref, has_converged
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
         t = self.profiler
@@ -386,12 +387,6 @@ class ResidualGame(PrintObject,ABC):
 
         return split_y(y_new)
 
-    def Jdebug(self, x_k, u_k_i, i, t):
-        # For debugging purposes only. Viewing the actual cost for each time step.
-        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-        db(t, 'T')
-        db(val, 'cost')
-
     def rollout(self,x0,U):
         ''' given x0 and u0..u_T-1 (T*N*m), find x1..xT '''
         U = U.reshape(self.T,self.N,self.m)
@@ -427,12 +422,13 @@ class ResidualGame(PrintObject,ABC):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
             self.print_debug(f'GIf saved to {gif_filename}')
+        '''
         plt.plot(self.residual_vec,'*-')
         plt.yscale('log')
         plt.xlabel('Iteration')
         plt.ylabel('Residual (exp)')
         plt.show()
-        breakpoint()
+        '''
 
     def resolveLogname(self,logPrefix='run'):
         # setup log file

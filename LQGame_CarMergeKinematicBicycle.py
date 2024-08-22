@@ -15,7 +15,7 @@ from TimeUtil import TimeUtil
 from LQGame import LQGame
 
 # NOTE: Adjust car count here
-car_count = 5
+car_count = 10
 
 class LQGame_CarMergeKinematicBicycle(LQGame):
     
@@ -67,7 +67,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         self.visual_y_lim = [-2,30]
 
         # Collision definition
-        self.h_Qh = np.diag([-0.1, -0.1, 0, 0])
+        self.h_Qh = np.diag([-0.1, -0.1, 0, 0])*10
 
         # Step cost parameters
         #self.J_Qr = np.diag([0, 0.070, 0.01, 0])
@@ -86,8 +86,8 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         #np.random.seed(0)
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.5,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.5,merge_lane_n) + np.random.random(merge_lane_n)
         # NOTE: Starting position: below is greater spacing, can be adjusted. Recommended to keep 2:1 scale
         # x_pos_main_lane = np.linspace(0,(main_lane_n-1)*8,main_lane_n) + np.random.random(main_lane_n)
         # x_pos_merge_lane = 4.0+np.linspace(0,(merge_lane_n-1)*8,merge_lane_n) + np.random.random(merge_lane_n)
@@ -98,14 +98,15 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
         self.print_debug_enable()
-        
+
     def setup(self):
         '''
         If implementing cpp, this method will load cpp and eigen module and set x0.
         At the moment, no cpp integration.
         '''
-        raise NotImplementedError
-    
+        #raise NotImplementedError
+        return
+
     def _visualize(self, U, X=None):
         """Plots the track and trajectories of the cars and then shows the visualization.
 
@@ -115,7 +116,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
         Returns:
             plotted visualization of the simulated road
-        """        
+        """
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
@@ -131,7 +132,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             plt.plot(-yy,xx,'*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
-    
+
     def _animation(self, U, X=None, gif_prefix=''):
         """Animates the progression of the game and then saves as a gif.
 
@@ -139,10 +140,10 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             U: Controls of all agents over horizon, [T * N * m]
             X: Game state of all agents over horizon, [T * N * n]. Defaults to None.
             gif_prefix: Prefix of file generated. Defaults to ''.
-            
+
         Returns:
             List of cars represented as rectangles
-        """        
+        """
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         car_pos_vec = []
@@ -169,7 +170,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             angle_vec = angle_fun(tt)/np.pi*180.0
             car_angle_vec.append(angle_vec)
             car_pos_vec.append(pos_vec)
-            box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color))
+            box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
             circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
 
         fig, ax = plt.subplots()
@@ -246,7 +247,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
         Returns:
             First time derivative of dynamics with respect to u
-        """        
+        """
         beta = atan(tan(u[1]) * 0.5)
         dbeta_dst = 0.5/( ((tan(u[1]) * 0.5)**2 + 1) * cos(u[1])**2 )
         B = np.array([[0, -x[2]*sin(x[3]+beta)*dbeta_dst],
