@@ -94,8 +94,7 @@ class LQGame(PrintObject):
                 break
             t.e()
             self.print_info(f'------ {N} agents, iter {i}------')
-
-            self.visualize(np.array(u_ref), x_ref, visualize, save_gif, gif_prefix = 'after')
+            #self.visualize(np.array(u_ref), x_ref, visualize, save_gif, gif_prefix = 'after')
             i += 1
 
         t_solve = time()-t0
