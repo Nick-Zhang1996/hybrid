@@ -4,10 +4,11 @@
 import os
 import numpy as np
 from time import time
-from PIL import Image
 from abc import ABC,abstractmethod
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
+
+from PIL import Image
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
@@ -92,6 +93,7 @@ class ResidualGame(PrintObject,ABC):
             I forgot why I did the fallback
         '''
         #TODO does cpp lscg fallback to cpp sparseQR?
+
 
         self.print_ok(f'USE_CPP: {self.USE_CPP}')
         self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')

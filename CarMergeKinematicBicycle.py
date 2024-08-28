@@ -5,14 +5,15 @@ from math import sin,cos,tan,atan,radians,degrees
 from PIL import Image
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.patches import Rectangle
+#import matplotlib.pyplot as plt
+#from matplotlib.animation import FuncAnimation
+#from matplotlib.patches import Rectangle
 
 from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
+
 
 # example: Merging
 # uses kinematic bicycle model
@@ -37,6 +38,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         lamda_i_k: 0..T-1 T*N*n
         mu_k_i_j: 1..T T*N*N NOTE starts from 1
         '''
+        self.print_debug_enable()
 
         # Problem formulation
         # decision variables:
@@ -88,7 +90,11 @@ class CarMergeKinematicBicycle(ResidualGame):
         x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
-        self.print_debug_enable()
+
+        # DEBUG print Dr dimension
+        T = self.T; N = self.N; m = self.m; n = self.n
+        dim_y = T*N*n + T*N*m + T*N*n + T*N*N
+        self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -355,9 +361,9 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=10)
+    main = CarMergeKinematicBicycle(car_count=2)
     main.setup()
-    main.solve(save_gif=False,visualize=True,animate=True)
+    main.solve(save_gif=False,visualize=False,animate=False)
     main.final()
     #main.testAnimation()
 
