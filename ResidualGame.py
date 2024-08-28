@@ -147,6 +147,13 @@ class ResidualGame(PrintObject,ABC):
                     self.print_ok(e)
                     has_converged = True
                     break
+            '''
+            if (np.any(mu_ref<-1e-8)):
+                h_plus_mask = self.getHplusMask(x_ref)
+                ratio = np.sum(mu_ref<-1e-8) / mu_ref.flatten().shape[0]
+                ratio_plus = np.sum(mu_ref[h_plus_mask]<-1e-8) / mu_ref.flatten().shape[0]
+                self.print_debug(f'negative lambda {ratio, ratio_plus}')
+            '''
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
             t.e()

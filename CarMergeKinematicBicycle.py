@@ -355,7 +355,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=6)
+    main = CarMergeKinematicBicycle(car_count=10)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
