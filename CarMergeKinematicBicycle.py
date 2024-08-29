@@ -94,7 +94,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # DEBUG print Dr dimension
         T = self.T; N = self.N; m = self.m; n = self.n
         dim_y = T*N*n + T*N*m + T*N*n + T*N*N
-        self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
+        #self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -361,7 +361,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=2)
+    main = CarMergeKinematicBicycle(car_count=5)
     main.setup()
     main.solve(save_gif=False,visualize=False,animate=False)
     main.final()

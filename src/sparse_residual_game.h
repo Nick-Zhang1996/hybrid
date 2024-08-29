@@ -3,11 +3,18 @@
 //Eigen::internal::set_is_malloc_allowed(false);
 
 #include <iostream>
+#include <fstream>
 #include <pybind11/stl.h>
 #include <Eigen/Core>
 #include <Eigen/LU>
 #include <Eigen/SparseCore>
 #include <stdexcept>
+#include <string>
+
+// get virtual memory currently used by this process
+//#include "stdlib.h"
+//#include "stdio.h"
+//#include "string.h"
 
 // sparse solvers
 #include <Eigen/OrderingMethods>
@@ -37,6 +44,37 @@ inline double sqr(const double a){
     return a*a;
 }
 
+int getCurrentMemoryUsageInKB(){ //Note: this value is in KB!
+    std::ifstream file("/proc/self/status");
+    std::string line;
+    int memory_usage = 0;
+
+    while (std::getline(file,line)){
+        if (line.rfind("VmSize",0) == 0){
+            std::size_t startPos = line.find_first_of("0123456789");
+            std::size_t endPos = line.find(" kB");
+            memory_usage = std::stoi(line.substr(startPos, endPos - startPos));
+            break;
+        }
+    }
+    return memory_usage;
+}
+
+int printCurrentMemoryUsage(){ //Note: this value is in KB!
+    FILE* file = fopen("/proc/self/status", "r");
+    char line[128];
+
+    while (fgets(line, 128, file) != NULL){
+        if (strncmp(line, "VmSize:", 7) == 0){
+            //result = parseLine(line);
+            std::cout << line << endl;
+            break;
+        }
+    }
+    fclose(file);
+    return 0;
+}
+
 template <int n, int m>
 class ResidualGame {
 
@@ -47,6 +85,7 @@ class ResidualGame {
         int backtracking_max_iter;
         Matrix x0;
         Profiler<false> profiler;
+        int current_memory_usage_kb;
 
     public:
         ResidualGame(const int _N, const int _T,
@@ -54,7 +93,9 @@ class ResidualGame {
             N(_N), T(_T),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
             tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
-            x0(),profiler() {
+            x0(),profiler(),current_memory_usage_kb(0) {
+                current_memory_usage_kb = getCurrentMemoryUsageInKB();
+                std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }
 
         void set_x0(const Matrix &val){
@@ -738,6 +779,9 @@ class ResidualGame {
         }
 
         std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
+            int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
+            std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;
+
             //cout << "step()" << endl;
             const auto h_plus_mask = getHplusMask(x);
             int h_plus_sum = 0;
@@ -873,6 +917,10 @@ class ResidualGame {
             profiler.e("line search");
 
             profiler.e();
+
+            additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
+            std::cout << "step exit memory: " << additional_memory_usage_kb << "KB" << std::endl;
+
             // stopping criteria
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
             if ( abs(rt_norm) < tolerance and h_plus_sum == 0){

@@ -5,7 +5,8 @@ from CarMergeKinematicBicycle import CarMergeKinematicBicycle
 #from LQGame_CarMergeKinematicBicycle import LQGame_CarMergeKinematicBicycle as CarMergeKinematicBicycle
 
 
-car_count_vec = range(2,10)
+#car_count_vec = range(2,10)
+car_count_vec = [3,5,8]
 mean_vec = []
 converged_mean_vec = []
 std_vec = []
