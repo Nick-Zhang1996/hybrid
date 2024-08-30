@@ -37,8 +37,9 @@ using std::endl;
 using std::cout;
 using std::min;
 using Eigen::MatrixBase;
-using Eigen::SparseMatrix;
-using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using Matrix = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+// SpMatrix was taken
+using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor>;
 
 inline double sqr(const double a){
     return a*a;
@@ -60,20 +61,53 @@ int getCurrentMemoryUsageInKB(){ //Note: this value is in KB!
     return memory_usage;
 }
 
-int printCurrentMemoryUsage(){ //Note: this value is in KB!
-    FILE* file = fopen("/proc/self/status", "r");
-    char line[128];
-
-    while (fgets(line, 128, file) != NULL){
-        if (strncmp(line, "VmSize:", 7) == 0){
-            //result = parseLine(line);
-            std::cout << line << endl;
-            break;
+// assign a dense matrix to a sub-block of a sparse matrix
+// this function assumes there's no existing entries in the sparse matrix, it uses SpMatrix.insert()
+// for addition, use sp_add()
+template <typename Derived>
+void sp_assign(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int row_offset, const int col_offset, const int row_size, const int col_size){
+    // maybe we can avoid creating this variable?
+    const SpMatrix sp_in_mtx = in_mtx.sparseView();
+    for (int k=0; k<sp_in_mtx.outerSize(); ++k){
+        for (SpMatrix::InnerIterator it(sp_in_mtx,k); it; ++it){
+            out_mtx.insert(row_offset + it.row(), col_offset + it.col()) = it.value();
+            // we should check that we are not inserting outside the target block, creating a memory leak, but only for debug build
         }
     }
-    fclose(file);
-    return 0;
 }
+
+template <typename Derived>
+void sp_add(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int row_offset, const int col_offset, const int row_size, const int col_size){
+    // maybe we can avoid creating this variable?
+    const SpMatrix sp_in_mtx = in_mtx.sparseView();
+    for (int k=0; k<sp_in_mtx.outerSize(); ++k){
+        for (SpMatrix::InnerIterator it(sp_in_mtx,k); it; ++it){
+            out_mtx.coeffRef(row_offset + it.row(), col_offset + it.col()) += it.value();
+            // we should check that we are not inserting outside the target block, creating a memory leak, but only for debug build
+        }
+    }
+}
+
+std::tuple<SpMatrix,std::vector<int>> remove_empty_cols(SpMatrix& matrix, const int reserve_size) {
+    //  Identify non-empty columns
+    std::vector<int> nonEmptyCols;
+    nonEmptyCols.reserve(reserve_size);
+    for (int j = 0; j < matrix.cols(); ++j) {
+        if (matrix.col(j).nonZeros() > 0) {
+            nonEmptyCols.push_back(j);
+        }
+    }
+
+    //  Create a new temporary matrix with non-empty columns
+    SpMatrix tempMatrix(matrix.rows(), nonEmptyCols.size());
+    for (int newColIdx = 0; newColIdx < nonEmptyCols.size(); ++newColIdx) {
+        int oldColIdx = nonEmptyCols[newColIdx];
+        tempMatrix.col(newColIdx) = matrix.col(oldColIdx);
+    }
+
+    return {tempMatrix,nonEmptyCols};
+}
+
 
 template <int n, int m>
 class ResidualGame {
@@ -562,6 +596,52 @@ class ResidualGame {
             return drdx;
         }
 
+        // fill a sparse matrix with dr_dx, starting at row/col_offset.
+        void dr_dx_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
+            int dim_x = N * T * n;
+            int dim_u = N * T * m;
+            auto& drdx = mtx;
+            // Initialize index
+            int index = 0;
+
+            for (int i = 0; i < N; ++i) {
+                // Calculate dLL_dxdx
+                Matrix dLL_dxi_dx = dLLi_dxi_dx(x, u, h_plus_mask, lamda, mu, i);
+                //drdx.block(index, 0, T * n, dim_x) = dLL_dxi_dx;
+                sp_assign(dLL_dxi_dx, drdx, index+row_offset, 0+col_offset, T * n, dim_x);
+                index += T*n + T*m;
+
+                Matrix dF0dx = dF0_dx(x, u, i);
+                //drdx.block(index, 0, n, dim_x) = dF0dx;
+                sp_assign(dF0dx,drdx, index+row_offset, 0+col_offset, n, dim_x);
+
+
+                for (int k = 1; k < T; ++k) {
+                    Matrix dFdx = dF_dx(x, u, i, k);
+                    //drdx.block(index + n * k, 0, n, dim_x) = dFdx;
+                    sp_assign(dFdx, drdx, index + n * k + row_offset, 0+col_offset, n, dim_x);
+                }
+                index += n*T;
+
+                for (int k = 1; k <= T; ++k) {
+                    Matrix dhdx = Matrix::Zero(h_plus_mask[k-1].row(i).count(), dim_x);
+                    int dh_dx_idx = 0;
+                    for (int j = 0; j < N; ++j) {
+                        //if (i==j){continue;}
+                        if (h_plus_mask[k-1](i,j)){
+                            dhdx.row(dh_dx_idx) = dh_dx(x, k, i, j);
+                            dh_dx_idx++;
+                        }
+                    }
+                    // TODO we could set the original matrix directly to avoid copying
+                    //drdx.block(index, 0, dhdx.rows(), dim_x) = dhdx;
+                    sp_assign(dhdx, drdx, index+row_offset, 0+col_offset, dhdx.rows(), dim_x);
+                    index += dhdx.rows();
+                }
+            }
+        }
+
+
         template<typename Derived>
         void dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdu = const_cast<MatrixBase<Derived>&>(mtx);
@@ -604,6 +684,39 @@ class ResidualGame {
             return drdu;
         }
 
+        void dr_du_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
+            auto& drdu = mtx;
+            int index = 0;
+            for (int i = 0; i < N; ++i) {
+                index += T*n;
+                int k = 0;
+                Matrix dLL_duik_duik = dJi_dudu(x0,u[k].row(i).transpose(),i);
+                //drdu.template block<m,m>(index + k * m, k * N * m + i * m) = dLL_duik_duik;
+                sp_assign(dLL_duik_duik, drdu, index + k * m + row_offset, k * N * m + i * m + col_offset, m, m);
+                for (int k = 1; k < T; ++k) {
+                    // dLL_duik_duik
+                    Matrix dLL_duik_duik = dJi_dudu(x[k-1],u[k].row(i).transpose(),i);
+                    //drdu.template block<m,m>(index + k * m, k * N * m + i * m) = dLL_duik_duik;
+                    sp_assign(dLL_duik_duik, drdu,index + k * m+row_offset, k * N * m + i * m +col_offset, m, m);
+                }
+                index += T*m;
+
+                //drdu.template block<n,m>(index + 0 * n, 0 * N * m + i * m) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i);
+                sp_assign(df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i), drdu, index + 0 * n + row_offset, 0 * N * m + i * m + col_offset, n, m);
+                for (int k = 1; k < T; ++k) {
+                    //drdu.template block<n,m>(index + k * n, k * N * m + i * m) = df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i);
+                    sp_assign(df_du(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i), drdu, index + k * n + row_offset, k * N * m + i * m + col_offset, n, m);
+                }
+                // skip count for h_plus_mask[all k, i, all j]
+                int skip_count = 0;
+                for (int k = 1; k < T+1; ++k) {
+                    skip_count +=h_plus_mask[k-1].row(i).count();
+                }
+                index += n * T + skip_count;
+            }
+        }
+
+
         template<typename Derived>
         void dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdlamda = const_cast<MatrixBase<Derived>&>(mtx);
@@ -635,6 +748,7 @@ class ResidualGame {
             }
 
         }
+
         Matrix dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_lamda = T * N * n;
@@ -648,6 +762,41 @@ class ResidualGame {
             return drdlamda;
         }
 
+        void dr_dlamda_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
+            auto& drdlamda = mtx;
+            int index = 0;
+            for (int i = 0; i < N; ++i) {
+                for (int k = 1; k < T; ++k) {
+                    // dLLi_dxki_dlamda_ki
+                    //drdlamda.template block<n,n>(index + (k - 1) * n, k * N * n + i * n) = df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
+                    sp_assign(df_dx(x[k - 1].row(i).transpose(), u[k].row(i).transpose(),i).transpose(), drdlamda, index + (k - 1) * n + row_offset, k * N * n + i * n + col_offset, n, n);
+                    // dLLi_dxki_dlamda_k-1,i
+                    //drdlamda.template block<n,n>(index + (k - 1) * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
+                    sp_assign(-Matrix::Identity(n, n), drdlamda, index + (k - 1) * n + row_offset, (k - 1) * N * n + i * n + col_offset, n, n);
+                }
+
+                const int k = T;
+                //drdlamda.template block<n,n>(index + (k - 1) * n, (k - 1) * N * n + i * n) = -Matrix::Identity(n, n);
+                sp_assign(-Matrix::Identity(n, n), drdlamda, index + (k - 1) * n + row_offset, (k - 1) * N * n + i * n + col_offset, n, n);
+                // skip dLL_dx, index now points at dLLi_du
+                index += T * n;
+
+                //drdlamda.template block<m,n>(index + 0 * m, 0 * N * n + i * n) = df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i).transpose();
+                sp_assign(df_du(x0.row(i).transpose(), u[0].row(i).transpose(),i).transpose(), drdlamda, index + 0 * m + row_offset, 0 * N * n + i * n + col_offset, m, n);
+                for (int k = 1; k < T; ++k) {
+                    //drdlamda.template block<m,n>(index + k * m, k * N * n + i * n) = df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose(),i).transpose();
+                    sp_assign(df_du(x[k-1].row(i).transpose(), u[k].row(i).transpose(),i).transpose(), drdlamda, index + k * m + row_offset, k * N * n + i * n + col_offset, m, n);
+                }
+
+                // skip count for h_plus_mask[all k, i, all j]
+                int skip_count = 0;
+                for (int k = 1; k < T+1; ++k) {
+                    skip_count +=h_plus_mask[k-1].row(i).count();
+                }
+                index += T * m + n * T + skip_count;
+            }
+
+        }
 
         template<typename Derived>
         void dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
@@ -667,6 +816,7 @@ class ResidualGame {
             }
 
         }
+
         Matrix dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             const int dim_mu = T * N * N;
@@ -680,6 +830,25 @@ class ResidualGame {
             Matrix drdmu = Matrix::Zero(dim_r, dim_mu);
             dr_dmu(x, u, lamda, mu, h_plus_mask, drdmu);
             return drdmu;
+        }
+
+        void dr_dmu_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
+            auto& drdmu = mtx;
+            const int dim_mu = T * N * N;
+            int index = 0;
+            for (int i = 0; i < N; ++i) {
+                // Calculate dLL_dx_dmu
+                Matrix dLL_dxi_dmu = dLLi_dxi_dmu(x, u, h_plus_mask, lamda, mu, i);
+                //drdmu.block(index, 0, T*n, dim_mu) = dLL_dxi_dmu;
+                sp_assign(dLL_dxi_dmu, drdmu, index + row_offset, 0+col_offset, T*n, dim_mu);
+                // skip count for h_plus_mask[all k, i, all j]
+                int skip_count = 0;
+                for (int k = 1; k < T+1; ++k) {
+                    skip_count +=h_plus_mask[k-1].row(i).count();
+                }
+                index += T*n + T*m + n * T + skip_count;
+            }
+
         }
 
         std::vector<Matrix> getHplusMask(const std::vector<Matrix>& x) {
@@ -752,7 +921,7 @@ class ResidualGame {
             return r;
         }
 
-        Matrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
+        SpMatrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
@@ -764,17 +933,19 @@ class ResidualGame {
             const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
-            Matrix Dr(dim_r,dim_y);
-            Dr.setZero();
+            SpMatrix Dr(dim_r,dim_y);
+            // TODO refine on the size
+            Dr.reserve(int(dim_y*dim_y*0.01));
+            //Dr.setZero();
 
             //cout << "drdx: " << endl;
-            dr_dx(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_r,dim_x));
+            dr_dx_fill_block(x, u, lamda, mu, h_plus_mask, Dr,0,0,dim_r,dim_x);
             //cout << "drdu: " << endl;
-            dr_du(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x,dim_r,dim_u));
+            dr_du_fill_block(x, u, lamda, mu, h_plus_mask, Dr,0,dim_x,dim_r,dim_u);
             //cout << "drdlamda: " << endl;
-            dr_dlamda(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u,dim_r,dim_lamda));
+            dr_dlamda_fill_block(x, u, lamda, mu, h_plus_mask, Dr,0,dim_x+dim_u,dim_r,dim_lamda);
             //cout << "drdmu: " << endl;
-            dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u+dim_lamda,dim_r,dim_mu));
+            dr_dmu_fill_block(x, u, lamda, mu, h_plus_mask, Dr,0,dim_x+dim_u+dim_lamda,dim_r,dim_mu);
             return Dr;
         }
 
@@ -801,40 +972,46 @@ class ResidualGame {
 
             //cout << "r()" << endl;
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
-            const Matrix Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
+            SpMatrix Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
             profiler.e("init");
-            // get nonzero terms, reduce matrix dimension
+            // remove zero rows/cols
+            /*
             profiler.s("nonzeros");
             std::vector<int> nonzero_rows_idx;
             std::vector<int> nonzero_cols_idx;
             std::tie(nonzero_rows_idx, nonzero_cols_idx) = nonzeros(Dr);
             //cout << "nonzero" << endl;
 
-
             Matrix Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
             Matrix r0_reduced = r0(nonzero_rows_idx,Eigen::all);
-            // FIXME debug check square matrix
+            auto Dr_reduced_sparse = Dr_reduced.sparseView();
+            profiler.e("nonzeros");
+            */
+
+            // NOTE here the memory occupied by Dr is not released
+            SpMatrix Dr_reduced;
+            std::vector<int> nonzero_cols_idx;
+            std::tie(Dr_reduced, nonzero_cols_idx) = remove_empty_cols(Dr,dim_r);
+            auto& r0_reduced = r0;
+
+            // FIXME for debugging
             if (Dr_reduced.cols() != Dr_reduced.rows()){
                 std::cout << "Dr rows " << Dr.rows() << "cols " << Dr.cols() << endl;
                 std::cout << "Dr_reduced rows " << Dr_reduced.rows() << "cols " << Dr_reduced.cols() << endl;
                 throw std::runtime_error("Dr is not square");
             }
-            profiler.e("nonzeros");
 
-            profiler.s("sparse");
-            auto Dr_reduced_sparse = Dr_reduced.sparseView();
-            profiler.e("sparse");
             //cout << "sparseview" << endl;
             //cout << "Dr " << Dr.rows() << " " << Dr.cols() << endl;
             //cout << "r0 " << r0.rows() << " " << r0.cols() << endl;
-            //cout << "Dr_reduced " << Dr_reduced.rows() << " " << Dr_reduced.cols() << endl;
+            cout << "Dr_reduced " << Dr_reduced.rows() << " " << Dr_reduced.cols() << endl;
             //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
 
             profiler.s("solve");
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
+            Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
             solver.setTolerance(1e-5);
             // solve r0 + Dr* dy = 0 least square
-            solver.compute(Dr_reduced_sparse);
+            solver.compute(Dr_reduced);
             //solver.compute(Dr.sparseView());
             //cout << "compute" << endl;
 
@@ -978,7 +1155,7 @@ class ResidualGame {
 
         // solve Ax=B
         Matrix SparseQR(const Matrix& A, const Matrix& B){
-            Eigen::SparseQR<Eigen::SparseMatrix<Scalar>, Eigen::COLAMDOrdering<int>> solver;
+            Eigen::SparseQR<SpMatrix, Eigen::COLAMDOrdering<int>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 throw std::runtime_error(" solver initialization failed");
@@ -994,7 +1171,7 @@ class ResidualGame {
         }
 
         Matrix LeastSquaresConjugateGradient(const Matrix& A, const Matrix& B){
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
+            Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 throw std::runtime_error(" solver initialization failed");

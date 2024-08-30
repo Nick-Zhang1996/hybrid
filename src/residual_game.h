@@ -37,8 +37,9 @@ using std::endl;
 using std::cout;
 using std::min;
 using Eigen::MatrixBase;
-using Eigen::SparseMatrix;
 using Matrix = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+// SparseMatrix was taken
+using SpMatrix = Eigen::SparseMatrix<Scalar, Eigen::RowMajor, int>;
 
 inline Scalar sqr(const Scalar a){
     return a*a;
@@ -829,7 +830,7 @@ class ResidualGame {
             //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
 
             profiler.s("solve");
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
+            Eigen::LeastSquaresConjugateGradient<SparseMatrix> solver;
             solver.setTolerance(1e-5);
             // solve r0 + Dr* dy = 0 least square
             solver.compute(Dr_reduced_sparse);
@@ -976,7 +977,7 @@ class ResidualGame {
 
         // solve Ax=B
         Matrix SparseQR(const Matrix& A, const Matrix& B){
-            Eigen::SparseQR<Eigen::SparseMatrix<Scalar>, Eigen::COLAMDOrdering<int>> solver;
+            Eigen::SparseQR<SparseMatrix, Eigen::COLAMDOrdering<int>> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 throw std::runtime_error(" solver initialization failed");
@@ -992,7 +993,7 @@ class ResidualGame {
         }
 
         Matrix LeastSquaresConjugateGradient(const Matrix& A, const Matrix& B){
-            Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Scalar>> solver;
+            Eigen::LeastSquaresConjugateGradient<SparseMatrix> solver;
             solver.compute(A.sparseView());
             if (solver.info() != Eigen::Success){
                 throw std::runtime_error(" solver initialization failed");
