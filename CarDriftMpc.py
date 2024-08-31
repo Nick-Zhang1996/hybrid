@@ -10,16 +10,23 @@ class CarDriftMpc(CarDrift):
     def __init__(self):
         super().__init__()
         self.T = 100
-        self.Tmax = 0.174*0.4
+        self.Tmax = 0.174 # *0.4
         self.dt = dt = 0.05
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
-        vx = 0.5; vy = -0.38;  r= 0.1333;
+        # vx = 0.5 ?
+        vx = 1.0; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
 
+        #self.control_cost = 1e-2
+        #self.n_cost = 1.0
+        #self.vx_cost = 1.0
+        #self.ds_cost = 0.2
+        #self.dmu_cost = 0.2
+
         self.control_cost = 1e-2
-        self.n_cost = 1.0
-        self.vx_cost = 1.0
+        self.n_cost = 0.3
+        self.vx_cost = 0.1
         self.ds_cost = 0.2
         self.dmu_cost = 0.2
 
@@ -32,6 +39,11 @@ class CarDriftMpc(CarDrift):
         self.guess = np.zeros((self.T,self.N,self.m))
         self.guess[:,0,0] = -radians(0)
 
+        val = 22.2
+        self.visual_x_lim = [-val, val]
+        self.visual_y_lim = [-val, val]
+        self.car_scale = 0.006/2
+
 
     def simulate(self):
         overlap_steps = self.T//2
@@ -41,9 +53,9 @@ class CarDriftMpc(CarDrift):
         u_vec = []
         # set  x0, u_ref
 
-        for i in range(5):
+        for i in range(20): # 20 will to full circle
             # find solution
-            u_ref, full_x_ref = self.solve(save_gif=False, visualize=False, animate=False)
+            u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward
             x_vec.append(full_x_ref[1:overlap_steps+1])
             u_vec.append(u_ref[:overlap_steps])
@@ -55,6 +67,8 @@ class CarDriftMpc(CarDrift):
         self.x0 = original_x0
         x_vec = np.vstack(x_vec)
         u_vec = np.vstack(u_vec)
+
+        self._animation(u_vec, X=x_vec, gif_prefix='two_car_drift_mpc')
         self.T = len(u_vec)
         vi = (x_vec[0,0,3]**2 + x_vec[0,0,4]**2)**0.5
         vf = (x_vec[-1,0,3]**2 + x_vec[-1,0,4]**2)**0.5

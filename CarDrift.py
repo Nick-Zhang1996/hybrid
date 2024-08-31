@@ -176,7 +176,6 @@ class CarDrift(ResidualGame):
         return fig
 
     def _animation(self,U,X=None,gif_prefix=''):
-        return # FIXME
         ''' build a gif animation'''
         car_scale = self.car_scale
         if X is None:
@@ -189,32 +188,21 @@ class CarDrift(ResidualGame):
         ax.plot(rr[0],rr[1])
         A = np.array([[0,-1],[1,0]])
 
-        # draw car trajectory
-        for i in range(self.N):
-            ss = X[:,i,0]
-            nn = X[:,i,1]
-            rr = np.array(splev(ss,self.track.raceline_s))
-            dr = np.array(splev(ss,self.track.raceline_s,der=1))
-            normal_dir = A @ dr/np.linalg.norm(dr,axis=0)
-            rr = normal_dir * nn + rr
-            ax.plot(rr[0], rr[1],'-')
-
-
         # draw car sprite
         car_pose_vec = []
         for states in X:
             car_pose_vec.append([self.getCartesianFromFrenet(states[i]) for i in range(self.N)])
-
-        # plot initial pose
         im_vec = []
         for i in range(self.N):
-            rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[0][i][2]),reshape=True),0.0,1.0)
+            rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[0][i][2]),reshape=True), 0.0, 1.0)
             L,W,_ = rotated_car_img.shape
-            im_vec.append( ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale]) )
+            im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale])
+            im_vec.append(im)
+
 
         def update(frame):
             for i in range(self.N):
-                rotated_car_img = np.clip(rotate(self.car_img,degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
+                rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
                 L,W,_ = rotated_car_img.shape
                 im_vec[i].set_data(rotated_car_img)
                 im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
@@ -240,7 +228,6 @@ class CarDrift(ResidualGame):
         u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
-        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
             return self.cpp.J(x_k,u_k_i,i)
         s,n,mu,vx,vy,r,theta,Br = x_k[i]
@@ -252,6 +239,63 @@ class CarDrift(ResidualGame):
                 breakpoint()
         return val
 
+    # dJi dxi
+    def dJi_dxi(self,x_k,u_k_i,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxi(x_k,u_k_i,i)
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[0, 2*self.n_cost*x1, -2*self.mu_ref + 2*x2, self.vx_cost*(-2*self.vx_ref + 2*x3), 0, 0, 0, 0]])
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJi dxj
+    def dJi_dxj(self,x_k,u_k_i,i,j):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+        val = 0
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    def dJi_du(self,x_k,u_k_i,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_du(x_k,u_k_i,i)
+        x0,x1,x2,x3,x4,x5,x6,x7 = x_k[i]
+        u0, u1 = u_k_i
+        val = np.array([[self.control_cost*u0, self.control_cost*u1]])
+
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_du(x_k,u_k_i,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJ^i / dxi dxi
+    def dJi_dxi_dxi(self,x_k,u,i):
+        if (self.USE_CPP):
+            return self.cpp.dJi_dxi_dxi(x_k,u,i)
+        val = np.array([[0, 0, 0, 0, 0, 0, 0, 0], [0, 2*self.n_cost, 0, 0, 0, 0, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0], [0, 0, 0, 2*self.vx_cost, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
+        if (self.CPP_DEBUG):
+            alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
+            if (np.linalg.norm(alt-val)>1e-4):
+                breakpoint()
+        return val
+
+    # dJi / dxi dxj
+    def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
+        return 0
+    def dJi_dudu(self, x_k, u_k_i, i):
+        return np.eye(self.m)*self.control_cost
+
+    '''
     # dJi dxi
     def dJi_dxi(self,x_k,u_k_i,i):
         if (self.USE_CPP):
@@ -322,6 +366,7 @@ class CarDrift(ResidualGame):
         return val
     def dJi_dudu(self, x_k, u_k_i, i):
         return 2*np.eye(self.m)*self.control_cost
+    '''
 
     # this problem has homogeneous agents, so [i] is irrelevant
     def f(self,x,u,i):
