@@ -6,7 +6,6 @@ from PIL import Image
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
 from matplotlib.animation import FuncAnimation
@@ -214,6 +213,31 @@ class CarMergeKinematicBicycle(ResidualGame):
         anim.save(gif_filename, writer='pillow')
         plt.show()
 
+        # NOTE save initial, middle, final snapshots
+        update(0)
+        fig.canvas.draw()
+        frame = Image.frombytes('RGB',
+        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        filename = f'./pics/merge_{self.N}car_initial.png'
+        self.print_info(f'saved to {filename}')
+        frame.save(filename)
+
+        update(self.T//2)
+        fig.canvas.draw()
+        frame = Image.frombytes('RGB',
+        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        filename = f'./pics/merge_{self.N}car_middle.png'
+        self.print_info(f'saved to {filename}')
+        frame.save(filename)
+
+        update(self.T-1)
+        fig.canvas.draw()
+        frame = Image.frombytes('RGB',
+        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        filename = f'./pics/merge_{self.N}car_final.png'
+        self.print_info(f'saved to {filename}')
+        frame.save(filename)
+
 
     ''' --------  math functions and their derivatives ------ '''
     def J(self,x_k,u_k_i,i):
@@ -395,7 +419,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=3)
+    main = CarMergeKinematicBicycle(car_count=10)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
