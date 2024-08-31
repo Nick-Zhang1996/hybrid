@@ -63,9 +63,11 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
         # animation/visualization related
-        self.car_scale = 0.004/2
-        self.car_img_vec = [mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
-        self.car_scale = 0.004/2
+        self.sprite_visualization = True # True would use car images instead of boaxes
+
+        if (self.sprite_visualization):
+            self.car_scale = 0.005/2
+            self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
 
         # collision definition
         self.h_Qh = np.diag([-1.0,-1,0,0])
@@ -125,55 +127,74 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     def _animation(self,U,X=None,gif_prefix=''):
         ''' build a gif animation'''
-        car_scale = self.car_scale
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        fig, ax = plt.subplots()
 
         # old code: draw colored boxes
-        '''
-        car_pos_vec = []
-        car_angle_vec = []
-        box_vec = []
-        circle_vec = []
-        color_vec = ['red','green','blue','black']
-        color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
-        # prepare smoothed animation
-        for i,color in zip(range(self.N),color_vec):
-            # interpolate for smooth graphics
-            #tt = np.linspace(0,self.T*self.dt,50)
-            tt = np.linspace(0,self.dt*self.T,self.T+1)
-            # for plt.Rectangle, we offset position so this corresponds to top left corner
-            # also flip x axis
-            xx = X[:,i,0] - 1.0
-            yy = -(X[:,i,1]) - 0.5
-            angle = X[:,i,3]
-            xx_fun = interpolate.interp1d(tt,xx)
-            yy_fun = interpolate.interp1d(tt,yy)
-            angle_fun = interpolate.interp1d(tt,angle)
+        if (self.sprite_visualization):
+            car_scale = self.car_scale
+            # draw car sprite
+            car_pose_vec = []
+            for states in X:
+                car_pose_vec.append( [ [-states[i][1], states[i][0], states[i][3]+np.pi/2] for i in range(self.N) ])
 
-            pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
-            angle_vec = angle_fun(tt)/np.pi*180.0
-            car_angle_vec.append(angle_vec)
-            car_pos_vec.append(pos_vec)
-            box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
-            circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
-
-        fig, ax = plt.subplots()
-        ax.set_xlim(*self.visual_x_lim)
-        ax.set_ylim(*self.visual_y_lim)
-        def update(frame):
+            im_vec = []
             for i in range(self.N):
-                box_vec[i].set_xy(car_pos_vec[i][frame])
-                box_vec[i].set_angle(car_angle_vec[i][frame])
-                circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
-            return box_vec
-        # Add the boxes to the plot
-        for box in box_vec:
-            ax.add_patch(box)
-        for circ in circle_vec:
-            ax.add_patch(circ)
+                rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[0][i][2]),reshape=True), 0.0, 1.0)
+                L,W,_ = rotated_car_img.shape
+                im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale])
+                im_vec.append(im)
 
-        '''
+
+            def update(frame):
+                for i in range(self.N):
+                    rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
+                    L,W,_ = rotated_car_img.shape
+                    im_vec[i].set_data(rotated_car_img)
+                    im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
+                return im_vec
+        else:
+
+            car_pos_vec = []
+            car_angle_vec = []
+            box_vec = []
+            circle_vec = []
+            color_vec = ['red','green','blue','black']
+            color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
+            # prepare smoothed animation
+            for i,color in zip(range(self.N),color_vec):
+                # interpolate for smooth graphics
+                #tt = np.linspace(0,self.T*self.dt,50)
+                tt = np.linspace(0,self.dt*self.T,self.T+1)
+                # for plt.Rectangle, we offset position so this corresponds to top left corner
+                # also flip x axis
+                xx = X[:,i,0] - 1.0
+                yy = -(X[:,i,1]) - 0.5
+                angle = X[:,i,3]
+                xx_fun = interpolate.interp1d(tt,xx)
+                yy_fun = interpolate.interp1d(tt,yy)
+                angle_fun = interpolate.interp1d(tt,angle)
+
+                pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
+                angle_vec = angle_fun(tt)/np.pi*180.0
+                car_angle_vec.append(angle_vec)
+                car_pos_vec.append(pos_vec)
+                box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
+                circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
+
+            def update(frame):
+                for i in range(self.N):
+                    box_vec[i].set_xy(car_pos_vec[i][frame])
+                    box_vec[i].set_angle(car_angle_vec[i][frame])
+                    circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
+                return box_vec
+            # Add the boxes to the plot
+            for box in box_vec:
+                ax.add_patch(box)
+            for circ in circle_vec:
+                ax.add_patch(circ)
+
         # lane markings
         # boundary lines
         ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
@@ -182,32 +203,13 @@ class CarMergeKinematicBicycle(ResidualGame):
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
             ax.vlines(x=0, ymin=i,ymax=i+1)
 
-        # draw car sprite
-        car_pose_vec = []
-        for states in X:
-            car_pose_vec.append([self.getCartesianFromFrenet(states[i]) for i in range(self.N)])
-        im_vec = []
-        for i in range(self.N):
-            rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[0][i][2]),reshape=True), 0.0, 1.0)
-            L,W,_ = rotated_car_img.shape
-            im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale])
-            im_vec.append(im)
-
-
-        def update(frame):
-            for i in range(self.N):
-                rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
-                L,W,_ = rotated_car_img.shape
-                im_vec[i].set_data(rotated_car_img)
-                im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
-            return im_vec
-
-
-
         ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(*self.visual_x_lim)
+        ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=len(car_pos_vec[0]), blit=True)
+        anim = FuncAnimation(fig, update, frames=self.T, blit=True)
+
         gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         anim.save(gif_filename, writer='pillow')
         plt.show()
