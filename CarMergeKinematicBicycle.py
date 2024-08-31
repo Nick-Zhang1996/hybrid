@@ -9,6 +9,10 @@ import scipy.sparse # sparse matrix operations
 #from matplotlib.animation import FuncAnimation
 #from matplotlib.patches import Rectangle
 
+from matplotlib.animation import FuncAnimation
+import matplotlib.image as mpimg
+from scipy.ndimage import rotate
+
 from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
@@ -60,6 +64,10 @@ class CarMergeKinematicBicycle(ResidualGame):
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
+        # animation/visualization related
+        self.car_scale = 0.004/2
+        self.car_img_vec = [mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+        self.car_scale = 0.004/2
 
         # collision definition
         self.h_Qh = np.diag([-1.0,-1,0,0])
@@ -96,6 +104,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         dim_y = T*N*n + T*N*m + T*N*n + T*N*N
         #self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
 
+
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
@@ -122,8 +131,12 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     def _animation(self,U,X=None,gif_prefix=''):
         ''' build a gif animation'''
+        car_scale = self.car_scale
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+
+        # old code: draw colored boxes
+        '''
         car_pos_vec = []
         car_angle_vec = []
         box_vec = []
@@ -165,12 +178,37 @@ class CarMergeKinematicBicycle(ResidualGame):
             ax.add_patch(box)
         for circ in circle_vec:
             ax.add_patch(circ)
-        # lane boundary lines
+
+        '''
+        # lane markings
+        # boundary lines
         ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
         ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
         # dotted line
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
             ax.vlines(x=0, ymin=i,ymax=i+1)
+
+        # draw car sprite
+        car_pose_vec = []
+        for states in X:
+            car_pose_vec.append([self.getCartesianFromFrenet(states[i]) for i in range(self.N)])
+        im_vec = []
+        for i in range(self.N):
+            rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[0][i][2]),reshape=True), 0.0, 1.0)
+            L,W,_ = rotated_car_img.shape
+            im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale])
+            im_vec.append(im)
+
+
+        def update(frame):
+            for i in range(self.N):
+                rotated_car_img = np.clip(rotate(self.car_img_vec[i],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
+                L,W,_ = rotated_car_img.shape
+                im_vec[i].set_data(rotated_car_img)
+                im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
+            return im_vec
+
+
 
         ax.set_aspect('equal', adjustable='box')
 
