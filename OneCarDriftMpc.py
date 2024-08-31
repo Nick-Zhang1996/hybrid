@@ -35,7 +35,7 @@ class OneCarDriftMpc(OneCarDrift):
 
         for i in range(20):
             # find solution
-            u_ref, full_x_ref = self.solve(save_gif=False, visualize=False, animate=False)
+            u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward
             x_vec.append(full_x_ref[1:overlap_steps+1])
             u_vec.append(u_ref[:overlap_steps])
