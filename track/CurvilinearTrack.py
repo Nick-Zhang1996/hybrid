@@ -21,7 +21,6 @@ class CurvilinearTrack(Track):
         self.discretized_raceline_len = 1024
         return
 
-
     def drawRaceline(self,img):
         return img
 
@@ -93,7 +92,10 @@ class CurvilinearTrack(Track):
         _norm = lambda x:np.linalg.norm(x,axis=0)
         # radius of curvature can be calculated as R = |y'|^3/sqrt(|y'|^2*|y''|^2-(y'*y'')^2)
         curvature = 1.0/(_norm(dr)**3/(_norm(dr)**2*_norm(ddr)**2 - np.sum(dr*ddr,axis=0)**2)**0.5)
+        # NOTE for some tracks with very discontinuous curvature, splprep doesn't work
         self.curvature, u = splprep(curvature.reshape(1,-1), u=ss,s=0,per=1)
+        curvature[np.isnan(curvature)] = 0.0
+        self.curvature_fun = interp1d(ss, curvature)
         s_vec = self.ss
         # n*2
         ss = np.linspace(0,self.raceline_len_m,3000)

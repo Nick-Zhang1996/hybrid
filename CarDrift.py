@@ -61,8 +61,7 @@ class CarDrift(ResidualGame):
         self.mass = 1.0; self.Iz = 1.0; self.lf = 1.0; self.lr = 1.0;
         self.Tmax = 0.174;
 
-        # initial state,
-        #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
+        # initial state, for skidpad
         vx = 1.0; vy = -0.38;  r= 0.1333;
         theta = -radians(10.45); Br = radians(3.82);
 
@@ -77,11 +76,12 @@ class CarDrift(ResidualGame):
         self.dmu_cost = 0.2
 
         self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br],[self.ds_ref,0,radians(17),vx,vy,r,theta,Br]])
+        self.track = Skidpad()
+
         self.guess = np.zeros((self.T,self.N,self.m))
 
         self.print_debug_enable()
 
-        self.track = Skidpad()
         self.car_img_vec = [mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
         self.car_scale = 0.004/2
 

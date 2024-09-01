@@ -11,23 +11,42 @@ from matplotlib.patches import Rectangle
 from matplotlib.animation import FuncAnimation
 import matplotlib.image as mpimg
 from scipy.ndimage import rotate
+from scipy.interpolate import splprep, splev,CubicSpline,interp1d
 
 from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 
-# example: Merging
-# uses kinematic bicycle model
-class CarMergeKinematicBicycle(ResidualGame):
-    USE_CPP = True
+from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
+import sympy
+
+from track.NascarTrack import NascarTrack
+def wrap(val):
+    '''
+    wrap angle to [-pi,pi]
+    '''
+    return (val + np.pi) % (2*np.pi) - np.pi
+
+# two car racing game
+# uses curvilinear model 
+class CarRacing(ResidualGame):
+    USE_CPP = False
     FORCE_PYTHON_SOLVER = False
-    def __init__(self,car_count=3):
+    def __init__(self):
         super().__init__()
 
-        # u_i = [throttle, steering]
-        # x_i = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
-        # collision constraint: [(xi-xj)/dx]**2 + [(yi-yj)/dy]**2 >= 1
+        # point mass model
+        # u_i = [ay, ax]
+        # x_i = [s, v, n, phi]
+        # s: progress along raceline/reference curve
+        # v: velocity
+        # n: lateral offset from ref curve, left positive
+        # phi: heading from ref curve tangend, ccw positive
+        # ay: acceleration in lateral direction (left positive)
+        # ax: acceleration in heading(phi) direction
+        # ay is before ax to follow convention of steering before throttle
+        # collision constraint: [(si-sj)/dx]**2 + [(ni-nj)/dy]**2 >= 1
         # agent count: N, time step: 1..T+1
         # X (game state) = concatenated state, first by agent, then by time)
         # state p of agent i at time k: X[k,i,p] or X.flatten()[k*N*m + i*m + p]
@@ -42,24 +61,30 @@ class CarMergeKinematicBicycle(ResidualGame):
 
         # Problem formulation
         # decision variables:
-        self.N = car_count
+        self.N = 2
         self.T = 20
-        self.track_width = 2.2
-        self.track_length = 20
-        self.dt = dt = 0.2
-        # NOTE this is not implemented in cpp
-        self.dynamics_residual_weight = 1.0
-
-        self.tolerance = 5e-4
-        self.iterations = 30
-
+        self.dt = dt = 0.05
         # dimension of x and u for single agent
         self.n = 4
         self.m = 2
 
+        self.tolerance = 5e-4
+        self.iterations = 30
+
+        # collision definition
+        # (x-x)T h_Qh (x-x) < C
+        self.h_Qh = np.diag([-1,0,-1,0])
+
+        self.track = NascarTrack()
+        self.img_track = self.track.drawTrack()
+
+        # NOTE potentially useless parameters carried over from CarMerge
+        self.track_width = 2.2
+        self.track_length = 20
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
+
         # animation/visualization related
         self.sprite_visualization = True # True would use car images instead of boaxes
 
@@ -67,35 +92,18 @@ class CarMergeKinematicBicycle(ResidualGame):
             self.car_scale = 0.005/2
             self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
 
-        # collision definition
-        self.h_Qh = np.diag([-1.0,-1,0,0])
 
-        '''
         # initial state,
-        # NOTE this is 3 car simple case, it will be overridden
-        self.x0 = np.array([[0,0.9,1.5,0.0],[4,1.1,1.5,0.0],[2.1,-1.3,1.7,0.0]])
-        self.target_y = [1.0,1.0,1.0]
-        '''
+        self.x0 = np.array([[0, 1.0, 0.1, 0], [0.4, 1.0, -0.1, radians(10)]])
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
-        self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
-        self.J_Qr = np.diag([0,0.1,0.01,0])
-        self.J_Q = np.diag([0,0,0,1.0])
-        self.J_R = np.eye(self.m)*0.3
+        self.J_x_ref_fun = lambda i:np.array([0,1.0,0,0])
+        self.J_Qr = np.diag([0,1,0,0])
+        self.J_Q = np.diag([0,0,1,1])
+        self.J_R = np.eye(self.m)*0.1
         self.guess = np.zeros((self.T,self.N,self.m))
 
-        # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        main_lane_n = min(int(0.65*car_count),car_count-1)
-        merge_lane_n = car_count - main_lane_n
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
-        v_main_lane = 2.0 + np.random.random(main_lane_n)
-        v_merge_lane = 2.0 + np.random.random(merge_lane_n)
-        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
-        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
-        self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
-        self.target_y = [1]*(main_lane_n+merge_lane_n)
         self.print_debug_enable()
 
 
@@ -103,27 +111,43 @@ class CarMergeKinematicBicycle(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
-            self.cpp.set_x0(self.x0)
+            raise NotImplementedError
+            #self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
+            #elf.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):
         if (X is None):
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 10):
-            ax.vlines(x=0, ymin=i,ymax=i+0.5)
 
+        '''
+        # draw trajectory in Frenet frame
         for i in range(self.N):
             xx = X[:,i,0]
-            yy = X[:,i,1]
+            yy = X[:,i,2]
             plt.plot(-yy,xx,'*-')
+        '''
+        # convert frenet coordinate to cartesian
+        # (s,v,n,phi) -> (x,y,heading, v)
+        car_cart_states = []
+        for k in range(self.T):
+            this_states = []
+            for i in range(self.N):
+                this_states.append(self.curv2Cart(X[k,i]))
+            car_cart_states.append(this_states)
+        car_cart_states = np.array(car_cart_states)
+        # draw track
+        L,W,_ = self.img_track.shape
+        ax.imshow(self.img_track, extent=[self.track.x_min, self.track.x_max, self.track.y_min, self.track.y_max])
+        for i in range(self.N):
+            ax.plot(car_cart_states[:,i,0], car_cart_states[:,i,2])
+
         ax.set_aspect('equal', adjustable='box')
         return fig
 
     def _animation(self,U,X=None,gif_prefix=''):
+        # TODO
+        return
         ''' build a gif animation'''
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
@@ -153,7 +177,6 @@ class CarMergeKinematicBicycle(ResidualGame):
                     im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
                 return im_vec
         else:
-
             car_pos_vec = []
             car_angle_vec = []
             box_vec = []
@@ -211,32 +234,6 @@ class CarMergeKinematicBicycle(ResidualGame):
         gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         anim.save(gif_filename, writer='pillow')
         plt.show()
-
-        # NOTE save initial, middle, final snapshots
-        update(0)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_initial.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
-
-        update(self.T//2)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_middle.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
-
-        update(self.T-1)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_final.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
-
 
     ''' --------  math functions and their derivatives ------ '''
     def J(self,x_k,u_k_i,i):
@@ -307,33 +304,61 @@ class CarMergeKinematicBicycle(ResidualGame):
     def dJi_dudu(self, x_k, u_k_i, i):
         return 2*self.J_R
 
-    # this problem has homogeneous agents, so [i] is irrelevant
+    def buildDynamicsJacobian(self):
+        ''' find dfdx, dfdu with symbolic math, note this finds df/dx, not dx+/dx '''
+        dyn = SymbolicDynamics(self.n, self.m)
+
+        # below is almost verbatim copy of f(x,u,i)
+        s,v,n,phi = dyn.x
+        ay,ax = dyn.u
+
+        k_s = sympy.symbols(f'k_s') # NOTE external variable
+        #k = lambda s: splev(s,self.track.curvature)[0].item()
+        # k_s = self.track.curvature_fun(x0)
+        #k_s = k(s)
+
+        dsdt = v*sympy.cos(phi)/(1-n*k_s)
+        dvdt = ax
+        dndt = v*sympy.sin(phi)
+        dphidt = ay/v - k_s*dsdt
+        dyn.f = [dsdt, dvdt, dndt, dphidt]
+        dyn.symDerF()
+
+        print(f'dfdx = {dyn.dfdx}')
+        print(f'dfdu = {dyn.dfdu}')
+        return
+
     def f(self,x,u,i):
-        lf = 1.0; lr = 1.0
-        beta = atan(tan(u[1])*lr/(lf+lr))
-        dx = np.array([x[2]*cos(x[3]+beta),x[2]*sin(x[3]+beta), u[0],x[2]/lr*sin(beta)])
+        # u_i = [ay, ax]
+        # x_i = [s, v, n, phi]
+        s,v,n,phi = x
+        ay,ax = u
+        k_s = self.track.curvature_fun(s%self.track.raceline_len_m)
+
+        dsdt = v*cos(phi)/(1-n*k_s)
+        dvdt = ax
+        dndt = v*sin(phi)
+        dphidt = ay/v - k_s*dsdt
+        dx = np.array([dsdt, dvdt, dndt, dphidt])
+
         return x+dx*self.dt
 
     def df_dx(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        A = np.array([[0,0,cos(x[3]+beta), -x[2]*sin(x[3]+beta)],
-            [0,0, sin(x[3]+beta), x[2]*cos(x[3]+beta)],
-            [0,0,0,0],
-            [0,0,sin(beta)/1.0,0]])
-        val = np.eye(4) + A*self.dt
+        x0,x1,x2,x3 = x
+        u0, u1 = u
+        k_s = self.track.curvature_fun(x0%self.track.raceline_len_m)
+
+        dfdx = np.array([[0, cos(x3)/(-k_s*x2 + 1), k_s*x1*cos(x3)/(-k_s*x2 + 1)**2, -x1*sin(x3)/(-k_s*x2 + 1)], [0, 0, 0, 0], [0, sin(x3), 0, x1*cos(x3)], [0, -k_s*cos(x3)/(-k_s*x2 + 1) - u0/x1**2, -k_s**2*x1*cos(x3)/(-k_s*x2 + 1)**2, k_s*x1*sin(x3)/(-k_s*x2 + 1)]])
+        val = np.eye(4) + dfdx*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda xx:self.f(xx,u,i), x,dim=self.n)
             assert (np.linalg.norm(num-val)<1e-4)
         return val
 
     def df_du(self,x,u,i):
-        beta = atan(tan(u[1])*0.5)
-        dbeta_dst = 0.5/(  ((tan(u[1])*0.5)**2+1) * cos(u[1])**2 )
-        B = np.array([[0,-x[2]*sin(x[3]+beta)*dbeta_dst],
-            [0,x[2]*cos(x[3]+beta)*dbeta_dst],
-            [1,0],
-            [0,x[2]/1.0*cos(beta)*dbeta_dst]])
-        val = B*self.dt
+        x0,x1,x2,x3 = x
+        dfdu = np.array([[0, 0], [0, 1], [0, 0], [1/x1, 0]])
+        val = dfdu*self.dt
         if (self.DEBUG):
             num = jacobianNumerical(lambda uu:self.f(x,uu,i), u,dim=self.n)
             assert (np.linalg.norm(num-val)<1e-4)
@@ -341,10 +366,10 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     # collision definition is similar to Double Integrator, car is an "ellipsis"
     def h(self, x_i, x_j):
-        ''' car distance larger than 1.2 normalized '''
+        ''' car distance larger than sqrt(7) normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 7
+        val = -( (x_i[0]-x_j[0]) )**2 - (x_i[2]-x_j[2])**2 + 0.3**2
         if (self.CPP_DEBUG):
             alt = self.cpp.h(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -415,12 +440,70 @@ class CarMergeKinematicBicycle(ResidualGame):
         #self._visualize(u_ref,full_x_ref)
         #plt.show()
 
+    def cart2Curv(self, cart, guess_s=None):
+        '''
+            transform cartesian states to curvilinear states
+            relies on self.track.raceline_s
+            [cart]: (x,y,heading,v_forward,v_sideway,omega)
+            [guess_s]: estimated s
+            [return]: (s,v,n,phi)
+        '''
+        x,y,heading,v_forward,v_sideway,omega = cart
+
+        #dist = lambda s: np.linalg.norm(np.array(splev(s%self.track.raceline_len_m,self.track.raceline_s,der=0)) - np.array([x,y]))
+        def dist(s):
+            val = np.linalg.norm(np.array(splev(s%self.track.raceline_len_m,self.track.raceline_s,der=0)).flatten() - np.array([x,y]))
+            return val
+
+        if (guess_s is None):
+            # initial guess to avoid local minima
+            xx = np.linspace(0.0, self.track.raceline_len_m,10)
+            yy = [dist(x) for x in xx]
+            guess_s = xx[np.argmin(yy)]
+            ds = 2*self.track.raceline_len_m/10
+            fit = minimize(dist, x0=guess_s, method='L-BFGS-B', bounds=((guess_s-ds,guess_s+ds),))
+        else:
+            fit = minimize(dist, x0=guess_s, method='L-BFGS-B', bounds=((guess_s-0.2,guess_s+0.2),))
+
+        s = fit.x[0]
+
+        r = np.array(splev(s%self.track.raceline_len_m, self.track.raceline_s, der=0))
+        dr = np.array(splev(s%self.track.raceline_len_m, self.track.raceline_s, der=1))
+        dr = dr/np.linalg.norm(dr)
+        n = np.cross(dr, np.array([x,y]) - r)
+        # ignore sideway velocity
+        v = v_forward
+        phi = wrap(heading - np.arctan2(dr[1],dr[0]))
+        return np.array([s,v,n,phi])
+
+    def curv2Cart(self, curv):
+        '''
+            transform curvilinear states to cartesian states
+            [curv]: (s,v,n,phi)
+            [return]: (x,y,heading,v_forward,v_sideway,omega)
+        '''
+        s,v,n,phi = curv.flatten()
+        r = np.array(splev(s%self.track.raceline_len_m, self.track.raceline_s, der=0))
+        dr = np.array(splev(s%self.track.raceline_len_m, self.track.raceline_s, der=1))
+        dr = dr/np.linalg.norm(dr)
+
+        # ccw 90 deg
+        A = np.array([[0,-1],[1,0]])
+        x,y = r + (A @ dr)*n
+        ref_heading = np.arctan2(dr[1],dr[0])
+        heading = wrap(phi + ref_heading)
+        v_forward = v
+        v_sideway = 0.0
+        omega = 0.0
+        return np.array([x,y,heading, v_forward, v_sideway, omega])
+
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=10)
+    main = CarRacing()
+    #main.buildDynamicsJacobian()
     main.setup()
-    main.solve(save_gif=False,visualize=True,animate=True)
+    main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
     #main.testAnimation()
 
