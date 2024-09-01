@@ -86,7 +86,7 @@ class CarRacing(ResidualGame):
         self.visual_y_lim = [-2,30]
 
         # animation/visualization related
-        self.sprite_visualization = True # True would use car images instead of boaxes
+        self.sprite_visualization = False # True would use car images instead of boaxes
 
         if (self.sprite_visualization):
             self.car_scale = 0.005/2
@@ -140,26 +140,26 @@ class CarRacing(ResidualGame):
         L,W,_ = self.img_track.shape
         ax.imshow(self.img_track, extent=[self.track.x_min, self.track.x_max, self.track.y_min, self.track.y_max])
         for i in range(self.N):
-            ax.plot(car_cart_states[:,i,0], car_cart_states[:,i,2])
+            ax.plot(car_cart_states[:,i,0], car_cart_states[:,i,1])
 
         ax.set_aspect('equal', adjustable='box')
         return fig
 
     def _animation(self,U,X=None,gif_prefix=''):
-        # TODO
-        return
         ''' build a gif animation'''
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
+        # draw track
+        L,W,_ = self.img_track.shape
+        ax.imshow(self.img_track, extent=[self.track.x_min, self.track.x_max, self.track.y_min, self.track.y_max])
 
-        # old code: draw colored boxes
         if (self.sprite_visualization):
             car_scale = self.car_scale
             # draw car sprite
             car_pose_vec = []
             for states in X:
-                car_pose_vec.append( [ [-states[i][1], states[i][0], states[i][3]+np.pi/2] for i in range(self.N) ])
+                car_pose_vec.append( [ self.curv2Cart(states[i]) for i in range(self.N) ])
 
             im_vec = []
             for i in range(self.N):
@@ -177,6 +177,7 @@ class CarRacing(ResidualGame):
                     im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
                 return im_vec
         else:
+            # TODO
             car_pos_vec = []
             car_angle_vec = []
             box_vec = []
@@ -190,25 +191,32 @@ class CarRacing(ResidualGame):
                 tt = np.linspace(0,self.dt*self.T,self.T+1)
                 # for plt.Rectangle, we offset position so this corresponds to top left corner
                 # also flip x axis
-                xx = X[:,i,0] - 1.0
-                yy = -(X[:,i,1]) - 0.5
-                angle = X[:,i,3]
+                car_pose_vec = []
+                for states in X:
+                    car_pose_vec.append( [ self.curv2Cart(states[i]) for i in range(self.N) ])
+                car_pose_vec = np.array(car_pose_vec)
+                xx = car_pose_vec[:,i,0]
+                yy = car_pose_vec[:,i,1]
+                angle = car_pose_vec[:,i,2]
+
+
                 xx_fun = interpolate.interp1d(tt,xx)
                 yy_fun = interpolate.interp1d(tt,yy)
                 angle_fun = interpolate.interp1d(tt,angle)
 
-                pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
+                pos_vec = np.vstack([xx_fun(tt),yy_fun(tt)]).T
                 angle_vec = angle_fun(tt)/np.pi*180.0
                 car_angle_vec.append(angle_vec)
                 car_pos_vec.append(pos_vec)
-                box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
-                circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
+                # width, height
+                box_vec.append(plt.Rectangle(pos_vec[0]-np.array([0.2/2, 0.1/2]), 0.2, 0.1,angle=angle_vec[0], color=color,rotation_point='center'))
+                circle_vec.append(plt.Circle(pos_vec[0], radius=(0.3/2),  color=color, fill=False))
 
             def update(frame):
                 for i in range(self.N):
-                    box_vec[i].set_xy(car_pos_vec[i][frame])
+                    box_vec[i].set_xy(car_pos_vec[i][frame]-np.array([0.2/2, 0.1/2]))
                     box_vec[i].set_angle(car_angle_vec[i][frame])
-                    circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
+                    circle_vec[i].set_center(car_pos_vec[i][frame])
                 return box_vec
             # Add the boxes to the plot
             for box in box_vec:
@@ -216,23 +224,14 @@ class CarRacing(ResidualGame):
             for circ in circle_vec:
                 ax.add_patch(circ)
 
-        # lane markings
-        # boundary lines
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i,ymax=i+1)
 
         ax.set_aspect('equal', adjustable='box')
-        ax.set_xlim(*self.visual_x_lim)
-        ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
         anim = FuncAnimation(fig, update, frames=self.T, blit=True)
 
-        gif_filename = self.resolveLogname(logPrefix=gif_prefix)
-        anim.save(gif_filename, writer='pillow')
+        #gif_filename = self.resolveLogname(logPrefix=gif_prefix)
+        #anim.save(gif_filename, writer='pillow')
         plt.show()
 
     ''' --------  math functions and their derivatives ------ '''
@@ -433,7 +432,6 @@ class CarRacing(ResidualGame):
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))
-        u_ref[:,0,1] = radians(20)
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self._animation(u_ref,full_x_ref)
@@ -502,8 +500,8 @@ class CarRacing(ResidualGame):
 if __name__=="__main__":
     main = CarRacing()
     #main.buildDynamicsJacobian()
-    main.setup()
-    main.solve(save_gif=False,visualize=True,animate=False)
-    main.final()
-    #main.testAnimation()
+    #main.setup()
+    #main.solve(save_gif=False,visualize=True,animate=False)
+    #main.final()
+    main.testAnimation()
 
