@@ -96,11 +96,11 @@ class CarRacing(ResidualGame):
 
 
         # initial state,
-        self.x0 = np.array([[0.2, 1.2, 0.15, 0], [0, 1.3, -0.2, radians(5)]])
+        self.x0 = np.array([[0.3, 1.0, 0.15, 0], [0, 1.1, -0.2, radians(0)]])
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
-        self.J_x_ref_fun = lambda i:np.array([0,1.0+i*0.3,0.2,0])
+        self.J_x_ref_fun = lambda i:np.array([0,1.0+i*0.1,0.2,0])
         self.J_Qr = np.diag([0,1,1,0])
         self.J_Q = np.diag([0,0,0,0.4])
         self.J_R = np.eye(self.m)*0.1
@@ -279,7 +279,10 @@ class CarRacing(ResidualGame):
         '''
         if (self.USE_CPP):
             return self.cpp.J(x_k,u_k_i,i)
-        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        j = 1-i
+        val =  (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        if (i==0):
+            val += x_k[i,0] - x_k[j,0]
         if (self.CPP_DEBUG):
             alt = self.cpp.J(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -291,12 +294,15 @@ class CarRacing(ResidualGame):
         if (self.USE_CPP):
             return self.cpp.dJi_dxi(x_k,u_k_i,i)
         val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+        if (i==0):
+            val += np.array([1,0,0,0])
         if (self.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
             if (np.linalg.norm(alt-val)>1e-4):
                 breakpoint()
         return val
 
+    # NOTE obsolete
     # dJi dxj
     def dJi_dxj(self,x_k,u_k_i,i,j):
         if (self.USE_CPP):
