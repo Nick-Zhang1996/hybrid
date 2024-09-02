@@ -7,7 +7,7 @@ import numpy as np
 class CarRacingMpc(CarRacing):
     def __init__(self):
         super().__init__()
-        self.T = 30
+        self.T = 40
 
         self.guess = np.zeros((self.T,self.N,self.m))
         self.guess[:,0,0] = -radians(0)
@@ -20,7 +20,7 @@ class CarRacingMpc(CarRacing):
         u_vec = []
         # set  x0, u_ref
 
-        for i in range(3): # 20 will to full circle
+        for i in range(5):
             # find solution
             u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward
@@ -35,20 +35,11 @@ class CarRacingMpc(CarRacing):
         x_vec = np.vstack(x_vec)
         u_vec = np.vstack(u_vec)
 
-        self._animation(u_vec, X=x_vec, gif_prefix='two_car_drift_mpc')
         self.T = len(u_vec)
-        vi = (x_vec[0,0,3]**2 + x_vec[0,0,4]**2)**0.5
-        vf = (x_vec[-1,0,3]**2 + x_vec[-1,0,4]**2)**0.5
-        print(f' vi {vi:.2f}, vf {vf:.2f}')
-
+        self._animation(u_vec, X=x_vec, gif_prefix='car_racing_mpc')
         self._visualize(u_vec,X=x_vec)
         plt.show()
 
-        #self._visualize(u_vec)
-        #plt.show()
-        v_total = (x_vec[:,0,3]**2 + x_vec[:,0,4]**2)**0.5
-        print(v_total)
-        breakpoint()
 
 
 if __name__=="__main__":

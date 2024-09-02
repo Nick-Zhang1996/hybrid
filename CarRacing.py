@@ -62,7 +62,7 @@ class CarRacing(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = 2
-        self.T = 20
+        self.T = 40
         self.dt = dt = 0.05
         # dimension of x and u for single agent
         self.n = 4
@@ -82,14 +82,14 @@ class CarRacing(ResidualGame):
         self.track_width = 2.2
         self.track_length = 20
         # bounds for visualization
-        self.visual_x_lim = [-2.5,2.5]
-        self.visual_y_lim = [-2,30]
+        self.visual_x_lim = [-1.5,3.5]
+        self.visual_y_lim = [-0.5,2.5]
 
         # animation/visualization related
         self.sprite_visualization = False # True would use car images instead of boaxes
 
         if (self.sprite_visualization):
-            self.car_scale = 0.005/2
+            self.car_scale = 0.0005/2
             self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
 
 
@@ -168,7 +168,6 @@ class CarRacing(ResidualGame):
                 im = ax.imshow(rotated_car_img, extent=[car_pose_vec[0][i][0]-W*car_scale, car_pose_vec[0][i][0]+W*car_scale, car_pose_vec[0][i][1]-L*car_scale, car_pose_vec[0][i][1]+L*car_scale])
                 im_vec.append(im)
 
-
             def update(frame):
                 for i in range(self.N):
                     rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
@@ -177,7 +176,6 @@ class CarRacing(ResidualGame):
                     im_vec[i].set_extent((car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale))
                 return im_vec
         else:
-            # TODO
             car_pos_vec = []
             car_angle_vec = []
             box_vec = []
@@ -198,7 +196,6 @@ class CarRacing(ResidualGame):
                 xx = car_pose_vec[:,i,0]
                 yy = car_pose_vec[:,i,1]
                 angle = car_pose_vec[:,i,2]
-
 
                 xx_fun = interpolate.interp1d(tt,xx)
                 yy_fun = interpolate.interp1d(tt,yy)
@@ -226,6 +223,8 @@ class CarRacing(ResidualGame):
 
 
         ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(*self.visual_x_lim)
+        ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
         anim = FuncAnimation(fig, update, frames=self.T, blit=True)
@@ -499,9 +498,9 @@ class CarRacing(ResidualGame):
 
 if __name__=="__main__":
     main = CarRacing()
-    #main.buildDynamicsJacobian()
-    #main.setup()
-    #main.solve(save_gif=False,visualize=True,animate=False)
-    #main.final()
-    main.testAnimation()
+    main.buildDynamicsJacobian()
+    main.setup()
+    main.solve(save_gif=False,visualize=True,animate=True)
+    main.final()
+    #main.testAnimation()
 
