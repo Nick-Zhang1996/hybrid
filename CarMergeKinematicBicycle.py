@@ -43,7 +43,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 20
+        self.T = 40
         self.track_width = 2.2
         self.track_length = 20
         self.dt = dt = 0.2
@@ -418,7 +418,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=10)
+    main = CarMergeKinematicBicycle(car_count=2)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()

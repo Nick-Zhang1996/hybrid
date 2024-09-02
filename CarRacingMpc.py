@@ -20,7 +20,7 @@ class CarRacingMpc(CarRacing):
         u_vec = []
         # set  x0, u_ref
 
-        for i in range(5):
+        for i in range(7):
             # find solution
             u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward

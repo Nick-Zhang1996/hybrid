@@ -36,6 +36,9 @@ class CarRacing(ResidualGame):
     def __init__(self):
         super().__init__()
 
+        # animation/visualization related
+        self.sprite_visualization = False # True would use car images instead of boaxes
+
         # point mass model
         # u_i = [ay, ax]
         # x_i = [s, v, n, phi]
@@ -74,6 +77,7 @@ class CarRacing(ResidualGame):
         # collision definition
         # (x-x)T h_Qh (x-x) < C
         self.h_Qh = np.diag([-1,0,-1,0])
+        self.car_size = 0.2
 
         self.track = NascarTrack()
         self.img_track = self.track.drawTrack()
@@ -85,22 +89,20 @@ class CarRacing(ResidualGame):
         self.visual_x_lim = [-1.5,3.5]
         self.visual_y_lim = [-0.5,2.5]
 
-        # animation/visualization related
-        self.sprite_visualization = False # True would use car images instead of boaxes
 
-        if (self.sprite_visualization):
-            self.car_scale = 0.0005/2
-            self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+        #if (self.sprite_visualization):
+        self.car_scale = 0.0005/2
+        self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
 
 
         # initial state,
-        self.x0 = np.array([[0, 1.0, 0.1, 0], [0.4, 1.0, -0.1, radians(10)]])
+        self.x0 = np.array([[0.2, 1.2, 0.15, 0], [0, 1.3, -0.2, radians(5)]])
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
-        self.J_x_ref_fun = lambda i:np.array([0,1.0,0,0])
-        self.J_Qr = np.diag([0,1,0,0])
-        self.J_Q = np.diag([0,0,1,1])
+        self.J_x_ref_fun = lambda i:np.array([0,1.0+i*0.3,0.2,0])
+        self.J_Qr = np.diag([0,1,1,0])
+        self.J_Q = np.diag([0,0,0,0.4])
         self.J_R = np.eye(self.m)*0.1
         self.guess = np.zeros((self.T,self.N,self.m))
 
@@ -232,6 +234,40 @@ class CarRacing(ResidualGame):
         #gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         #anim.save(gif_filename, writer='pillow')
         plt.show()
+        self._snapshots(U,X)
+
+    # save snapshots
+    def _snapshots(self,U,X=None,png_prefix=''):
+        ''' build a gif animation'''
+        if X is None:
+            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+        fig, ax = plt.subplots()
+        # draw track
+        L,W,_ = self.img_track.shape
+        ax.imshow(self.img_track, extent=[self.track.x_min, self.track.x_max, self.track.y_min, self.track.y_max])
+
+        car_scale = self.car_scale
+        # draw car sprite
+        car_pose_vec = []
+        for states in X:
+            car_pose_vec.append( [ self.curv2Cart(states[i]) for i in range(self.N) ])
+
+        im_vec = []
+        for frame in range(0,self.T,7):
+            for i in range(self.N):
+                rotated_car_img = np.clip(rotate(self.car_img_vec[i%len(self.car_img_vec)],degrees(car_pose_vec[frame][i][2]),reshape=True), 0.0, 1.0)
+                L,W,_ = rotated_car_img.shape
+                im = ax.imshow(rotated_car_img, extent=[car_pose_vec[frame][i][0]-W*car_scale, car_pose_vec[frame][i][0]+W*car_scale, car_pose_vec[frame][i][1]-L*car_scale, car_pose_vec[frame][i][1]+L*car_scale])
+                im_vec.append(im)
+
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(*self.visual_x_lim)
+        ax.set_ylim(*self.visual_y_lim)
+
+        #gif_filename = self.resolveLogname(logPrefix=gif_prefix)
+        #anim.save(gif_filename, writer='pillow')
+        plt.show()
+
 
     ''' --------  math functions and their derivatives ------ '''
     def J(self,x_k,u_k_i,i):
@@ -241,7 +277,6 @@ class CarRacing(ResidualGame):
         u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
-        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
             return self.cpp.J(x_k,u_k_i,i)
         val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
@@ -367,7 +402,7 @@ class CarRacing(ResidualGame):
         ''' car distance larger than sqrt(7) normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0]) )**2 - (x_i[2]-x_j[2])**2 + 0.3**2
+        val = -( (x_i[0]-x_j[0]) )**2 - (x_i[2]-x_j[2])**2 + self.car_size**2
         if (self.CPP_DEBUG):
             alt = self.cpp.h(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -493,6 +528,10 @@ class CarRacing(ResidualGame):
         v_sideway = 0.0
         omega = 0.0
         return np.array([x,y,heading, v_forward, v_sideway, omega])
+    def final(self):
+        super().final()
+
+
 
 
 
