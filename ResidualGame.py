@@ -157,7 +157,7 @@ class ResidualGame(PrintObject,ABC):
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
             t.e()
-            self.print_info(f'------ {N} agents, iter {i} ------')
+            #self.print_info(f'------ {N} agents, iter {i} ------')
 
         t_solve = time()-t0
         self.print_info(f'Total solve time: {t_solve}s')
