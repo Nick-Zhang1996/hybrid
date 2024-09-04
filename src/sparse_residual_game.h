@@ -921,7 +921,33 @@ class ResidualGame {
             return r;
         }
 
-        SpMatrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
+        Matrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
+            int h_plus_sum = 0;
+            for (const auto& mask : h_plus_mask) {
+                h_plus_sum += mask.count();
+            }
+            const int dim_x = N * T * n;
+            const int dim_u = N * T * m;
+            const int dim_lamda = T * N * n;
+            const int dim_mu = T * N * N;
+            const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
+
+            const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
+            Matrix Dr(dim_r,dim_y);
+            Dr.setZero();
+
+            //cout << "drdx: " << endl;
+            dr_dx(x, u, lamda, mu, h_plus_mask, Dr.block(0,0,dim_r,dim_x));
+            //cout << "drdu: " << endl;
+            dr_du(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x,dim_r,dim_u));
+            //cout << "drdlamda: " << endl;
+            dr_dlamda(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u,dim_r,dim_lamda));
+            //cout << "drdmu: " << endl;
+            dr_dmu(x, u, lamda, mu, h_plus_mask, Dr.block(0,dim_x+dim_u+dim_lamda,dim_r,dim_mu));
+            return Dr;
+        }
+
+        SpMatrix dr_dy_sparse(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
                 h_plus_sum += mask.count();
@@ -972,8 +998,7 @@ class ResidualGame {
 
             //cout << "r()" << endl;
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
-            SpMatrix Dr = dr_dy(x, u, lamda, mu, h_plus_mask);
-            profiler.e("init");
+            const Matrix Dr_dense = dr_dy(x, u, lamda, mu, h_plus_mask);
             // remove zero rows/cols
             /*
             profiler.s("nonzeros");
@@ -988,9 +1013,33 @@ class ResidualGame {
             profiler.e("nonzeros");
             */
 
+            SpMatrix Dr_sparse = dr_dy_sparse(x, u, lamda, mu, h_plus_mask);
+            Matrix Dr_sparse_to_dense = Matrix(Dr_sparse);
+            // TODO check matrices are identical
+            bool inconsistency = false;
+            for (int i=0; i<Dr_sparse_to_dense.rows(); i++){
+                for (int j=0; j<Dr_sparse_to_dense.rows(); j++){
+                    if (abs(Dr_sparse_to_dense(i,j) - Dr_dense(i,j)) > 1e-4){
+                        std::cout << i << " , " << j << " = " << Dr_sparse_to_dense(i,j) << " not " << Dr_dense(i,j) << std::endl;
+                        inconsistency = true;
+                    }
+                }
+            }
+            if (inconsistency){
+                std::cout << "inconsistency found" << std::endl;
+            } else {
+                std::cout << "NO inconsistency found" << std::endl;
+            }
+
+
+
+
+            SpMatrix Dr = Dr_sparse;
+            profiler.e("init");
+
             // NOTE here the memory occupied by Dr is not released
-            SpMatrix Dr_reduced;
             std::vector<int> nonzero_cols_idx;
+            SpMatrix Dr_reduced;
             std::tie(Dr_reduced, nonzero_cols_idx) = remove_empty_cols(Dr,dim_r);
             auto& r0_reduced = r0;
 
