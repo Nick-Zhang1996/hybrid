@@ -975,8 +975,8 @@ class ResidualGame {
 
             const int dim_y = dim_x + dim_u + dim_lamda + dim_mu;
             SpMatrix Dr(dim_r,dim_y);
-            // TODO refine on the size
-            Dr.reserve(int(dim_y*dim_y*0.01));
+            //Dr.reserve(int(dim_y*dim_y*0.01));
+            Dr.reserve(Eigen::VectorXi::Constant(dim_y,int(dim_r*0.01)));
             //Dr.setZero();
 
             //cout << "drdx: " << endl;
@@ -1012,10 +1012,10 @@ class ResidualGame {
 
             //cout << "r()" << endl;
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
+            /*
             profiler.s("build dense");
             const Matrix Dr_dense = dr_dy(x, u, lamda, mu, h_plus_mask);
             profiler.e("build dense");
-
             // remove zero rows/cols
             profiler.s("dense nonzeros");
             std::vector<int> nonzero_cols_idx_dense;
@@ -1023,6 +1023,7 @@ class ResidualGame {
             Matrix Dr_reduced_dense = Dr_dense(Eigen::all, nonzero_cols_idx_dense);
             SpMatrix Dr_reduced_sparse = Dr_reduced_dense.sparseView();
             profiler.e("dense nonzeros");
+            */
 
 
             profiler.s("build sparse");
@@ -1059,7 +1060,7 @@ class ResidualGame {
             profiler.s("reconstruct dy");
             Matrix dy(dim_y,1);
             dy.setZero();
-            dy(nonzero_cols_idx_dense,Eigen::all) = dy_reduced;
+            dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
             profiler.e("reconstruct dy");
 
             // line search
