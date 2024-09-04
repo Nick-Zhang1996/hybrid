@@ -11,6 +11,5 @@ include_directories( ${EIGEN3_INCLUDE_DIRS} )
 message("eigen3 include directory: ${EIGEN3_INCLUDE_DIRS}")
 
 add_subdirectory(pybind11)
-#pybind11_add_module(residual_game residual_game.cpp)
 pybind11_add_module(unstructured_driving unstructured_driving.cpp)
 pybind11_add_module(car_merge_kinematic_bicycle car_merge_kinematic_bicycle.cpp)

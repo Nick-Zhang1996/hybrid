@@ -5,7 +5,7 @@ from math import sin,cos,tan,atan,radians,degrees
 from PIL import Image
 from scipy import interpolate
 import scipy.sparse # sparse matrix operations
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 #from matplotlib.animation import FuncAnimation
 #from matplotlib.patches import Rectangle
 
@@ -399,9 +399,10 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    main = CarMergeKinematicBicycle(car_count=3)
+    np.random.seed(0)
+    main = CarMergeKinematicBicycle(car_count=10)
     main.setup()
-    main.solve(save_gif=False,visualize=False,animate=False)
+    main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
     #main.testAnimation()
 

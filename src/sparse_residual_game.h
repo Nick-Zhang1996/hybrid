@@ -37,9 +37,24 @@ using std::endl;
 using std::cout;
 using std::min;
 using Eigen::MatrixBase;
-using Matrix = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+// NOTE has to be RowMajor
+using Matrix = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 // SpMatrix was taken
 using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor>;
+
+template <typename Derived>
+void checksum(const MatrixBase<Derived>& mtx){
+  Eigen::Index  maxIndex;
+  float maxNorm = mtx.rowwise().sum().maxCoeff(&maxIndex);
+  std::cout << "Maximum sum at position " << maxIndex << std::endl;
+  std::cout << "its sum is is: " << maxNorm << std::endl;
+
+  Eigen::Index  minIndex;
+  float minNorm = mtx.rowwise().sum().minCoeff(&minIndex);
+  std::cout << "Minimum sum at position " << minIndex << std::endl;
+  std::cout << "its sum is is: " << minNorm << std::endl;
+
+}
 
 inline double sqr(const double a){
     return a*a;
@@ -118,7 +133,7 @@ class ResidualGame {
         Scalar tolerance;
         int backtracking_max_iter;
         Matrix x0;
-        Profiler<false> profiler;
+        Profiler<true> profiler;
         int current_memory_usage_kb;
 
     public:
@@ -988,7 +1003,6 @@ class ResidualGame {
             //cout << "getHplusMask()" << endl;
             profiler.s();
 
-            profiler.s("init");
             const int dim_x = N * T * n;
             const int dim_u = N * T * m;
             const int dim_lamda = T * N * n;
@@ -998,63 +1012,28 @@ class ResidualGame {
 
             //cout << "r()" << endl;
             auto r0 = r(x, u, lamda, mu, h_plus_mask);
+            profiler.s("build dense");
             const Matrix Dr_dense = dr_dy(x, u, lamda, mu, h_plus_mask);
+            profiler.e("build dense");
+
             // remove zero rows/cols
-            /*
-            profiler.s("nonzeros");
-            std::vector<int> nonzero_rows_idx;
-            std::vector<int> nonzero_cols_idx;
-            std::tie(nonzero_rows_idx, nonzero_cols_idx) = nonzeros(Dr);
-            //cout << "nonzero" << endl;
+            profiler.s("dense nonzeros");
+            std::vector<int> nonzero_cols_idx_dense;
+            nonzero_cols_idx_dense = nonzero_cols(Dr_dense);
+            Matrix Dr_reduced_dense = Dr_dense(Eigen::all, nonzero_cols_idx_dense);
+            SpMatrix Dr_reduced_sparse = Dr_reduced_dense.sparseView();
+            profiler.e("dense nonzeros");
 
-            Matrix Dr_reduced = Dr(nonzero_rows_idx, nonzero_cols_idx);
-            Matrix r0_reduced = r0(nonzero_rows_idx,Eigen::all);
-            auto Dr_reduced_sparse = Dr_reduced.sparseView();
-            profiler.e("nonzeros");
-            */
 
+            profiler.s("build sparse");
             SpMatrix Dr_sparse = dr_dy_sparse(x, u, lamda, mu, h_plus_mask);
-            Matrix Dr_sparse_to_dense = Matrix(Dr_sparse);
-            // TODO check matrices are identical
-            bool inconsistency = false;
-            for (int i=0; i<Dr_sparse_to_dense.rows(); i++){
-                for (int j=0; j<Dr_sparse_to_dense.rows(); j++){
-                    if (abs(Dr_sparse_to_dense(i,j) - Dr_dense(i,j)) > 1e-4){
-                        std::cout << i << " , " << j << " = " << Dr_sparse_to_dense(i,j) << " not " << Dr_dense(i,j) << std::endl;
-                        inconsistency = true;
-                    }
-                }
-            }
-            if (inconsistency){
-                std::cout << "inconsistency found" << std::endl;
-            } else {
-                std::cout << "NO inconsistency found" << std::endl;
-            }
-
-
-
-
-            SpMatrix Dr = Dr_sparse;
-            profiler.e("init");
-
+            profiler.e("build sparse");
             // NOTE here the memory occupied by Dr is not released
+            profiler.s("sparse nonzeros");
             std::vector<int> nonzero_cols_idx;
             SpMatrix Dr_reduced;
-            std::tie(Dr_reduced, nonzero_cols_idx) = remove_empty_cols(Dr,dim_r);
-            auto& r0_reduced = r0;
-
-            // FIXME for debugging
-            if (Dr_reduced.cols() != Dr_reduced.rows()){
-                std::cout << "Dr rows " << Dr.rows() << "cols " << Dr.cols() << endl;
-                std::cout << "Dr_reduced rows " << Dr_reduced.rows() << "cols " << Dr_reduced.cols() << endl;
-                throw std::runtime_error("Dr is not square");
-            }
-
-            //cout << "sparseview" << endl;
-            //cout << "Dr " << Dr.rows() << " " << Dr.cols() << endl;
-            //cout << "r0 " << r0.rows() << " " << r0.cols() << endl;
-            cout << "Dr_reduced " << Dr_reduced.rows() << " " << Dr_reduced.cols() << endl;
-            //cout << "r0_reduced " << r0_reduced.rows() << " " << r0_reduced.cols() << endl;
+            std::tie(Dr_reduced, nonzero_cols_idx) = remove_empty_cols(Dr_sparse,dim_r);
+            profiler.e("sparse nonzeros");
 
             profiler.s("solve");
             Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
@@ -1069,9 +1048,7 @@ class ResidualGame {
                 //return std::vector<std::vector<Matrix>>();
             }
 
-            Matrix dy_reduced = solver.solve(-r0_reduced);
-            //Matrix dy_reduced = solver.solve(-r0);
-            //cout << "solve" << dy_reduced.maxCoeff() << endl;
+            Matrix dy_reduced = solver.solve(-r0);
             if (solver.info() != Eigen::Success){
                 throw std::runtime_error(" solver solve() failed");
                 //return std::vector<std::vector<Matrix>>();
@@ -1082,7 +1059,7 @@ class ResidualGame {
             profiler.s("reconstruct dy");
             Matrix dy(dim_y,1);
             dy.setZero();
-            dy(nonzero_cols_idx,Eigen::all) = dy_reduced;
+            dy(nonzero_cols_idx_dense,Eigen::all) = dy_reduced;
             profiler.e("reconstruct dy");
 
             // line search
@@ -1096,22 +1073,22 @@ class ResidualGame {
                 const auto x_size = x.size();
                 std::vector<Matrix> xx(x_size);
                 for (int i=0; i<x_size; i++){
-                    xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
+                    xx.at(i) = x.at(i) + my_step * dy.block(i*N*n,0,N*n,1).reshaped<Eigen::RowMajor>(N,n);
                 }
                 const auto u_size = u.size();
                 std::vector<Matrix> uu(x_size);
                 for (int i=0; i<u_size; i++){
-                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped<Eigen::AutoOrder>(N,m);
+                    uu.at(i) = u.at(i) + my_step * dy.block(dim_x+i*N*m,0,N*m,1).reshaped<Eigen::RowMajor>(N,m);
                 }
                 const auto lamda_size = lamda.size();
                 std::vector<Matrix> ll(lamda_size);
                 for (int i=0; i<lamda_size; i++){
-                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped<Eigen::AutoOrder>(N,n);
+                    ll.at(i) = lamda.at(i) + my_step * dy.block(dim_x+dim_u+i*N*n,0,N*n,1).reshaped<Eigen::RowMajor>(N,n);
                 }
                 const auto mu_size = mu.size();
                 std::vector<Matrix> mm(mu_size);
                 for (int i=0; i<mu_size; i++){
-                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped<Eigen::AutoOrder>(N,N);
+                    mm.at(i) = mu.at(i) + my_step * dy.block(dim_x+dim_u+dim_lamda+i*N*N,0,N*N,1).reshaped<Eigen::RowMajor>(N,N);
                 }
                 return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>> {xx, uu, ll, mm};
             };
@@ -1125,7 +1102,6 @@ class ResidualGame {
 
             bool flag_no_step = true;
             for (int i=0; i<backtracking_max_iter; i++){
-                //rt_norm = r_t_norm(step);
                 auto y_tuple = split_y(x, u, lamda, mu, dy, step);
                 rt_norm = r(std::get<0>(y_tuple), std::get<1>(y_tuple), std::get<2>(y_tuple),std::get<3>(y_tuple), h_plus_mask).norm();
                 if (rt_norm > (1-bc_a*step)*r0_norm){
@@ -1141,7 +1117,6 @@ class ResidualGame {
                 }
             }
             profiler.e("line search");
-
             profiler.e();
 
             additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
@@ -1168,8 +1143,8 @@ class ResidualGame {
         // --- helper function ---
         // find nonzero submatrix
         // return: skimmed matrix (dense), nonzero row indices, nonzero col indices
-        std::tuple<std::vector<int>, std::vector<int>>
-        nonzeros(const Matrix& mtx){
+        std::vector<int>
+        nonzero_cols(const Matrix& mtx){
             // cols
             Eigen::Matrix<bool,1,Eigen::Dynamic,Eigen::RowMajor> nonzero_cols_mask = mtx.cast<bool>().colwise().any();
             const int nonzero_cols_size = nonzero_cols_mask.cast<int>().sum();
@@ -1181,19 +1156,8 @@ class ResidualGame {
                 nonzero_cols_idx.push_back(i);
                 }
             }
-            // rows
-            Eigen::Matrix<bool,1,Eigen::Dynamic,Eigen::RowMajor> nonzero_rows_mask = mtx.cast<bool>().rowwise().any();
-            const int nonzero_rows_size = nonzero_rows_mask.cast<int>().sum();
-            std::vector<int> nonzero_rows_idx;
-            nonzero_rows_idx.reserve(nonzero_rows_size);
-            const int mtx_rows = mtx.rows();
-            for (int i=0; i<mtx_rows; i++){
-                if (nonzero_rows_mask(0,i)){
-                nonzero_rows_idx.push_back(i);
-                }
-            }
 
-            return {nonzero_rows_idx, nonzero_cols_idx};
+            return  nonzero_cols_idx;
         }
 
         void summary(){
