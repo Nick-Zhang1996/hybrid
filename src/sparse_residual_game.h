@@ -143,8 +143,8 @@ class ResidualGame {
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
             tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
             x0(),profiler(),current_memory_usage_kb(0) {
-                current_memory_usage_kb = getCurrentMemoryUsageInKB();
-                std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
+                //current_memory_usage_kb = getCurrentMemoryUsageInKB();
+                //std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }
 
         void set_x0(const Matrix &val){
@@ -991,8 +991,8 @@ class ResidualGame {
         }
 
         std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
-            int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
-            std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;
+            //int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
+            //std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;
 
             //cout << "step()" << endl;
             const auto h_plus_mask = getHplusMask(x);
@@ -1120,8 +1120,8 @@ class ResidualGame {
             profiler.e("line search");
             profiler.e();
 
-            additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
-            std::cout << "step exit memory: " << additional_memory_usage_kb << "KB" << std::endl;
+            //additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
+            //std::cout << "step exit memory: " << additional_memory_usage_kb << "KB" << std::endl;
 
             // stopping criteria
             auto y_tuple = split_y(x, u, lamda, mu, dy, step);
