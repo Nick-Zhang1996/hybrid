@@ -31,6 +31,7 @@
 // TODO make program self-independent
 // TODO use template format for block
 // TODO remove temporary variables?
+// TODO pass in max iterations
 
 using Scalar = double;
 using std::endl;
@@ -132,6 +133,8 @@ class ResidualGame {
         Scalar dt,rho,rho_b,bc_a,bc_b;
         Scalar tolerance;
         int backtracking_max_iter;
+        int max_iterations;
+        // dim: N*n
         Matrix x0;
         Profiler<true> profiler;
         int current_memory_usage_kb;
@@ -142,7 +145,7 @@ class ResidualGame {
             N(_N), T(_T),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
             tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
-            x0(),profiler(),current_memory_usage_kb(0) {
+            x0(),profiler(),current_memory_usage_kb(0),max_iterations(30) {
                 //current_memory_usage_kb = getCurrentMemoryUsageInKB();
                 //std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }
@@ -990,6 +993,61 @@ class ResidualGame {
             return Dr;
         }
 
+        void rollout_in_place(const Matrix& x0, const std::vector<Matrix>& u, std::vector<Matrix>& x){
+            // NOTE that x[0] = x_1, x = [x_1..x_T]
+            // x1 = f(x0,u0)
+            for (int i=0; i<N; i++){
+                x[0].row(i).transpose() = f(x0.row(i).transpose(), u[0].row(i).transpose());
+            }
+            // x_k = f(x_k-1,u_k-1)
+            for (int k=2; k<T+1; k++){
+                for (int i=0; i<N; i++){
+                    x[k-1].row(i).transpose() = f(x[k-2].row(i).transpose(), u[k-1].row(i).transpose());
+                }
+            }
+
+
+        }
+
+        // solve the game using step(), return: x,u,lambda, mu, has_converged
+        std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
+        solve(const std::vector<Matrix>& in_u){
+            std::cout << "solve start" << std::endl;
+            // initialize x (from x0,u) ,lamda, mu
+            std::vector<Matrix> lamda(T,Matrix::Zero(N,n));
+            std::vector<Matrix> mu(T,Matrix::Zero(N,N));
+            std::vector<Matrix> x(T,Matrix(N,n));
+            std::vector<Matrix> u(in_u);
+            rollout_in_place(x0, u, x);
+
+            std::cout << "init done" << std::endl;
+            // iteratively solve
+            bool is_stop_condition_met = false;
+            bool has_converged = false;
+
+            for (int iter=0; iter<max_iterations; iter++){
+                try {
+                    std::cout << "iter " << iter << std::endl;
+                    auto retval = step(x, u, lamda, mu);
+                    x = retval[0]; u = retval[1]; lamda = retval[2]; mu = retval[3];
+                    rollout_in_place(x0, u, x);
+                    post_step_update();
+                } catch ( const pybind11::stop_iteration& e){
+                    std::cout << e.what() << std::endl;
+                    is_stop_condition_met = true;
+                    if (e.what() == "stopping criteria met"){
+                        has_converged = true;
+                        std::cout << "algorithm converged after " << iter << " iterations " << std::endl;
+                    }
+                    break;
+                } catch ( const std::runtime_error& e){
+                    std::cout << e.what() << std::endl;
+                }
+            }
+            // return x,u, lamda, mu, status, residual
+            return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool> {x, u, lamda, mu, has_converged};
+        }
+
         std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
             //int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
             //std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;
@@ -1003,8 +1061,8 @@ class ResidualGame {
             //cout << "getHplusMask()" << endl;
             profiler.s();
 
-            const int dim_x = N * T * n;
-            const int dim_u = N * T * m;
+            const int dim_x = T * N * n;
+            const int dim_u = T * N * m;
             const int dim_lamda = T * N * n;
             const int dim_mu = T * N * N;
             const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;

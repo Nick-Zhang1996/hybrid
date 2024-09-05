@@ -88,13 +88,29 @@ class ResidualGame(PrintObject,ABC):
             self.cpp.set_x0(self.x0)
         '''
 
+    def cpp_solve(self,save_gif=False,visualize=False,animate=False):
+        self.print_ok(f'solve using cpp.solve()')
+        u_ref = self.guess
+        t0 = time()
+        retval = self.cpp.solve(u_ref)
+        x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval[:-1]]
+        has_converged = retval[-1]
+        t_solve = time()-t0
+        self.print_info(f'Total solve time: {t_solve}s')
+
+        # FIXME debug - check residual
+        h_plus_mask = self.getHplusMask(x_ref)
+        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
+        r0_norm = np.linalg.norm(r0)
+        self.print_debug(f' residual = {r0_norm}')
+        self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
+        return
+
     def solve(self,save_gif=False,visualize=False,animate=False):
         ''' main entry point for solver, will call cpp version if available, will fallback to python if cpp does not provide a solution,
             I forgot why I did the fallback
         '''
         #TODO does cpp lscg fallback to cpp sparseQR?
-
-
         self.print_ok(f'USE_CPP: {self.USE_CPP}')
         self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')
 
@@ -121,13 +137,6 @@ class ResidualGame(PrintObject,ABC):
                     try:
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
-                        '''
-                        # FIXME debug
-                        h_plus_mask = self.getHplusMask(x_ref)
-                        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
-                        r0_norm = np.linalg.norm(r0)
-                        self.print_debug(f' residual = {r0_norm}')
-                        '''
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
@@ -149,13 +158,6 @@ class ResidualGame(PrintObject,ABC):
                     self.print_ok(e)
                     has_converged = True
                     break
-            '''
-            if (np.any(mu_ref<-1e-8)):
-                h_plus_mask = self.getHplusMask(x_ref)
-                ratio = np.sum(mu_ref<-1e-8) / mu_ref.flatten().shape[0]
-                ratio_plus = np.sum(mu_ref[h_plus_mask]<-1e-8) / mu_ref.flatten().shape[0]
-                self.print_debug(f'negative lambda {ratio, ratio_plus}')
-            '''
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0,u_ref)
             t.e()
