@@ -8,6 +8,7 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
     private:
         Matrix A,B,J_Qr,J_Q,J_R,h_Qh,target_y;
     public:
+        __global__
         CarMergeKinematicBicycle(const int _N, const int _T,
                 const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b,
                 const Scalar _tolerance, const int _backtracking_max_iter,
@@ -22,12 +23,14 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
         }
 
 
+        __global__
         Matrix f(const Matrix x, const Matrix u){
             const Scalar lf = 1.0; const Scalar lr = 1.0;
             const Scalar beta = atan(tan(u(1,0))*lr/(lf+lr));
             Matrix dx = (Matrix(n,1) << x(2,0)*cos(x(3,0)+beta),x(2,0)*sin(x(3,0)+beta), u(0,0),x(2,0)/lr*sin(beta)).finished();
             return x+dx*dt;
         }
+        __global__
         Matrix df_dx(const Matrix x, const Matrix u, const int i){
             const Scalar lf = 1.0; const Scalar lr = 1.0;
             const Scalar beta = atan(tan(u(1,0))*lr/(lf+lr));
@@ -38,6 +41,7 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
                                         0.0,0.0,sin(beta)/1.0,0.0 ).finished();
             return Matrix::Identity(n,n) + A*dt;
         }
+        __global__
         Matrix df_du(const Matrix x, const Matrix u, const int i){
             const Scalar lf = 1.0; const Scalar lr = 1.0;
             const Scalar beta = atan(tan(u(1,0))*lr/(lf+lr));
@@ -51,56 +55,72 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
         }
 
         // collision constraint function
+        __global__
         Scalar h(const Matrix x_i, const Matrix x_j){
             return -sqr(x_i(0,0)-x_j(0,0)) - sqr(x_i(1,0)-x_j(1,0)) + 7.0;
         }
+        __global__
         Matrix dh_dxi(const Matrix x_i, const Matrix x_j){
             return 2*(x_i-x_j).transpose() * h_Qh;
         }
+        __global__
         Matrix dh_dxj(const Matrix x_i, const Matrix x_j){
             return 2*(x_j-x_i).transpose() * h_Qh;
         }
+        __global__
         Matrix dh_dxi_dxi(const Matrix x_i, const Matrix x_j){
             return 2*h_Qh.transpose();
         }
+        __global__
         Matrix dh_dxj_dxi(const Matrix x_i, const Matrix x_j){
             return -2*h_Qh.transpose();
         }
+        __global__
         Matrix dh_dxi_dxj(const Matrix x_i, const Matrix x_j){
             return -2*h_Qh.transpose();
         }
+        __global__
         Matrix dh_dxj_dxj(const Matrix x_i, const Matrix x_j){
             return 2*h_Qh.transpose();
         }
 
         // Objective function (J)
         // NOTE this is dependent upon the car
+        __global__
         Matrix J_x_ref_fun(int i){
             Matrix mtx(n,1);
             (mtx << 0,target_y(i,0), 2.0, 0.0 ).finished();
             return mtx;
         }
+        __global__
         Matrix J(const Matrix x_k, const Matrix u_k_i, int i){
             return (x_k.row(i).transpose()-J_x_ref_fun(i)).transpose() * J_Qr * (x_k.row(i).transpose()-J_x_ref_fun(i)) + x_k.row(i) * J_Q * x_k.row(i).transpose() + u_k_i.transpose() * J_R * u_k_i;
         }
+        __global__
         Matrix dJi_dxi(const Matrix x_k, const Matrix u, int i){
             return  2* (x_k.row(i).transpose()-J_x_ref_fun(i)).transpose() * J_Qr + 2*x_k.row(i).transpose().transpose() * J_Q;
         }
+        __global__
         Matrix dJi_dxj(const Matrix x_k, const Matrix u, int i, int j){
             return  Matrix::Zero(1,n);
         }
+        __global__
         Matrix dJi_du(const Matrix x_k, const Matrix u, int i){
             return  2* u.transpose() * J_R;
         }
+        __global__
         Matrix dJi_dxi_dxi(const Matrix x_k, const Matrix u, int i){
             return  2*J_Qr + 2*J_Q;
         }
+        __global__
         Matrix dJi_dxi_dxj(const Matrix x_k, const Matrix u, int i, int j){
             return  Matrix::Zero(n,n);
         }
+        __global__
         Matrix dJi_dxj_dxj(const Matrix x_k, const Matrix u, int i, int j){
             return  Matrix::Zero(n,n);
         }
+        __global__
         Matrix dJi_dudu(const Matrix x_k, const Matrix u, int i){
             return  2*J_R;
         }

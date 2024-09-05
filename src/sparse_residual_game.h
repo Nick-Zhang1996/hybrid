@@ -58,6 +58,7 @@ void checksum(const MatrixBase<Derived>& mtx){
 
 }
 
+__global__
 inline double sqr(const double a){
     return a*a;
 }
@@ -78,9 +79,27 @@ int getCurrentMemoryUsageInKB(){ //Note: this value is in KB!
     return memory_usage;
 }
 
+
+__global__
+std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
+naive_particle_solve(const int _N, const int _T,
+                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter, Matrix x0){
+    // TODO generate random in_u
+    std::vector<Matrix> u(T,Matrix(N,m));
+    std::vector<Matrix> x(T,Matrix(N,n));
+    std::vector<Matrix> lamda(T,Matrix::Zero(N,n));
+    std::vector<Matrix> mu(T,Matrix::Zero(N,N));
+    bool has_converged;
+
+    ResidualGame game(_N, _T, _dt, _rho, _rho_b, _bc_a, _bc_b, _tolerance,_backtracking_max_iter);
+    game.set_x0(x0);
+    std::tie(x,u,lamda, mu) = game.solve(u);
+}
+
 // assign a dense matrix to a sub-block of a sparse matrix
 // this function assumes there's no existing entries in the sparse matrix, it uses SpMatrix.insert()
 // for addition, use sp_add()
+__global__
 template <typename Derived>
 void sp_assign(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int row_offset, const int col_offset, const int row_size, const int col_size){
     // maybe we can avoid creating this variable?
@@ -94,6 +113,7 @@ void sp_assign(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int r
 }
 
 template <typename Derived>
+__global__
 void sp_add(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int row_offset, const int col_offset, const int row_size, const int col_size){
     // maybe we can avoid creating this variable?
     const SpMatrix sp_in_mtx = in_mtx.sparseView();
@@ -105,6 +125,7 @@ void sp_add(const MatrixBase<Derived>& in_mtx, SpMatrix& out_mtx, const int row_
     }
 }
 
+__global__
 std::tuple<SpMatrix,std::vector<int>> remove_empty_cols(SpMatrix& matrix, const int reserve_size) {
     //  Identify non-empty columns
     std::vector<int> nonEmptyCols;
@@ -141,6 +162,7 @@ class ResidualGame {
         int current_memory_usage_kb;
 
     public:
+        __global__
         ResidualGame(const int _N, const int _T,
                 const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter):
             N(_N), T(_T),
@@ -151,14 +173,17 @@ class ResidualGame {
                 //std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }
 
+        __global__
         void set_x0(const Matrix &val){
             x0 = Matrix(val);
         }
+        __global__
         void post_step_update(){
             rho *= rho_b;
         }
 
         // x_k: dim: N*n, u_k_i: dim:m*1, lambda_k:N*n, h_k_plus_mask: N*N, mu_k dim:N*N
+        __global__
         Matrix dL_dx_ik(const Matrix x_k,const Matrix  u_k_i,const Matrix  x_k1_i,const Matrix h_k_plus_mask,const Matrix lamda_k,const Matrix mu_k,const int i){
             Matrix val =  dJi_dxi(x_k,u_k_i,i) + lamda_k.row(i) * df_dx(x_k.row(i).transpose(),u_k_i,i);
             for (int j=0; j<N; j++){
@@ -172,6 +197,7 @@ class ResidualGame {
             return val;
         }
 
+        __global__
         Matrix dL_du(const Matrix x_k, const Matrix u_k_i, const Matrix x_k1_i, const Matrix h_k_plus_mask,const Matrix lamda_k, const Matrix mu_k,const int i){
             return dJi_du(x_k,u_k_i,i) + lamda_k.row(i) * df_du(x_k.row(i).transpose(), u_k_i,i);
         }
@@ -181,6 +207,7 @@ class ResidualGame {
         //u_i_k: 0..T-1, T*N*m
         //lamda_i_k: 0..T-1 T*N*n
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
+        __global__
         Matrix dLLi_dxi(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
             // TODO is this the best approach?
             Matrix der(1,T*n);
@@ -208,6 +235,7 @@ class ResidualGame {
         //lamda_i_k: 0..T-1 T*N*n
         //mu_k_i_j: 1..T T*N*N NOTE starts from 1
         // TODO obsolete
+        __global__
         Matrix dLLi_dx(const std::vector<Matrix>& x,const std::vector<Matrix>& u,const std::vector<Matrix>& h_plus_mask,const std::vector<Matrix>& lamda,const std::vector<Matrix>& mu,const int i){
             throw std::runtime_error("obsolete function called");
 
@@ -250,6 +278,7 @@ class ResidualGame {
             return der;
         }
 
+        __global__
         Matrix dLLi_dui(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
             Matrix der(1, T * m); // Initialize derivative vector as row vector
             der.setZero(); // Ensure all items are properly zero-initialized
@@ -266,6 +295,7 @@ class ResidualGame {
         }
 
         // TODO obsolete
+        __global__
         Matrix dLLi_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
             throw std::runtime_error("obsolete function called");
             Matrix der(1, T * N* m); // Initialize derivative vector as row vector
@@ -282,15 +312,18 @@ class ResidualGame {
             return der;
         }
 
+        __global__
         Matrix dBh_dxi(const Matrix& x_i, const Matrix& x_j) {
             // Calculate dBh/dxi
             return -1.0 / (rho * h(x_i, x_j)) * dh_dxi(x_i, x_j);
         }
 
+        __global__
         Matrix dBh_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate dBh/dxj
             return -1.0 / (rho * h(x_i, x_j)) * dh_dxj(x_i, x_j);
         }
+        __global__
         Matrix dBh_dxi_dxi(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
             Scalar h_val = h(x_i, x_j);
@@ -301,6 +334,7 @@ class ResidualGame {
             Matrix val = 1.0 / (rho * h_val) * (-dhdxi_dxi + 1.0 / h_val * dhdxi.transpose() * dhdxi);
             return val;
         }
+        __global__
         Matrix dBh_dxi_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
             Scalar h_val = h(x_i, x_j);
@@ -312,6 +346,7 @@ class ResidualGame {
             Matrix val = 1.0 / (rho * h_val) * (-dhdxi_dxj + 1.0 / h_val * dhdxi.transpose() * dhdxj);
             return val;
         }
+        __global__
         Matrix dBh_dxj_dxj(const Matrix& x_i, const Matrix& x_j) {
             // Calculate h, dh/dxi, and dhdxi_dxi
             Scalar h_val = h(x_i, x_j);
@@ -322,6 +357,7 @@ class ResidualGame {
             Matrix val = 1.0 / (rho * h_val) * (-dhdxj_dxj + 1.0 / h_val * dhdxj.transpose() * dhdxj);
             return val;
         }
+        __global__
         Matrix dF_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const int i, const int k) {
             // Initialize dF_dx matrix
             Matrix dFdx = Matrix::Zero(n, T * N * n);
@@ -337,6 +373,7 @@ class ResidualGame {
             return dFdx;
         }
 
+        __global__
         Matrix dF0_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const int i) {
             // Initialize dF_dx matrix
             Matrix dFdx = Matrix::Zero(n, T * N * n);
@@ -345,6 +382,7 @@ class ResidualGame {
             return dFdx;
         }
 
+        __global__
         Matrix dh_dx(const std::vector<Matrix>& x, const int k, const int i, const int j) {
             // Initialize dh_dx matrix
             Matrix dhdx = Matrix::Zero(1, T * N * n);
@@ -360,6 +398,7 @@ class ResidualGame {
             return dhdx;
         }
 
+        __global__
         Matrix dLLi_dxi_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
             //cout << "dLLi_dxdx " << endl;
             Matrix dLL_dxi_dx = Matrix::Zero(T*n, T*N*n);
@@ -432,6 +471,7 @@ class ResidualGame {
 
 
         // TODO obsolete
+        __global__
         Matrix dLLi_dxdx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const int i) {
             throw std::runtime_error("obsolete function called");
             //cout << "dLLi_dxdx " << endl;
@@ -509,6 +549,7 @@ class ResidualGame {
             return dLL_dxdx;
         }
 
+        __global__
         Matrix dLLi_dxi_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, int i) {
             // Calculate dimensions
             const int dim_x = T * N * n;
@@ -531,6 +572,7 @@ class ResidualGame {
         }
 
         // TODO obsolete
+        __global__
         Matrix dLLi_dx_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& h_plus_mask, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, int i) {
             throw std::runtime_error("obsolete function called");
             // Calculate dimensions
@@ -558,6 +600,7 @@ class ResidualGame {
 
 
         // fill-in style
+        __global__
         template<typename Derived>
         void dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             int dim_x = N * T * n;
@@ -599,6 +642,7 @@ class ResidualGame {
         }
 
         // copy style
+        __global__
         Matrix dr_dx(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_x = N * T * n;
@@ -616,6 +660,7 @@ class ResidualGame {
         }
 
         // fill a sparse matrix with dr_dx, starting at row/col_offset.
+        __global__
         void dr_dx_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
             int dim_x = N * T * n;
             int dim_u = N * T * m;
@@ -661,6 +706,7 @@ class ResidualGame {
         }
 
 
+        __global__
         template<typename Derived>
         void dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdu = const_cast<MatrixBase<Derived>&>(mtx);
@@ -690,6 +736,7 @@ class ResidualGame {
             }
         }
 
+        __global__
         Matrix dr_du(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_u = T * N * m;
@@ -703,6 +750,7 @@ class ResidualGame {
             return drdu;
         }
 
+        __global__
         void dr_du_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
             auto& drdu = mtx;
             int index = 0;
@@ -736,6 +784,7 @@ class ResidualGame {
         }
 
 
+        __global__
         template<typename Derived>
         void dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdlamda = const_cast<MatrixBase<Derived>&>(mtx);
@@ -768,6 +817,7 @@ class ResidualGame {
 
         }
 
+        __global__
         Matrix dr_dlamda(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             int dim_lamda = T * N * n;
@@ -781,6 +831,7 @@ class ResidualGame {
             return drdlamda;
         }
 
+        __global__
         void dr_dlamda_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
             auto& drdlamda = mtx;
             int index = 0;
@@ -817,6 +868,7 @@ class ResidualGame {
 
         }
 
+        __global__
         template<typename Derived>
         void dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, const MatrixBase<Derived>& mtx) {
             auto& drdmu = const_cast<MatrixBase<Derived>&>(mtx);
@@ -836,6 +888,7 @@ class ResidualGame {
 
         }
 
+        __global__
         Matrix dr_dmu(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             // Calculate dimensions
             const int dim_mu = T * N * N;
@@ -851,6 +904,7 @@ class ResidualGame {
             return drdmu;
         }
 
+        __global__
         void dr_dmu_fill_block(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask, SpMatrix& mtx, const int row_offset, const int col_offset, const int row_size, const int col_size) {
             auto& drdmu = mtx;
             const int dim_mu = T * N * N;
@@ -870,6 +924,7 @@ class ResidualGame {
 
         }
 
+        __global__
         std::vector<Matrix> getHplusMask(const std::vector<Matrix>& x) {
              std::vector<Matrix> h_plus_mask(T);
              for (int i=0; i<T; i++){
@@ -886,6 +941,7 @@ class ResidualGame {
             return h_plus_mask;
         }
 
+        __global__
         Scalar getCollisionResidual(const std::vector<Matrix>& x) {
             Scalar h_res = 0;
             for (int k = 1; k < T+1; ++k) {
@@ -901,6 +957,7 @@ class ResidualGame {
             return h_res;
         }
 
+        __global__
         Matrix r(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -940,6 +997,7 @@ class ResidualGame {
             return r;
         }
 
+        __global__
         Matrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -966,6 +1024,7 @@ class ResidualGame {
             return Dr;
         }
 
+        __global__
         SpMatrix dr_dy_sparse(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -1010,7 +1069,10 @@ class ResidualGame {
 
         }
 
+
+
         // solve the game using step(), return: x,u,lambda, mu, has_converged
+        __global__
         std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
         solve(const std::vector<Matrix>& in_u){
             // initialize x (from x0,u) ,lamda, mu
@@ -1053,6 +1115,7 @@ class ResidualGame {
             return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool> {x, u, lamda, mu, has_converged};
         }
 
+        __global__
         std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
             //int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
             //std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;
@@ -1209,6 +1272,7 @@ class ResidualGame {
         // --- helper function ---
         // find nonzero submatrix
         // return: skimmed matrix (dense), nonzero row indices, nonzero col indices
+        __global__
         std::vector<int>
         nonzero_cols(const Matrix& mtx){
             // cols
@@ -1226,6 +1290,7 @@ class ResidualGame {
             return  nonzero_cols_idx;
         }
 
+        __global__
         void summary(){
             profiler.summary();
         }
@@ -1233,6 +1298,7 @@ class ResidualGame {
         // DEBUG functions
 
         // solve Ax=B
+        __global__
         Matrix SparseQR(const Matrix& A, const Matrix& B){
             Eigen::SparseQR<SpMatrix, Eigen::COLAMDOrdering<int>> solver;
             solver.compute(A.sparseView());
@@ -1249,6 +1315,7 @@ class ResidualGame {
             return x;
         }
 
+        __global__
         Matrix LeastSquaresConjugateGradient(const Matrix& A, const Matrix& B){
             Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
             solver.compute(A.sparseView());
@@ -1267,9 +1334,11 @@ class ResidualGame {
             return x;
         }
 
+        __global__
         void print_dim(const Matrix val){
             std::cout << "rows " << val.rows() << "cols " << val.cols() << endl;
         }
+        __global__
         Matrix test_bool_array(const Matrix val, const Matrix mask){
             Matrix output(val);
             for (int i=0; i<val.rows(); i++){
@@ -1281,9 +1350,11 @@ class ResidualGame {
             }
             return output;
         }
+        __global__
         Matrix three_dim(const std::vector<Matrix> mtx_vec){
             return mtx_vec[1];
         }
+
         // doesn't work unfortunately
         void pass_by_ref(std::vector<Matrix>& array){
             // multiply the first array value by 2
@@ -1294,14 +1365,17 @@ class ResidualGame {
         }
 
         // ---- virtual functions, they should be overridden in derived class
+        __global__
         virtual Matrix f(const Matrix x, const Matrix u){
             throw std::runtime_error("abstract function f() shouldn't be called");
             return x;
         }
+        __global__
         virtual Matrix df_dx(const Matrix x, const Matrix u, const int i){
             throw std::runtime_error("abstract function df_dx() shouldn't be called");
             return x;
         }
+        __global__
         virtual Matrix df_du(const Matrix x, const Matrix u, const int i){
             throw std::runtime_error("abstract function hdf_du() shouldn't be called");
             return x;
@@ -1310,64 +1384,79 @@ class ResidualGame {
 
         // TODO use correct dimension zero matrices
         // collision constraint function
+        __global__
         virtual Scalar h(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function h() shouldn't be called");
             return 0.0;
         }
+        __global__
         virtual Matrix dh_dxi(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxi() shouldn't be called");
             return x_i;
         }
+        __global__
         virtual Matrix dh_dxj(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxj() shouldn't be called");
             return x_i;
         }
+        __global__
         virtual Matrix dh_dxi_dxi(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxi_dxi() shouldn't be called");
             return x_i;
         }
+        __global__
         virtual Matrix dh_dxj_dxi(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxj_dxi() shouldn't be called");
             return x_i;
         }
+        __global__
         virtual Matrix dh_dxi_dxj(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxi_dxj() shouldn't be called");
             return x_i;
         }
+        __global__
         virtual Matrix dh_dxj_dxj(const Matrix x_i, const Matrix x_j){
             throw std::runtime_error("abstract function dh_dxj_dxj() shouldn't be called");
             return x_i;
         }
 
         // Objective function (J)
+        __global__
         virtual Matrix J(const Matrix x_k, const Matrix u_k_i, int i){
             throw std::runtime_error("abstract function J() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dxi(const Matrix x_k, const Matrix u, int i){
             throw std::runtime_error("abstract function dJi_dxi() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dxj(const Matrix x_k, const Matrix u, int i, int j){
             throw std::runtime_error("abstract function dJi_dxj() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_du(const Matrix x_k, const Matrix u, int i){
             throw std::runtime_error("abstract function dJi_du() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dxi_dxi(const Matrix x_k, const Matrix u, int i){
             throw std::runtime_error("abstract function dJi_dxi_dxi() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dxi_dxj(const Matrix x_k, const Matrix u, int i, int j){
             throw std::runtime_error("abstract function dJi_dxi_dxj() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dxj_dxj(const Matrix x_k, const Matrix u, int i,int j){
             throw std::runtime_error("abstract function dJi_dxj_dxj() shouldn't be called");
             return x_k;
         }
+        __global__
         virtual Matrix dJi_dudu(const Matrix x_k, const Matrix u, int i){
             throw std::runtime_error("abstract function dJi_dudu() shouldn't be called");
             return x_k;
