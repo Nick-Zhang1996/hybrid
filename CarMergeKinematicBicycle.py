@@ -399,10 +399,11 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 
 if __name__=="__main__":
-    np.random.seed(3)
-    main = CarMergeKinematicBicycle(car_count=10)
+    np.random.seed(0)
+    main = CarMergeKinematicBicycle(car_count=6)
     main.setup()
-    main.cpp_solve(save_gif=False,visualize=False,animate=False)
+    #main.cpp_solve(save_gif=False,visualize=False,animate=False)
+    main.naive_particle_solve(save_gif=False,visualize=False,animate=False)
     main.final()
     #main.testAnimation()
 

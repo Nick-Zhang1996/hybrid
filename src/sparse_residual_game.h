@@ -2,6 +2,7 @@
 //#define EIGEN_RUNTIME_NO_MALLOC
 //Eigen::internal::set_is_malloc_allowed(false);
 
+#include <string.h>
 #include <iostream>
 #include <fstream>
 #include <pybind11/stl.h>
@@ -1012,7 +1013,6 @@ class ResidualGame {
         // solve the game using step(), return: x,u,lambda, mu, has_converged
         std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
         solve(const std::vector<Matrix>& in_u){
-            std::cout << "solve start" << std::endl;
             // initialize x (from x0,u) ,lamda, mu
             std::vector<Matrix> lamda(T,Matrix::Zero(N,n));
             std::vector<Matrix> mu(T,Matrix::Zero(N,N));
@@ -1020,29 +1020,33 @@ class ResidualGame {
             std::vector<Matrix> u(in_u);
             rollout_in_place(x0, u, x);
 
-            std::cout << "init done" << std::endl;
             // iteratively solve
             bool is_stop_condition_met = false;
             bool has_converged = false;
+            bool has_runtime_err = false;
 
             for (int iter=0; iter<max_iterations; iter++){
                 try {
-                    std::cout << "iter " << iter << std::endl;
+                    //std::cout << "iter " << iter << std::endl;
                     auto retval = step(x, u, lamda, mu);
                     x = retval[0]; u = retval[1]; lamda = retval[2]; mu = retval[3];
                     rollout_in_place(x0, u, x);
                     post_step_update();
                 } catch ( const pybind11::stop_iteration& e){
-                    std::cout << e.what() << std::endl;
+                    std::cout << "iter " << iter << " " << e.what() << std::endl;
                     is_stop_condition_met = true;
-                    if (e.what() == "stopping criteria met"){
+                    if (!strcmp(e.what(),"stopping criteria met")){
                         has_converged = true;
                         std::cout << "algorithm converged after " << iter << " iterations " << std::endl;
-                    }
+                    } 
                     break;
                 } catch ( const std::runtime_error& e){
                     std::cout << e.what() << std::endl;
+                    has_runtime_err = true;
                 }
+            }
+            if (!is_stop_condition_met && !has_converged && !has_runtime_err){
+                std::cout << "no convergence after max iter has reached" << std::endl;
             }
             // return x,u, lamda, mu, status, residual
             return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool> {x, u, lamda, mu, has_converged};
@@ -1103,12 +1107,14 @@ class ResidualGame {
             //cout << "compute" << endl;
 
             if (solver.info() != Eigen::Success){
+                profiler.reject();
                 throw std::runtime_error(" solver initialization failed");
                 //return std::vector<std::vector<Matrix>>();
             }
 
             Matrix dy_reduced = solver.solve(-r0);
             if (solver.info() != Eigen::Success){
+                profiler.reject();
                 throw std::runtime_error(" solver solve() failed");
                 //return std::vector<std::vector<Matrix>>();
             }

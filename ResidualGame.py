@@ -88,6 +88,28 @@ class ResidualGame(PrintObject,ABC):
             self.cpp.set_x0(self.x0)
         '''
 
+    def naive_particle_solve(self,save_gif=False,visualize=False,animate=False):
+        best_residual = 1e99
+        samples = 100
+        for i in range(samples):
+            u_ref = np.random.uniform(-1.5,1.5, (self.T,self.N,self.m))
+            retval = self.cpp.solve(u_ref)
+            x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval[:-1]]
+            has_converged = retval[-1]
+            self.print_ok(f'sample {i} has_converged: {has_converged}')
+
+            # check residual
+            h_plus_mask = self.getHplusMask(x_ref)
+            r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
+            r0_norm = np.linalg.norm(r0)
+            if (r0_norm < best_residual):
+                best_residual = r0_norm
+            self.print_debug(f' residual = {r0_norm}, current best = {best_residual}')
+
+            if (has_converged):
+                self.print_ok(f'found a solution at sample {i}')
+                break
+
     def cpp_solve(self,save_gif=False,visualize=False,animate=False):
         self.print_ok(f'solve using cpp.solve()')
         u_ref = self.guess
@@ -95,6 +117,7 @@ class ResidualGame(PrintObject,ABC):
         retval = self.cpp.solve(u_ref)
         x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval[:-1]]
         has_converged = retval[-1]
+        self.print_ok(f'has_converged: {has_converged}')
         t_solve = time()-t0
         self.print_info(f'Total solve time: {t_solve}s')
 
