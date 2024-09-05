@@ -90,7 +90,7 @@ class ResidualGame(PrintObject,ABC):
 
     def naive_particle_solve(self,save_gif=False,visualize=False,animate=False):
         best_residual = 1e99
-        samples = 100
+        samples = 10
         for i in range(samples):
             u_ref = np.random.uniform(-1.5,1.5, (self.T,self.N,self.m))
             retval = self.cpp.solve(u_ref)
@@ -109,6 +109,9 @@ class ResidualGame(PrintObject,ABC):
             if (has_converged):
                 self.print_ok(f'found a solution at sample {i}')
                 break
+
+        full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+        return u_ref, full_x_ref, has_converged
 
     def cpp_solve(self,save_gif=False,visualize=False,animate=False):
         self.print_ok(f'solve using cpp.solve()')

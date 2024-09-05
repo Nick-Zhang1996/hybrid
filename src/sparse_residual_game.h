@@ -1038,11 +1038,12 @@ class ResidualGame {
                     if (!strcmp(e.what(),"stopping criteria met")){
                         has_converged = true;
                         std::cout << "algorithm converged after " << iter << " iterations " << std::endl;
-                    } 
+                    }
                     break;
                 } catch ( const std::runtime_error& e){
                     std::cout << e.what() << std::endl;
                     has_runtime_err = true;
+                    break; // NOTE no point in continuing
                 }
             }
             if (!is_stop_condition_met && !has_converged && !has_runtime_err){
