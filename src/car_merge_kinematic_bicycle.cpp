@@ -5,9 +5,8 @@
 #include "car_merge_kinematic_bicycle.h"
 
 namespace py = pybind11;
-using Scalar = double;
+//using Scalar = float;
 using ClassName = CarMergeKinematicBicycle;
-using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 PYBIND11_MODULE(car_merge_kinematic_bicycle,m)
 {

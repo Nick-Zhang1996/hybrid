@@ -54,7 +54,6 @@ class Profiler {
                 double sum = 0.0;
                 for (int i = 0; i<start.size(); i++){
                     sum += std::chrono::duration<double>(end[i] - start[i]).count();
-                    cout << sum << endl;
                 }
                 mean_time[val.first] = sum/start.size();
             }

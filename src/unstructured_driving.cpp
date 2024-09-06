@@ -5,9 +5,7 @@
 #include "unstructured_driving.h"
 
 namespace py = pybind11;
-using Scalar = double;
 using ClassName = UnstructuredDriving;
-using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 PYBIND11_MODULE(unstructured_driving,m)
 {

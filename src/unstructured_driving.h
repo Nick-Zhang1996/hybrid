@@ -1,4 +1,4 @@
-#include "residual_game.h"
+#include "sparse_residual_game.h"
 constexpr int n = 4;
 constexpr int m = 2;
 

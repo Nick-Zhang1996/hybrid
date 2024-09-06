@@ -1,6 +1,17 @@
 import numpy as np
 import inspect
 
+def printCurrentMemoryUsage(text=''):
+    # Open the /proc/self/status file
+    with open("/proc/self/status", "r") as file:
+        # Read the file line by line
+        for line in file:
+            # Look for the line that starts with 'VmSize:'
+            if line.startswith("VmSize:"):
+                # Print the line (memory usage)
+                print(text+' '+line.split()[1]+'kB')
+                break
+
 def ifprint(*objects):
     if (PRINT):
         print(*objects)
