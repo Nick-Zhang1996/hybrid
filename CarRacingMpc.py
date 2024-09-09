@@ -22,6 +22,7 @@ class CarRacingMpc(CarRacing):
 
         for i in range(7):
             # find solution
+            self.init()
             u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
             # log state/control, move horizon forward
             x_vec.append(full_x_ref[1:overlap_steps+1])

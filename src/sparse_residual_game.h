@@ -56,7 +56,7 @@ void checksum(const MatrixBase<Derived>& mtx){
 
 }
 
-inline double sqr(const double a){
+inline Scalar sqr(const Scalar a){
     return a*a;
 }
 

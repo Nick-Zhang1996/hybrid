@@ -32,6 +32,7 @@ class ResidualGame(PrintObject,ABC):
         ''' example of a constructor '''
         # application specific parameters, to be overridden in subclass
         # the numbers here are arbitrary
+        self.profiler = TimeUtil(False)
 
         # number of agents
         self.N = 0
@@ -70,7 +71,6 @@ class ResidualGame(PrintObject,ABC):
 
         # solver variables
         self.frame_vec = []
-        self.profiler = TimeUtil(False)
         #self.print_debug_enable()
         self.tolerance = 5e-4
         self.residual_vec = []

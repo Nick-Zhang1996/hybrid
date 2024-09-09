@@ -15,7 +15,7 @@ from scipy.interpolate import splprep, splev,CubicSpline,interp1d
 
 from util import *
 from TimeUtil import TimeUtil
-from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
+from src.build.car_racing import CarRacing as cpp_CarRacing
 from ResidualGame import ResidualGame
 
 from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
@@ -29,9 +29,9 @@ def wrap(val):
     return (val + np.pi) % (2*np.pi) - np.pi
 
 # two car racing game
-# uses curvilinear model 
+# uses curvilinear model
 class CarRacing(ResidualGame):
-    USE_CPP = False
+    USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self):
         super().__init__()
@@ -105,6 +105,7 @@ class CarRacing(ResidualGame):
         self.J_Q = np.diag([0,0,0.4,0.4])
         self.J_R = np.eye(self.m)*0.1
         self.guess = np.zeros((self.T,self.N,self.m))
+        self.target_y = np.array([0,0,0,0]) # unused
 
         self.print_debug_enable()
 
@@ -113,9 +114,24 @@ class CarRacing(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            raise NotImplementedError
-            #self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
-            #elf.cpp.set_x0(self.x0)
+            self.cpp = cpp_CarRacing(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
+            self.cpp.set_x0(self.x0)
+            ss = np.linspace(0, self.track.raceline_len_m, 1024)
+            curvature_vec = self.track.curvature_fun(ss)
+            self.cpp.set_curvature_vector(np.vstack([ss,curvature_vec]).T)
+            # test curvature
+            '''
+            val_vec = []
+            ref_vec = []
+            ss = np.linspace(0, self.track.raceline_len_m, 2048)
+            for s in ss:
+                val_vec.append(self.cpp.curvature_fun(s))
+                ref_vec.append(self.track.curvature_fun(s))
+            plt.plot(ss, val_vec)
+            plt.plot(ss, ref_vec)
+            plt.show()
+            '''
+
 
     def _visualize(self,U,X=None):
         if (X is None):

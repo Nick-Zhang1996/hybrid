@@ -68,7 +68,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
         # animation/visualization related
-        self.sprite_visualization = True # True would use car images instead of boaxes
+        self.sprite_visualization = False # True would use car images instead of boaxes
 
         if (self.sprite_visualization):
             self.car_scale = 0.005/2
@@ -137,7 +137,6 @@ class CarMergeKinematicBicycle(ResidualGame):
 
     def _animation(self,U,X=None,gif_prefix=''):
         ''' build a gif animation'''
-        car_scale = self.car_scale
         if X is None:
             X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
