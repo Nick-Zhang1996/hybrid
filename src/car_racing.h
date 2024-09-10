@@ -36,7 +36,7 @@ class CarRacing : public ResidualGame<n,m> {
                     });
             auto it_prev = it;
             if (it == curvature_vec.begin()){
-                it_prev = curvature_vec.end();
+                it_prev = curvature_vec.end()-1;
             } else {
                 it_prev = it - 1;
             }
@@ -50,7 +50,7 @@ class CarRacing : public ResidualGame<n,m> {
         }
 
 
-        Matrix f(const Matrix x, const Matrix u){
+        Matrix f(const Matrix x, const Matrix u, const int i){
             const Scalar lf = 1.0; const Scalar lr = 1.0;
             const Scalar beta = atan(tan(u(1,0))*lr/(lf+lr));
             Scalar k_s = curvature_fun(x(0,0));
@@ -60,6 +60,12 @@ class CarRacing : public ResidualGame<n,m> {
                 x(1,0)*sin(x(3,0)),
                 u(0,0)/x(1,0) - k_s*( x(1,0)*cos(x(3,0))/(1-x(2,0)*k_s) )
                     ).finished();
+            if (x.hasNaN() || dx.hasNaN()){
+                std::cout << "k_s " << k_s << std::endl;
+                std::cout << "x " << x << std::endl;
+                std::cout << "dx " << dx << std::endl;
+                throw std::runtime_error("Nan in f(x,u,i)");
+            }
             return x+dx*dt;
         }
         Matrix df_dx(const Matrix x, const Matrix u, const int i){
@@ -72,6 +78,9 @@ class CarRacing : public ResidualGame<n,m> {
                  0, -k_s*cos(x(3,0))/(-k_s*x(2,0) + 1) - u(0,0)/sqr(x(1,0)), -k_s*k_s*x(1,0)*cos(x(3,0))/sqr(-k_s*x(2,0) + 1), k_s*x(1,0)*sin(x(3,0))/(-k_s*x(2,0) + 1)
                                         ).finished();
 
+            if (A.hasNaN()){
+                throw std::runtime_error("Nan in df_dx(x,u,i)");
+            }
 
             return Matrix::Identity(n,n) + A*dt;
         }
@@ -83,6 +92,9 @@ class CarRacing : public ResidualGame<n,m> {
                 0, 0,
                 1/x(1,0), 0
                                         ).finished();
+            if (B.hasNaN()){
+                throw std::runtime_error("Nan in df_du(x,u,i)");
+            }
             return B*dt;
         }
 
