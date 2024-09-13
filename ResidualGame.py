@@ -94,8 +94,6 @@ class ResidualGame(PrintObject,ABC):
             I forgot why I did the fallback
         '''
         #TODO does cpp lscg fallback to cpp sparseQR?
-
-
         self.print_ok(f'USE_CPP: {self.USE_CPP}')
         self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')
 

@@ -67,7 +67,7 @@ class CarRacing(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = 2
-        self.T = 40
+        self.T = 30
         self.dt = dt = 0.05
         # dimension of x and u for single agent
         self.n = 4
@@ -94,7 +94,8 @@ class CarRacing(ResidualGame):
 
         #if (self.sprite_visualization):
         self.car_scale = 0.0005/2
-        self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+        color_names = ['purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan', 'hot_pink']
+        self.car_img_vec = [mpimg.imread(f'./resources/porsche_{color}.png') for color in color_names]
 
 
         # initial state,

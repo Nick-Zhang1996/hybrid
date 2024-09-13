@@ -22,7 +22,7 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
         }
 
 
-        Matrix f(const Matrix x, const Matrix u){
+        Matrix f(const Matrix x, const Matrix u, const int i){
             const Scalar lf = 1.0; const Scalar lr = 1.0;
             const Scalar beta = atan(tan(u(1,0))*lr/(lf+lr));
             Matrix dx = (Matrix(n,1) << x(2,0)*cos(x(3,0)+beta),x(2,0)*sin(x(3,0)+beta), u(0,0),x(2,0)/lr*sin(beta)).finished();

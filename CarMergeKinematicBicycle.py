@@ -58,7 +58,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.dynamics_residual_weight = 1.0
 
         self.tolerance = 5e-4
-        self.iterations = 30
+        self.iterations = 50 # 30
 
         # dimension of x and u for single agent
         self.n = 4
@@ -68,11 +68,12 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.visual_x_lim = [-2.5,2.5]
         self.visual_y_lim = [-2,30]
         # animation/visualization related
-        self.sprite_visualization = False # True would use car images instead of boaxes
+        self.sprite_visualization = True # True would use car images instead of boaxes
 
         if (self.sprite_visualization):
-            self.car_scale = 0.005/2
-            self.car_img_vec = [mpimg.imread('./resources/porsche_green.png'),mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+            self.car_scale = 0.0045/2 # 0.005/2
+            color_names = ['purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan', 'hot_pink']
+            self.car_img_vec = [mpimg.imread(f'./resources/porsche_{color}.png') for color in color_names]
 
         # collision definition
         self.h_Qh = np.diag([-1.0,-1,0,0])
@@ -93,10 +94,10 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.guess = np.zeros((self.T,self.N,self.m))
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
-        main_lane_n = min(int(0.65*car_count),car_count-1)
+        main_lane_n = min(int(0.67*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.4,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
@@ -204,13 +205,17 @@ class CarMergeKinematicBicycle(ResidualGame):
             for circ in circle_vec:
                 ax.add_patch(circ)
 
+        # fine-tune dark background to mimic tarmac
+        # Set the background color of the plot (axes background)
+        ax.set_facecolor((54/255, 69/255, 79/255))
+
         # lane markings
         # boundary lines
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
+        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1],colors='white')
+        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1],colors='white')
         # dotted line
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i,ymax=i+1)
+            ax.vlines(x=0, ymin=i,ymax=i+1, colors='white')
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
@@ -221,10 +226,10 @@ class CarMergeKinematicBicycle(ResidualGame):
 
         gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         anim.save(gif_filename, writer='pillow')
+        self.print_info(f'gif saved to {gif_filename}')
         plt.show()
 
         # NOTE save initial, middle, final snapshots
-        '''
         update(0)
         fig.canvas.draw()
         frame = Image.frombytes('RGB',
@@ -248,7 +253,6 @@ class CarMergeKinematicBicycle(ResidualGame):
         filename = f'./pics/merge_{self.N}car_final.png'
         self.print_info(f'saved to {filename}')
         frame.save(filename)
-        '''
 
 
     ''' --------  math functions and their derivatives ------ '''
@@ -432,7 +436,7 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 if __name__=="__main__":
     np.random.seed(0)
-    main = CarMergeKinematicBicycle(car_count=2)
+    main = CarMergeKinematicBicycle(car_count=3)
     main.setup()
     main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
