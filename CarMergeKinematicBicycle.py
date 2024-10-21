@@ -7,11 +7,6 @@ from scipy import interpolate
 import scipy.sparse # sparse matrix operations
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from matplotlib.patches import Rectangle
-
-from matplotlib.animation import FuncAnimation
-import matplotlib.image as mpimg
-from scipy.ndimage import rotate
 
 from matplotlib.animation import FuncAnimation
 import matplotlib.image as mpimg
@@ -21,11 +16,12 @@ from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
+from SteinGame import SteinGame
 
 
 # example: Merging
 # uses kinematic bicycle model
-class CarMergeKinematicBicycle(ResidualGame):
+class CarMergeKinematicBicycle(SteinGame):
     USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
@@ -50,7 +46,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 20
+        self.T = 3
         self.track_width = 2.2
         self.track_length = 20
         self.dt = dt = 0.2
