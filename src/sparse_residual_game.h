@@ -5,7 +5,7 @@
 #include <string.h>
 #include <iostream>
 #include <fstream>
-#include <pybind11/stl.h>
+//#include <pybind11/stl.h>
 #include <Eigen/Core>
 #include <Eigen/LU>
 #include <Eigen/SparseCore>
@@ -80,21 +80,6 @@ int getCurrentMemoryUsageInKB(){ //Note: this value is in KB!
 }
 
 
-__global__
-std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
-naive_particle_solve(const int _N, const int _T,
-                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter, Matrix x0){
-    // TODO generate random in_u
-    std::vector<Matrix> u(T,Matrix(N,m));
-    std::vector<Matrix> x(T,Matrix(N,n));
-    std::vector<Matrix> lamda(T,Matrix::Zero(N,n));
-    std::vector<Matrix> mu(T,Matrix::Zero(N,N));
-    bool has_converged;
-
-    ResidualGame game(_N, _T, _dt, _rho, _rho_b, _bc_a, _bc_b, _tolerance,_backtracking_max_iter);
-    game.set_x0(x0);
-    std::tie(x,u,lamda, mu) = game.solve(u);
-}
 
 // assign a dense matrix to a sub-block of a sparse matrix
 // this function assumes there's no existing entries in the sparse matrix, it uses SpMatrix.insert()

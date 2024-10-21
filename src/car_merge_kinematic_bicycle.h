@@ -124,4 +124,5 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
         Matrix dJi_dudu(const Matrix x_k, const Matrix u, int i){
             return  2*J_R;
         }
+
 };

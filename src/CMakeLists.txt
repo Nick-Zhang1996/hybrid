@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(residual_game)
+enable_language(CUDA)
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O2")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -Ofast -fno-math-errno -ffast-math -march=native -mfma")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -10,6 +12,9 @@ pkg_check_modules( EIGEN3 REQUIRED eigen3=3.4.0 )
 include_directories( ${EIGEN3_INCLUDE_DIRS} )
 message("eigen3 include directory: ${EIGEN3_INCLUDE_DIRS}")
 
-add_subdirectory(pybind11)
-pybind11_add_module(unstructured_driving unstructured_driving.cpp)
-pybind11_add_module(car_merge_kinematic_bicycle car_merge_kinematic_bicycle.cpp)
+#add_subdirectory(pybind11)
+#pybind11_add_module(unstructured_driving unstructured_driving.cpp)
+#pybind11_add_module(car_merge_kinematic_bicycle car_merge_kinematic_bicycle.cpp)
+
+set_source_files_properties(main.cpp PROPERTIES LANGUAGE CUDA)
+add_executable(main main.cpp)
