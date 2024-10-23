@@ -13,6 +13,7 @@ class SteinGame(ResidualGame):
         self.particles = 100
         self.epsilon = 1.0 # step size
         self.alpha = 1.0
+        self.stein_iterations = 3
         # theta = u in this version
 
     def solve(self,save_gif=False,visualize=False,animate=False):
@@ -23,7 +24,7 @@ class SteinGame(ResidualGame):
         theta = self.initialSample()
 
         # one iteration
-        for iter in range(self.iterations):
+        for iter in range(self.stein_iterations):
             self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
             # evaluate derivative on
             # calculate kernel table
@@ -35,7 +36,6 @@ class SteinGame(ResidualGame):
             posterior_log_grad = []
             for i in range(self.particles):
                 # TODO after we figure out how to do this...
-                print(f'particle {i}')
                 val = - self.alpha * self.d_cost_d_theta(theta[i])[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
 
@@ -55,12 +55,25 @@ class SteinGame(ResidualGame):
 
             # update prior distribution (empirical)
             # validate: check cost of new particles
-            old_cost = np.sum([self.cost(val) for val in theta])
-            new_cost = np.sum([self.cost(val) for val in new_theta])
-            print(old_cost, new_cost)
+            #old_cost = np.sum([self.cost(val) for val in theta])
+            cost_vec = [self.cost(val) for val in new_theta]
+            new_cost = np.sum(cost_vec)
+            print(f'overall cost: ', new_cost)
+            #old_min_cost = np.min([self.cost(val) for val in theta])
+            new_min_cost = np.min(cost_vec)
+            print(f'min cost: ', new_min_cost)
             theta = new_theta
 
         # Stage 2: Residual Game
+        # TODO avoid recalculation of min/sum
+        min_idx = np.argsort(cost_vec)
+        dim_u = (self.T, self.N, self.m)
+        for i in range(10):
+            u_ref, full_x_ref, has_converged = ResidualGame.solve(self,u_ref = theta[min_idx[i]].reshape(dim_u))
+            if (has_converged):
+                self.print_info('converged')
+                return u_ref, full_x_ref, has_converged
+
         # for now just find the best particle
 
     def cost(self, theta):
@@ -114,7 +127,7 @@ class SteinGame(ResidualGame):
     def initialSample(self):
         ''' make [self.particles] samples of size theta from an initial belief'''
         # TODO need to tune scale
-        return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([3.0]*self.dim_theta), self.particles)
+        return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([0.5]*self.dim_theta), self.particles)
 
     def proposal(self,theta):
         ''' evaluate marginal of proposal distribution, output: scalar '''

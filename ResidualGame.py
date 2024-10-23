@@ -89,7 +89,7 @@ class ResidualGame(PrintObject,ABC):
             self.cpp.set_x0(self.x0)
         '''
 
-    def solve(self,save_gif=False,visualize=False,animate=False):
+    def solve(self,u_ref=None,save_gif=False,visualize=False,animate=False):
         ''' main entry point for solver, will call cpp version if available, will fallback to python if cpp does not provide a solution,
             I forgot why I did the fallback
         '''
@@ -101,7 +101,8 @@ class ResidualGame(PrintObject,ABC):
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
         self.print_debug(f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}')
 
-        u_ref = self.guess
+        if (u_ref is None):
+            u_ref = self.guess
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.rollout(self.x0,u_ref)
         lambda_ref = np.zeros((T,N,self.n))
@@ -120,13 +121,6 @@ class ResidualGame(PrintObject,ABC):
                     try:
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
-                        '''
-                        # FIXME debug
-                        h_plus_mask = self.getHplusMask(x_ref)
-                        r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
-                        r0_norm = np.linalg.norm(r0)
-                        self.print_debug(f' residual = {r0_norm}')
-                        '''
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
@@ -159,6 +153,11 @@ class ResidualGame(PrintObject,ABC):
             x_ref = self.rollout(self.x0,u_ref)
             t.e()
             #self.print_info(f'------ {N} agents, iter {i} ------')
+            # FIXME debug
+            h_plus_mask = self.getHplusMask(x_ref)
+            r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
+            r0_norm = np.linalg.norm(r0)
+            self.print_debug(f' residual = {r0_norm}')
 
         t_solve = time()-t0
         self.print_info(f'Total solve time: {t_solve}s')
