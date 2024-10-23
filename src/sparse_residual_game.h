@@ -183,7 +183,8 @@ class ResidualGame {
             der.setZero();
             // dLLi_dxi
             for (int k=1; k<T; k++){
-                der.template block<1,n>(0,(k-1)*n) = dL_dx_ik(x[k-1],u[k,i],x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
+                der.template block<1,n>(0,(k-1)*n) = dL_dx_ik(x[k-1],u[k].row(i).transpose(),x[k].row(i).transpose(),h_plus_mask[k-1],lamda[k],mu[k-1],i) -lamda[k-1].row(i);
+
             }
             // dLLi_dxi_T
             der.template block<1,n>(0,(T-1)*n) = -lamda[T-1].row(i) + dJi_dxi(x[T-1],Matrix::Zero(m,1),i);
@@ -905,10 +906,8 @@ class ResidualGame {
             const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             Matrix r = Matrix::Zero(dim_r,1);
-            cout << " r allocation " << endl;
             int index = 0;
             for (int i = 0; i < N; ++i) {
-                cout << " i " << i << endl;
                 Matrix dLL_dxi = dLLi_dxi(x, u, h_plus_mask, lamda, mu, i).transpose();
                 Matrix dLL_dui = dLLi_dui(x, u, h_plus_mask, lamda, mu, i).transpose();
                 r.block(index, 0, T*n, 1) = dLL_dxi;
@@ -934,6 +933,7 @@ class ResidualGame {
                     }
                     index += h_idx;
                 }
+
             }
             return r;
         }
