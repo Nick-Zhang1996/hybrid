@@ -16,12 +16,13 @@ from util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
-from SteinGame import SteinGame
+#from SteinGame import SteinGame
+
 
 
 # example: Merging
 # uses kinematic bicycle model
-class CarMergeKinematicBicycle(SteinGame):
+class CarMergeKinematicBicycle(ResidualGame):
     USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
@@ -432,9 +433,9 @@ class CarMergeKinematicBicycle(SteinGame):
 
 if __name__=="__main__":
     np.random.seed(0)
-    main = CarMergeKinematicBicycle(car_count=3)
+    main = CarMergeKinematicBicycle(car_count=8)
     main.setup()
-    main.solve(save_gif=False,visualize=True,animate=True)
+    main.solve(save_gif=False,visualize=False,animate=False)
     main.final()
     #main.testAnimation()
 

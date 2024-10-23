@@ -905,8 +905,10 @@ class ResidualGame {
             const int dim_r = N * (T*n + T*m + T * n) + h_plus_sum;
 
             Matrix r = Matrix::Zero(dim_r,1);
+            cout << " r allocation " << endl;
             int index = 0;
             for (int i = 0; i < N; ++i) {
+                cout << " i " << i << endl;
                 Matrix dLL_dxi = dLLi_dxi(x, u, h_plus_mask, lamda, mu, i).transpose();
                 Matrix dLL_dui = dLLi_dui(x, u, h_plus_mask, lamda, mu, i).transpose();
                 r.block(index, 0, T*n, 1) = dLL_dxi;

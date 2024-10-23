@@ -10,7 +10,7 @@ class SteinGame(ResidualGame):
     @abstractmethod
     def __init__(self):
         super().__init__()
-        self.particles = 10
+        self.particles = 100
         self.epsilon = 1.0 # step size
         self.alpha = 1.0
         # theta = u in this version
@@ -23,42 +23,42 @@ class SteinGame(ResidualGame):
         theta = self.initialSample()
 
         # one iteration
-        # for iter in range(self.iterations):
-        self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
+        for iter in range(self.iterations):
+            self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
+            # evaluate derivative on
+            # calculate kernel table
+            kernel_val_map = np.zeros((self.particles,self.particles))
+            for i in range(self.particles):
+                for j in range(i+1):
+                    kernel_val_map[i,j] = kernel_val_map[j,i] = self.kernel(theta[i], theta[j])
+            # find \nabla_theta log p_posterior(theta|O) for each particle
+            posterior_log_grad = []
+            for i in range(self.particles):
+                # TODO after we figure out how to do this...
+                print(f'particle {i}')
+                val = - self.alpha * self.d_cost_d_theta(theta[i])[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                posterior_log_grad.append(val.flatten())
 
-        # evaluate derivative on
-        # calculate kernel table
-        kernel_val_map = np.zeros((self.particles,self.particles))
-        for i in range(self.particles):
-            for j in range(i+1):
-                kernel_val_map[i,j] = kernel_val_map[j,i] = self.kernel(theta[i], theta[j])
-        # find \nabla_theta log p_posterior(theta|O) for each particle
-        posterior_log_grad = []
-        for i in range(self.particles):
-            # TODO after we figure out how to do this...
-            val = - self.alpha * self.d_cost_d_theta(theta[i])[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
-            posterior_log_grad.append(val.flatten())
+            # find descent direction (for each particle)
+            des_dir = []
+            for i in range(self.particles):
+                val = np.zeros(self.dim_theta)
+                for j in range(self.particles):
+                    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
+                phi = 1/self.particles * val
+                des_dir.append(phi)
 
-        # find descent direction (for each particle)
-        des_dir = []
-        for i in range(self.particles):
-            val = np.zeros(self.dim_theta)
-            for j in range(self.particles):
-                val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
-            phi = 1/self.particles * val
-            des_dir.append(phi)
+            # update particle
+            new_theta = []
+            for i in range(self.particles):
+                new_theta.append(theta[i] + self.epsilon * des_dir[i])
 
-        # update particle
-        new_theta = []
-        for i in range(self.particles):
-            new_theta.append(theta[i] + self.epsilon * des_dir[i])
-        breakpoint()
-
-        # update prior distribution (empirical)
-        # validate: check cost of new particles
-        old_cost = np.sum([self.cost(val) for val in theta])
-        new_cost = np.sum([self.cost(val) for val in new_theta])
-        print(old_cost, new_cost)
+            # update prior distribution (empirical)
+            # validate: check cost of new particles
+            old_cost = np.sum([self.cost(val) for val in theta])
+            new_cost = np.sum([self.cost(val) for val in new_theta])
+            print(old_cost, new_cost)
+            theta = new_theta
 
         # Stage 2: Residual Game
         # for now just find the best particle
