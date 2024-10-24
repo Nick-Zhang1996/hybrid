@@ -57,6 +57,7 @@ PYBIND11_MODULE(car_merge_kinematic_bicycle,m)
       .def("dr_dy", &ClassName::dr_dy)
       .def("getHplusMask", &ClassName::getHplusMask)
       .def("step", &ClassName::step)
+      .def("solve", &ClassName::solve)
       
 
       .def("summary", &ClassName::summary)
