@@ -22,7 +22,8 @@ for car_count in car_count_vec:
         main.silent_mode_enable()
         main.setup()
         t0 = time()
-        _,_, has_converged = main.solve(save_gif=False,visualize=False,animate=False)
+        #_,_, has_converged = main.solve(save_gif=False,visualize=False,animate=False)
+        _,_, has_converged = main.naive_particle_solve(save_gif=False,visualize=False,animate=False)
         dt = time()-t0
         time_vec.append(dt)
         if (has_converged):
