@@ -11,7 +11,7 @@ PYBIND11_MODULE(unstructured_driving,m)
 {
   m.doc() = "pybind11 interface for c++/Eigen particle_game";
   py::class_<ClassName>(m,"UnstructuredDriving")
-      .def(py::init<int,int,Scalar,Scalar,Scalar,Scalar,Scalar, Scalar, int, Matrix,Matrix,Matrix,Matrix,Matrix,Matrix,Matrix>())
+      .def(py::init<int,int,Scalar,Scalar,Scalar,Scalar,Scalar, Scalar, int, Matrix,Matrix,Matrix,Matrix,Matrix,Matrix,Matrix,int,bool>())
       .def("set_A", &ClassName::set_A)
       .def("set_B", &ClassName::set_B)
       .def("set_x0", &ClassName::set_x0)

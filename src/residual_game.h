@@ -87,14 +87,16 @@ class ResidualGame {
         Matrix x0;
         Profiler<false> profiler;
         int current_memory_usage_kb;
+        int max_iter;
+        bool verbose;
 
     public:
         ResidualGame(const int _N, const int _T,
-                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter):
+                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter, const int _max_iter, const bool _verbose):
             N(_N), T(_T),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
             tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
-            x0(),profiler(),current_memory_usage_kb(0) {
+            x0(),profiler(),current_memory_usage_kb(0), max_iter(_max_iter), verbose(_verbose){
                 //current_memory_usage_kb = getCurrentMemoryUsageInKB();
                 //std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }

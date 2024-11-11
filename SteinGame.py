@@ -5,6 +5,7 @@ from abc import ABC,abstractmethod
 from util import *
 from TimeUtil import TimeUtil
 from ResidualGame import ResidualGame
+from Cluster import Cluster
 
 class SteinGame(ResidualGame):
     @abstractmethod
@@ -18,13 +19,12 @@ class SteinGame(ResidualGame):
         self.stein_profiler = TimeUtil(True)
 
     def solve(self,save_gif=False,visualize=False,animate=False):
-        # Stage 1: Stein variational inference
-        # sample initial particles
         self.dim_theta = self.T*self.N*self.m
 
-        theta = self.initialSample()
+        # Stage 1: Stein variational inference
+        # sample initial particles
         self.stein_profiler.s()
-
+        theta = self.initialSample()
         # one iteration
         for iter in range(self.stein_iterations):
             self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
@@ -41,12 +41,20 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 old_cost_vec = cost_vec
             cost_vec = []
+            self.stein_profiler.s('particle grad')
             for i in range(self.particles):
                 # TODO after we figure out how to do this...
-                retval = self.d_cost_d_theta(theta[i])
+                # grad, cost - this grad may not be accurate
+                #retval = self.d_cost_d_theta(theta[i])
+                # NOTE debug, how accurate is this gradient?
+                #current_grad = retval[0]
+                #alt_grad = jacobianNumerical(self.cost, theta[i])
+                # alternative construction
+                retval = self.d_theta(theta[i])
                 cost_vec.append(retval[1])
                 val = - self.alpha * retval[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
+            self.stein_profiler.e('particle grad')
 
             # find descent direction (for each particle)
             self.stein_profiler.s('dec dir')
@@ -55,6 +63,7 @@ class SteinGame(ResidualGame):
                 val = np.zeros(self.dim_theta)
                 for j in range(self.particles):
                     val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
+                #val += posterior_log_grad[j]
 
                 phi = 1/self.particles * val
                 des_dir.append(phi)
@@ -71,24 +80,102 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 count = np.sum( (np.array(cost_vec) - np.array(old_cost_vec)) < 0)
                 self.print_info(f' cost decrease particle ratio : {count/self.particles}')
-            new_cost = np.sum(cost_vec)
-            self.print_info(f'overall cost: ', new_cost)
+            new_cost = np.mean(cost_vec)
+            self.print_info(f'overall mean cost: ', new_cost)
             #old_min_cost = np.min([self.cost(val) for val in theta])
             new_min_cost = np.min(cost_vec)
             self.print_info(f'min cost: ', new_min_cost)
             theta = new_theta
 
-        # Stage 2: Residual Game
-        min_idx = np.argsort(cost_vec)
+        # Stage 2: clustering
+        elite_sample_count = 10
+        particle_distance = np.diag([np.inf]*elite_sample_count)
+        for i in range(elite_sample_count):
+            for j in range(i):
+                particle_distance[i,j] = particle_distance[j,i] = np.linalg.norm(theta[i]- theta[j])
+        cluster = Cluster(theta, particle_distance, 3, 0.2)
+        cluster.merge()
+        groups = cluster.get()
+
+        # Stage 3: Residual Game for particle refinement
+        self.stein_profiler.s('particle refine')
+        #min_idx = np.argsort(cost_vec)
+        min_idx = []
+        for group in groups:
+            # find one candidate per group
+            this_cost_vec = [cost_vec[val] for val in group]
+            idx = np.argmin(this_cost_vec)
+            min_idx.append(idx)
+
+        # we want to find multiple solutions
+        good_u_ref = []
+        good_x_ref = []
         dim_u = (self.T, self.N, self.m)
-        for i in range(10):
+        for i in range(len(min_idx)):
             u_ref, full_x_ref, has_converged = ResidualGame.solve(self,u_ref = theta[min_idx[i]].reshape(dim_u))
             if (has_converged):
+                # check distance from current solution to existing solutions
+                for cand_x_ref in good_x_ref:
+                    distance = 0
+                    for i in range(self.N):
+                        for k in range(self.T):
+                            distance += np.linalg.norm(full_x_ref[k,i].flatten() - cand_x_ref[k,i].flatten())
+                    print(distance)
+
+                good_u_ref.append(u_ref)
+                good_x_ref.append(full_x_ref)
                 self.print_info('converged')
-                break
+            else:
+                # NOTE just for keeping dimension of good_u_ref consistent
+                good_u_ref.append(u_ref*np.inf)
+                good_x_ref.append(full_x_ref*np.inf)
+                #break
+        self.stein_profiler.e('particle refine')
+
+        # DEBUG check: do particles converge to the same equilibrium? how many equilibriums?
+        # check distance between equilibriums:
+        '''
+        # debug
+        # does close particles yield close solutions? - Yes
+        solution_distance = np.diag([np.inf]*elite_sample_count)
+        for i in range(elite_sample_count):
+            for j in range(i):
+                solution_distance[i,j] = solution_distance[j,i] = np.linalg.norm(good_u_ref[i] - good_u_ref[j])
+
+        particle_distance = np.diag([np.inf]*elite_sample_count)
+        for i in range(elite_sample_count):
+            for j in range(i):
+                particle_distance[i,j] = particle_distance[j,i] = np.linalg.norm(theta[i]- theta[j])
+        vetted_solution_distance = solution_distance.flatten()[np.logical_not(np.isinf(solution_distance.flatten()))]
+        vetted_particle_distance = particle_distance.flatten()[np.logical_not(np.isinf(solution_distance.flatten()))]
+        cov = np.cov( np.vstack([vetted_solution_distance, vetted_particle_distance]).T )
+        print(cov)
+        '''
+        # TODO visualize
+        for u_ref in good_u_ref:
+            self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
+
 
         self.stein_profiler.e()
         return u_ref, full_x_ref, has_converged
+
+    # find gradient direction for minimizing residual
+    def d_theta(self, theta):
+        N = self.N; T = self.T; n = self.n; m = self.m
+        dim_u = (self.T, self.N, self.m)
+        u_ref = theta.reshape(dim_u)
+        x_ref = self.rollout(self.x0,u_ref)
+        lambda_ref = np.zeros((T,N,self.n))
+        mu_ref = np.zeros((T,N,N))
+
+        retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+        new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+
+        h_plus_mask = self.getHplusMask(new_x_ref)
+        r0 = self.r(new_x_ref,new_u_ref,lambda_ref,mu_ref,h_plus_mask)
+        grad = (new_u_ref - u_ref).reshape(1,-1)
+        return grad, np.linalg.norm(r0)
+
 
     def cost(self, theta):
         return self.d_cost_d_theta(theta)[1]

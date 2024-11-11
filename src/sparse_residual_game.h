@@ -141,14 +141,15 @@ class ResidualGame {
         Matrix x0;
         Profiler<true> profiler;
         int current_memory_usage_kb;
+        bool verbose;
 
     public:
         ResidualGame(const int _N, const int _T,
-                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter):
+                const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b, const Scalar _tolerance, const int _backtracking_max_iter, const int _max_iter, const bool _verbose):
             N(_N), T(_T),
             dt(_dt), rho(_rho), rho_b(_rho_b),bc_a(_bc_a), bc_b(_bc_b),
             tolerance(_tolerance), backtracking_max_iter(_backtracking_max_iter),
-            x0(),profiler(),current_memory_usage_kb(0),max_iterations(30) {
+            x0(),profiler(),current_memory_usage_kb(0),max_iterations(_max_iter),verbose(_verbose) {
                 //current_memory_usage_kb = getCurrentMemoryUsageInKB();
                 //std::cout << "existing memory usage " << current_memory_usage_kb << "KB" << std::endl;
         }
@@ -922,10 +923,10 @@ class ResidualGame {
                 index += T*m;
 
                 // Dynamics for f(x0,u0) = x1
-                r.template block<n,1>(index, 0) = f(x0.row(i).transpose(), u[0].row(i).transpose()) - x[0].row(i).transpose();
+                r.template block<n,1>(index, 0) = f(x0.row(i).transpose(), u[0].row(i).transpose(), i) - x[0].row(i).transpose();
 
                 for (int k = 1; k < T; ++k) {
-                    r.template block<n,1>(index+k*n,0) = f(x[k - 1].row(i).transpose(), u[k].row(i).transpose()) - x[k].row(i).transpose();
+                    r.template block<n,1>(index+k*n,0) = f(x[k - 1].row(i).transpose(), u[k].row(i).transpose(), i) - x[k].row(i).transpose();
                 }
                 index += n * T;
 
@@ -943,7 +944,6 @@ class ResidualGame {
             return r;
         }
 
-        __global__
         Matrix dr_dy(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -970,7 +970,6 @@ class ResidualGame {
             return Dr;
         }
 
-        __global__
         SpMatrix dr_dy_sparse(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu, const std::vector<Matrix>& h_plus_mask) {
             int h_plus_sum = 0;
             for (const auto& mask : h_plus_mask) {
@@ -1003,12 +1002,12 @@ class ResidualGame {
             // NOTE that x[0] = x_1, x = [x_1..x_T]
             // x1 = f(x0,u0)
             for (int i=0; i<N; i++){
-                x[0].row(i).transpose() = f(x0.row(i).transpose(), u[0].row(i).transpose());
+                x[0].row(i).transpose() = f(x0.row(i).transpose(), u[0].row(i).transpose(), i);
             }
             // x_k = f(x_k-1,u_k-1)
             for (int k=2; k<T+1; k++){
                 for (int i=0; i<N; i++){
-                    x[k-1].row(i).transpose() = f(x[k-2].row(i).transpose(), u[k-1].row(i).transpose());
+                    x[k-1].row(i).transpose() = f(x[k-2].row(i).transpose(), u[k-1].row(i).transpose(), i);
                 }
             }
 
@@ -1018,7 +1017,6 @@ class ResidualGame {
 
 
         // solve the game using step(), return: x,u,lambda, mu, has_converged
-        __global__
         std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool>
         solve(const std::vector<Matrix>& in_u){
             // initialize x (from x0,u) ,lamda, mu
@@ -1041,11 +1039,15 @@ class ResidualGame {
                     rollout_in_place(x0, u, x);
                     post_step_update();
                 } catch ( const pybind11::stop_iteration& e){
-                    std::cout << "iter " << iter << " " << e.what() << std::endl;
+                    if (verbose){
+                        std::cout << "iter " << iter << " " << e.what() << std::endl;
+                    }
                     is_stop_condition_met = true;
                     if (!strcmp(e.what(),"stopping criteria met")){
                         has_converged = true;
-                        std::cout << "algorithm converged after " << iter << " iterations " << std::endl;
+                        if (verbose){
+                            std::cout << "algorithm converged after " << iter << " iterations " << std::endl;
+                        }
                     }
                     break;
                 } catch ( const std::runtime_error& e){
@@ -1054,14 +1056,15 @@ class ResidualGame {
                     break; // NOTE no point in continuing
                 }
             }
-            if (!is_stop_condition_met && !has_converged && !has_runtime_err){
-                std::cout << "no convergence after max iter has reached" << std::endl;
+            if (verbose){
+                if (!is_stop_condition_met && !has_converged && !has_runtime_err){
+                    std::cout << "no convergence after max iter has reached" << std::endl;
+                }
             }
             // return x,u, lamda, mu, status, residual
             return std::tuple<std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,std::vector<Matrix>,bool> {x, u, lamda, mu, has_converged};
         }
 
-        __global__
         std::vector<std::vector<Matrix>> step(const std::vector<Matrix>& x, const std::vector<Matrix>& u, const std::vector<Matrix>& lamda, const std::vector<Matrix>& mu) {
             //int additional_memory_usage_kb = getCurrentMemoryUsageInKB() - current_memory_usage_kb;
             //std::cout << "step entry memory: " << additional_memory_usage_kb << "KB" << std::endl;

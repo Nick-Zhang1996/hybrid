@@ -458,11 +458,11 @@ class ResidualGame(PrintObject,ABC):
         self.profiler.summary()
         if (self.USE_CPP):
             self.cpp.summary()
+        '''
         if (len(self.frame_vec)>0):
             gif_filename = self.resolveLogname()
             self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
             self.print_debug(f'GIf saved to {gif_filename}')
-        '''
         plt.plot(self.residual_vec,'*-')
         plt.yscale('log')
         plt.xlabel('Iteration')

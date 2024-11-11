@@ -22,8 +22,8 @@ from SteinGame import SteinGame
 
 # example: Merging
 # uses kinematic bicycle model
-class CarMergeKinematicBicycle(ResidualGame):
-#class CarMergeKinematicBicycle(SteinGame):
+#class CarMergeKinematicBicycle(ResidualGame):
+class CarMergeKinematicBicycle(SteinGame):
     USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
@@ -51,6 +51,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.T = 20
         self.track_width = 2.2
         self.track_length = 20
+        self.collision_radius = 2.0
         self.dt = dt = 0.2
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
@@ -91,7 +92,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         self.J_R = np.eye(self.m)*0.3
         self.guess = np.zeros((self.T,self.N,self.m))
 
-        # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
+        # multiple car merge, car_count: main_lane_n + merge_lane_n
         main_lane_n = min(int(0.67*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.4,main_lane_n) + np.random.random(main_lane_n)
@@ -114,7 +115,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
+            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,self.iterations, False)
             self.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):
@@ -189,7 +190,7 @@ class CarMergeKinematicBicycle(ResidualGame):
                 car_angle_vec.append(angle_vec)
                 car_pos_vec.append(pos_vec)
                 box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
-                circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
+                circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(self.collision_radius)/2,  color=color, fill=False))
 
             def update(frame):
                 for i in range(self.N):
@@ -226,7 +227,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         anim.save(gif_filename, writer='pillow')
         self.print_info(f'gif saved to {gif_filename}')
         plt.show()
-
+        '''
         # NOTE save initial, middle, final snapshots
         update(0)
         fig.canvas.draw()
@@ -251,6 +252,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         filename = f'./pics/merge_{self.N}car_final.png'
         self.print_info(f'saved to {filename}')
         frame.save(filename)
+        '''
 
 
     ''' --------  math functions and their derivatives ------ '''
@@ -359,7 +361,7 @@ class CarMergeKinematicBicycle(ResidualGame):
         ''' car distance larger than 1.2 normalized '''
         if (self.USE_CPP):
             return self.cpp.h(x_i,x_j)
-        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + 7
+        val = -( (x_i[0]-x_j[0])/1.0 )**2 - (x_i[1]-x_j[1])**2 + self.collision_radius**2
         if (self.CPP_DEBUG):
             alt = self.cpp.h(x_i,x_j)
             if (np.linalg.norm(alt-val)>1e-4):
@@ -434,9 +436,9 @@ class CarMergeKinematicBicycle(ResidualGame):
 
 if __name__=="__main__":
     np.random.seed(0)
-    main = CarMergeKinematicBicycle(car_count=8)
+    main = CarMergeKinematicBicycle(car_count=3)
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=False,animate=False)
+    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
