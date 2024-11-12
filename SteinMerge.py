@@ -7,7 +7,7 @@ from ResidualGame import ResidualGame
 from CarMergeKinematicBicycle import CarMergeKinematicBicycle
 
 class SteinMerge(CarMergeKinematicBicycle):
-    USE_CPP = False
+    USE_CPP = True
     def __init__(self):
         super().__init__(car_count=2)
 
@@ -21,6 +21,14 @@ class SteinMerge(CarMergeKinematicBicycle):
         x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
+
+    def setup(self):
+        # subclass responsible for loading cpp/eigen module
+        # and setting x0
+        if (self.USE_CPP or self.CPP_DEBUG):
+            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,self.iterations, False)
+            self.cpp.set_x0(self.x0)
+
 
     def Testsolve(self,save_gif=False,visualize=False,animate=False):
         dim_u = (self.T, self.N, self.m)
@@ -37,8 +45,7 @@ if __name__=="__main__":
     np.random.seed(2)
     main = SteinMerge()
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=False,animate=True)
-    main.visualize(u_ref,full_x_ref,visualize=False,save_gif=False,animate=True,gif_prefix='after')
+    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=True)
     #main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
