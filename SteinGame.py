@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse # sparse matrix operations
 from abc import ABC,abstractmethod
+import scipy.sparse.linalg # sparse matrix operations
 
 from util import *
 from TimeUtil import TimeUtil
@@ -11,10 +12,10 @@ class SteinGame(ResidualGame):
     @abstractmethod
     def __init__(self):
         super().__init__()
-        self.particles = 10
+        self.particles = 30
         self.epsilon = 1.0 # step size
         self.alpha = 1.0
-        self.stein_iterations = 5
+        self.stein_iterations = 3
         # theta = u in this version
         self.stein_profiler = TimeUtil(True)
 
@@ -45,12 +46,12 @@ class SteinGame(ResidualGame):
             for i in range(self.particles):
                 # TODO after we figure out how to do this...
                 # grad, cost - this grad may not be accurate
-                #retval = self.d_cost_d_theta(theta[i])
+                retval = self.d_cost_d_theta(theta[i])
                 # NOTE debug, how accurate is this gradient?
                 #current_grad = retval[0]
                 #alt_grad = jacobianNumerical(self.cost, theta[i])
                 # alternative construction
-                retval = self.d_theta(theta[i])
+                #retval = self.d_theta(theta[i])
                 cost_vec.append(retval[1])
                 val = - self.alpha * retval[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
@@ -61,9 +62,9 @@ class SteinGame(ResidualGame):
             des_dir = []
             for i in range(self.particles):
                 val = np.zeros(self.dim_theta)
-                for j in range(self.particles):
-                    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
-                #val += posterior_log_grad[j]
+                #for j in range(self.particles):
+                #    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
+                val += posterior_log_grad[j]
 
                 phi = 1/self.particles * val
                 des_dir.append(phi)
@@ -88,12 +89,12 @@ class SteinGame(ResidualGame):
             theta = new_theta
 
         # Stage 2: clustering
-        elite_sample_count = 10
-        particle_distance = np.diag([np.inf]*elite_sample_count)
-        for i in range(elite_sample_count):
+        #elite_sample_count = 10
+        particle_distance = np.diag([np.inf]*self.particles)
+        for i in range(self.particles):
             for j in range(i):
                 particle_distance[i,j] = particle_distance[j,i] = np.linalg.norm(theta[i]- theta[j])
-        cluster = Cluster(theta, particle_distance, 3, 0.2)
+        cluster = Cluster(theta, particle_distance, 5, 0.2)
         cluster.merge()
         groups = cluster.get()
 
@@ -105,12 +106,13 @@ class SteinGame(ResidualGame):
             # find one candidate per group
             this_cost_vec = [cost_vec[val] for val in group]
             idx = np.argmin(this_cost_vec)
-            min_idx.append(idx)
+            min_idx.append(group[idx])
 
         # we want to find multiple solutions
+        dim_u = (self.T, self.N, self.m)
+        #good_u_ref = [np.zeros(dim_u)]
         good_u_ref = []
         good_x_ref = []
-        dim_u = (self.T, self.N, self.m)
         for i in range(len(min_idx)):
             u_ref, full_x_ref, has_converged = ResidualGame.solve(self,u_ref = theta[min_idx[i]].reshape(dim_u))
             if (has_converged):
@@ -120,16 +122,10 @@ class SteinGame(ResidualGame):
                     for i in range(self.N):
                         for k in range(self.T):
                             distance += np.linalg.norm(full_x_ref[k,i].flatten() - cand_x_ref[k,i].flatten())
-                    print(distance)
 
                 good_u_ref.append(u_ref)
                 good_x_ref.append(full_x_ref)
                 self.print_info('converged')
-            else:
-                # NOTE just for keeping dimension of good_u_ref consistent
-                good_u_ref.append(u_ref*np.inf)
-                good_x_ref.append(full_x_ref*np.inf)
-                #break
         self.stein_profiler.e('particle refine')
 
         # DEBUG check: do particles converge to the same equilibrium? how many equilibriums?
@@ -152,12 +148,15 @@ class SteinGame(ResidualGame):
         print(cov)
         '''
         # TODO visualize
+        if (len(good_u_ref) == 0):
+            has_converged = False
+        else:
+            has_converged = True
         for u_ref in good_u_ref:
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
 
-
         self.stein_profiler.e()
-        return u_ref, full_x_ref, has_converged
+        return good_u_ref[0], full_x_ref[0], has_converged
 
     # find gradient direction for minimizing residual
     def d_theta(self, theta):

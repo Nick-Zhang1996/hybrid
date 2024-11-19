@@ -435,8 +435,8 @@ class CarMergeKinematicBicycle(SteinGame):
 
 
 if __name__=="__main__":
-    np.random.seed(0)
-    main = CarMergeKinematicBicycle(car_count=3)
+    #np.random.seed(0)
+    main = CarMergeKinematicBicycle(car_count=5)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
