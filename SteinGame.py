@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse # sparse matrix operations
 from abc import ABC,abstractmethod
 import scipy.sparse.linalg # sparse matrix operations
+import matplotlib.pyplot as plt
 
 from util import *
 from TimeUtil import TimeUtil
@@ -12,7 +13,7 @@ class SteinGame(ResidualGame):
     @abstractmethod
     def __init__(self):
         super().__init__()
-        self.particles = 30
+        self.particles = 100
         self.epsilon = 1.0 # step size
         self.alpha = 1.0
         self.stein_iterations = 3
@@ -29,7 +30,6 @@ class SteinGame(ResidualGame):
         # one iteration
         for iter in range(self.stein_iterations):
             self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
-            # evaluate derivative on
             # calculate kernel table
             kernel_val_map = np.zeros((self.particles,self.particles))
             self.stein_profiler.s('kernel map')
@@ -44,14 +44,11 @@ class SteinGame(ResidualGame):
             cost_vec = []
             self.stein_profiler.s('particle grad')
             for i in range(self.particles):
-                # TODO after we figure out how to do this...
-                # grad, cost - this grad may not be accurate
-                retval = self.d_cost_d_theta(theta[i])
-                # NOTE debug, how accurate is this gradient?
+                #retval = self.d_cost_d_theta(theta[i])
                 #current_grad = retval[0]
                 #alt_grad = jacobianNumerical(self.cost, theta[i])
-                # alternative construction
-                #retval = self.d_theta(theta[i])
+                # TODO do we need to memorize dual variable here?
+                retval = self.d_theta(theta[i])
                 cost_vec.append(retval[1])
                 val = - self.alpha * retval[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
@@ -74,9 +71,13 @@ class SteinGame(ResidualGame):
             new_theta = []
             for i in range(self.particles):
                 new_theta.append(theta[i] + self.epsilon * des_dir[i])
+            new_theta = np.array(new_theta)
+            # resample really bad samples
+            bad_samples_idx = np.argsort(cost_vec)[-int(0.1*self.particles):]
+            new_theta[bad_samples_idx] = self.initialSample(count=len(bad_samples_idx))
 
-            # update prior distribution (empirical)
-            # validate: check cost of new particles
+
+            # DEBUG: check cost of new particles
             #old_cost = np.sum([self.cost(val) for val in theta])
             if (iter > 0):
                 count = np.sum( (np.array(cost_vec) - np.array(old_cost_vec)) < 0)
@@ -87,30 +88,17 @@ class SteinGame(ResidualGame):
             new_min_cost = np.min(cost_vec)
             self.print_info(f'min cost: ', new_min_cost)
             theta = new_theta
+            # DEBUG plot cost
+            plt.hist(cost_vec)
+            plt.show()
 
-        # Stage 2: clustering
-        #elite_sample_count = 10
-        particle_distance = np.diag([np.inf]*self.particles)
-        for i in range(self.particles):
-            for j in range(i):
-                particle_distance[i,j] = particle_distance[j,i] = np.linalg.norm(theta[i]- theta[j])
-        cluster = Cluster(theta, particle_distance, 5, 0.2)
-        cluster.merge()
-        groups = cluster.get()
-
-        # Stage 3: Residual Game for particle refinement
+        # Stage 2: Residual Game for particle refinement
         self.stein_profiler.s('particle refine')
-        #min_idx = np.argsort(cost_vec)
-        min_idx = []
-        for group in groups:
-            # find one candidate per group
-            this_cost_vec = [cost_vec[val] for val in group]
-            idx = np.argmin(this_cost_vec)
-            min_idx.append(group[idx])
+        min_idx = np.argsort(cost_vec)[:10]
+        breakpoint()
 
         # we want to find multiple solutions
         dim_u = (self.T, self.N, self.m)
-        #good_u_ref = [np.zeros(dim_u)]
         good_u_ref = []
         good_x_ref = []
         for i in range(len(min_idx)):
@@ -147,7 +135,7 @@ class SteinGame(ResidualGame):
         cov = np.cov( np.vstack([vetted_solution_distance, vetted_particle_distance]).T )
         print(cov)
         '''
-        # TODO visualize
+        self.print_info(f'good u_ref {len(good_u_ref)}')
         if (len(good_u_ref) == 0):
             has_converged = False
         else:
@@ -156,6 +144,7 @@ class SteinGame(ResidualGame):
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
 
         self.stein_profiler.e()
+        breakpoint()
         return good_u_ref[0], full_x_ref[0], has_converged
 
     # find gradient direction for minimizing residual
@@ -172,7 +161,7 @@ class SteinGame(ResidualGame):
 
         h_plus_mask = self.getHplusMask(new_x_ref)
         r0 = self.r(new_x_ref,new_u_ref,lambda_ref,mu_ref,h_plus_mask)
-        grad = (new_u_ref - u_ref).reshape(1,-1)
+        grad = -(new_u_ref - u_ref).reshape(1,-1)
         return grad, np.linalg.norm(r0)
 
 
@@ -236,10 +225,13 @@ class SteinGame(ResidualGame):
         ''' kernel for RKHS, mapping to positive scalar '''
         return np.exp(- np.linalg.norm(theta_i-theta_j)**2/self.theta_norm_median)
 
-    def initialSample(self):
+    def initialSample(self,count=None):
         ''' make [self.particles] samples of size theta from an initial belief'''
         # TODO need to tune scale
-        return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([0.5]*self.dim_theta), self.particles)
+        if (count is None):
+            return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([2*0.5]*self.dim_theta), self.particles)
+        else:
+            return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([2*0.5]*self.dim_theta), count)
 
     def proposal(self,theta):
         ''' evaluate marginal of proposal distribution, output: scalar '''

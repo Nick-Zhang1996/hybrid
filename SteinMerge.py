@@ -17,8 +17,8 @@ class SteinMerge(CarMergeKinematicBicycle):
         x_pos_merge_lane = np.array( [ 1.5] )
         v_main_lane = 2.0
         v_merge_lane = 2.0
-        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
-        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
+        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n)+0.2,v_main_lane, np.zeros(main_lane_n)]).T
+        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n)-0.2,v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
 
@@ -45,7 +45,7 @@ if __name__=="__main__":
     np.random.seed(2)
     main = SteinMerge()
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=True)
+    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
     #main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
