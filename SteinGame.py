@@ -94,10 +94,11 @@ class SteinGame(ResidualGame):
 
         # Stage 2: Residual Game for particle refinement
         self.stein_profiler.s('particle refine')
-        min_idx = np.argsort(cost_vec)[:10]
-        breakpoint()
+        #min_idx = np.argsort(cost_vec)[:10]
+        min_idx = np.argsort(cost_vec)
 
         # we want to find multiple solutions
+        #good_u_ref = np.array(theta)[min_idx]
         dim_u = (self.T, self.N, self.m)
         good_u_ref = []
         good_x_ref = []
@@ -140,12 +141,25 @@ class SteinGame(ResidualGame):
             has_converged = False
         else:
             has_converged = True
+
+        # form belief
+        self.belief_support = np.array(good_u_ref)
+        self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
+
         for u_ref in good_u_ref:
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
 
         self.stein_profiler.e()
-        breakpoint()
         return good_u_ref[0], full_x_ref[0], has_converged
+
+    # given observed state, update belief
+    # u: current control
+    def update(self, u):
+        # TODO, handle receding horizon, and kernel evaluation 
+        prob = np.array([np.exp(-self.kernel(u, particle)) * self.belief_weight for particle in self.belief_support])
+        self.belief_weight = prob / np.sum(prob)
+        return
+
 
     # find gradient direction for minimizing residual
     def d_theta(self, theta):
