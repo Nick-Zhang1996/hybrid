@@ -51,20 +51,23 @@ if __name__=="__main__":
     #main.testAnimation()
 
     # test stein game's prediction
-    chosen_id = 10
+    chosen_id = 30
     observed_u_ref = main.belief_support[chosen_id].reshape((main.T,main.N,main.m))
+    u_size = observed_u_ref.flatten().shape[0]
+    noise = np.random.multivariate_normal(np.zeros(u_size), np.diag([1e-4]*u_size)).reshape(observed_u_ref.shape)
+    observed_u_ref += noise
 
     print('showing chosen NE')
     main.visualize(main.belief_support[chosen_id],visualize=True, animate=False,gif_prefix='before')
     # Randomly select a NE for "opponent"
-    for k in range(main.T):
+    for k in range(main.T//2):
         print(f'step {k}')
         # send the control of the opponent to bayesian
         main.update(observed_u_ref[k,:,:], k)
 
         # show top 3 scenarios, are they the NE opponent is using?
-        high_likelihood_index = np.argsort(main.belief_weight)[:3]
+        high_likelihood_index = np.argsort(main.belief_weight)[-3:]
         for i in high_likelihood_index:
-            print(f'showing top 3: id{i}')
+            print(f'showing top 3: id {i}, prob {main.belief_weight[i]}')
             main.visualize(main.belief_support[i],visualize=True, animate=False,gif_prefix='before')
 

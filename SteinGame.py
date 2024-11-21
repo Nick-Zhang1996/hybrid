@@ -187,7 +187,7 @@ class SteinGame(ResidualGame):
         prob = np.zeros( len(self.belief_support))
         for i in range(len(prob)):
             reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k,0:,:]
-            prob[i] = np.exp(-self.kernel(u, reference)) * self.belief_weight[i]
+            prob[i] = np.exp(self.kernel(u, reference)) * self.belief_weight[i]
         self.belief_weight = prob / np.sum(prob)
         return
 
