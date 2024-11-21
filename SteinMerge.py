@@ -50,3 +50,21 @@ if __name__=="__main__":
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
 
+    # test stein game's prediction
+    chosen_id = 10
+    observed_u_ref = main.belief_support[chosen_id].reshape((main.T,main.N,main.m))
+
+    print('showing chosen NE')
+    main.visualize(main.belief_support[chosen_id],visualize=True, animate=False,gif_prefix='before')
+    # Randomly select a NE for "opponent"
+    for k in range(main.T):
+        print(f'step {k}')
+        # send the control of the opponent to bayesian
+        main.update(observed_u_ref[k,:,:], k)
+
+        # show top 3 scenarios, are they the NE opponent is using?
+        high_likelihood_index = np.argsort(main.belief_weight)[:3]
+        for i in high_likelihood_index:
+            print(f'showing top 3: id{i}')
+            main.visualize(main.belief_support[i],visualize=True, animate=False,gif_prefix='before')
+

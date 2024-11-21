@@ -64,7 +64,7 @@ class SteinGame(ResidualGame):
             for i in range(self.particles):
                 val = np.zeros(self.dim_theta)
                 #for j in range(self.particles):
-                #    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
+                #    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] #+ 0.01*self.d_kernel_d_theta_i(theta[j], theta[i])
                 #phi = 1/self.particles * val
                 val += posterior_log_grad[i]
                 phi = val
@@ -103,9 +103,11 @@ class SteinGame(ResidualGame):
         self.stein_profiler.s('particle refine')
 
         # DEBUG check results after stein
+        '''
         min_idx = np.argsort(cost_vec)[:10]
         for u_ref in np.array(theta)[min_idx]:
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
+        '''
 
         min_idx = np.argsort(cost_vec)[:int(0.9*len(cost_vec))]
         good_u_ref = np.array(theta)[min_idx]
@@ -131,6 +133,11 @@ class SteinGame(ResidualGame):
                 self.print_info('converged')
         self.stein_profiler.e('particle refine')
         '''
+        good_x_ref = []
+        for i in range(len(min_idx)):
+            x_ref = self.rollout(self.x0,good_u_ref[i])
+            full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+            good_x_ref.append(full_x_ref)
 
         # DEBUG check: do particles converge to the same equilibrium? how many equilibriums?
         # check distance between equilibriums:
@@ -161,17 +168,26 @@ class SteinGame(ResidualGame):
         self.belief_support = np.array(good_u_ref)
         self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
 
+        '''
         for u_ref in good_u_ref:
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
+        '''
 
         self.stein_profiler.e()
         return good_u_ref[0], full_x_ref[0], has_converged
 
-    # given observed state, update belief
+    # given observed state, update belief, assume ego agent is agent 0
     # u: current control
-    def update(self, u):
-        # TODO, handle receding horizon, and kernel evaluation 
-        prob = np.array([np.exp(-self.kernel(u, particle)) * self.belief_weight for particle in self.belief_support])
+    # k: time step
+    # TODO maybe we should add a prior based on residual
+    def update(self, u, k):
+        ego_agent_index = 0 # if changed, need to update following code
+        u_others = u.reshape(( self.N, self.m))[1:,:]
+
+        prob = np.zeros( len(self.belief_support))
+        for i in range(len(prob)):
+            reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k,0:,:]
+            prob[i] = np.exp(-self.kernel(u, reference)) * self.belief_weight[i]
         self.belief_weight = prob / np.sum(prob)
         return
 
