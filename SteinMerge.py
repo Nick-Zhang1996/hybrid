@@ -42,7 +42,7 @@ class SteinMerge(CarMergeKinematicBicycle):
         return u_ref, full_x_ref, has_converged
 
 if __name__=="__main__":
-    np.random.seed(2)
+    #np.random.seed(2)
     main = SteinMerge()
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)

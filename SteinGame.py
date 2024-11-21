@@ -16,17 +16,20 @@ class SteinGame(ResidualGame):
         self.particles = 100
         self.epsilon = 1.0 # step size
         self.alpha = 1.0
-        self.stein_iterations = 3
+        self.stein_iterations = 30
         # theta = u in this version
         self.stein_profiler = TimeUtil(True)
 
     def solve(self,save_gif=False,visualize=False,animate=False):
         self.dim_theta = self.T*self.N*self.m
+        T = self.T; N = self.N; n = self.n
 
         # Stage 1: Stein variational inference
         # sample initial particles
         self.stein_profiler.s()
         theta = self.initialSample()
+        # dual variable for theta
+        theta_dual = [np.zeros(T*N*n + T*N*N ) for i in range(self.particles)]
         # one iteration
         for iter in range(self.stein_iterations):
             self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
@@ -47,10 +50,11 @@ class SteinGame(ResidualGame):
                 #retval = self.d_cost_d_theta(theta[i])
                 #current_grad = retval[0]
                 #alt_grad = jacobianNumerical(self.cost, theta[i])
-                # TODO do we need to memorize dual variable here?
-                retval = self.d_theta(theta[i])
-                cost_vec.append(retval[1])
-                val = - self.alpha * retval[0] #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                grad, posterior_residual, new_dual = self.d_theta(theta[i], theta_dual[i])
+                # NOTE not keeping dual
+                #theta_dual[i] = new_dual
+                cost_vec.append(posterior_residual)
+                val = - self.alpha * grad #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
             self.stein_profiler.e('particle grad')
 
@@ -61,9 +65,9 @@ class SteinGame(ResidualGame):
                 val = np.zeros(self.dim_theta)
                 #for j in range(self.particles):
                 #    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
-                val += posterior_log_grad[j]
-
-                phi = 1/self.particles * val
+                #phi = 1/self.particles * val
+                val += posterior_log_grad[i]
+                phi = val
                 des_dir.append(phi)
             self.stein_profiler.e('dec dir')
 
@@ -73,8 +77,11 @@ class SteinGame(ResidualGame):
                 new_theta.append(theta[i] + self.epsilon * des_dir[i])
             new_theta = np.array(new_theta)
             # resample really bad samples
-            bad_samples_idx = np.argsort(cost_vec)[-int(0.1*self.particles):]
+            sort_idx = np.argsort(cost_vec)
+            bad_samples_idx = sort_idx[-int(0.1*self.particles):]
             new_theta[bad_samples_idx] = self.initialSample(count=len(bad_samples_idx))
+            for i in bad_samples_idx:
+                theta_dual[i] = np.zeros(T*N*n + T*N*N)
 
 
             # DEBUG: check cost of new particles
@@ -82,23 +89,30 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 count = np.sum( (np.array(cost_vec) - np.array(old_cost_vec)) < 0)
                 self.print_info(f' cost decrease particle ratio : {count/self.particles}')
-            new_cost = np.mean(cost_vec)
-            self.print_info(f'overall mean cost: ', new_cost)
-            #old_min_cost = np.min([self.cost(val) for val in theta])
-            new_min_cost = np.min(cost_vec)
-            self.print_info(f'min cost: ', new_min_cost)
+            cost_vec = np.array(cost_vec)
+            mean_cost = np.mean(cost_vec[sort_idx[:-int(0.1*self.particles)]])
+            self.print_info(f'overall mean cost: ', mean_cost)
+            min_cost = np.min(cost_vec)
+            self.print_info(f'min cost: ', min_cost)
             theta = new_theta
             # DEBUG plot cost
-            plt.hist(cost_vec)
-            plt.show()
+            #plt.hist(cost_vec[sort_idx[:-int(0.1*self.particles)]])
+            #plt.show()
 
         # Stage 2: Residual Game for particle refinement
         self.stein_profiler.s('particle refine')
-        #min_idx = np.argsort(cost_vec)[:10]
-        min_idx = np.argsort(cost_vec)
 
-        # we want to find multiple solutions
-        #good_u_ref = np.array(theta)[min_idx]
+        # DEBUG check results after stein
+        min_idx = np.argsort(cost_vec)[:10]
+        for u_ref in np.array(theta)[min_idx]:
+            self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
+
+        min_idx = np.argsort(cost_vec)[:int(0.9*len(cost_vec))]
+        good_u_ref = np.array(theta)[min_idx]
+
+        # refinement
+        '''
+        min_idx = np.argsort(cost_vec)
         dim_u = (self.T, self.N, self.m)
         good_u_ref = []
         good_x_ref = []
@@ -116,6 +130,7 @@ class SteinGame(ResidualGame):
                 good_x_ref.append(full_x_ref)
                 self.print_info('converged')
         self.stein_profiler.e('particle refine')
+        '''
 
         # DEBUG check: do particles converge to the same equilibrium? how many equilibriums?
         # check distance between equilibriums:
@@ -162,21 +177,41 @@ class SteinGame(ResidualGame):
 
 
     # find gradient direction for minimizing residual
-    def d_theta(self, theta):
+    def d_theta(self, theta, dual):
         N = self.N; T = self.T; n = self.n; m = self.m
         dim_u = (self.T, self.N, self.m)
         u_ref = theta.reshape(dim_u)
         x_ref = self.rollout(self.x0,u_ref)
-        lambda_ref = np.zeros((T,N,self.n))
-        mu_ref = np.zeros((T,N,N))
 
-        retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
-        new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+        #lambda_ref = np.zeros((T,N,self.n))
+        #mu_ref = np.zeros((T,N,N))
+        lambda_ref = dual[:T*N*n].reshape((T,N,n))
+        mu_ref = dual[T*N*n:].reshape((T,N,N))
+
+        '''
+        _x_ref = x_ref; _u_ref = u_ref
+        try:
+            for i in range(30):
+                retval = self.cpp.step(_x_ref, _u_ref, lambda_ref, mu_ref)
+                new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+                _x_ref = new_x_ref; _u_ref = new_u_ref
+        except StopIteration as e:
+            #self.print_info(e)
+            new_x_ref = _x_ref; new_u_ref = _u_ref
+        '''
+        try:
+            retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
+        except StopIteration as e:
+            #self.print_info(e)
+            new_x_ref = x_ref; new_u_ref = u_ref
+
+        new_dual = np.hstack([lambda_ref.flatten(), mu_ref.flatten()])
 
         h_plus_mask = self.getHplusMask(new_x_ref)
         r0 = self.r(new_x_ref,new_u_ref,lambda_ref,mu_ref,h_plus_mask)
         grad = -(new_u_ref - u_ref).reshape(1,-1)
-        return grad, np.linalg.norm(r0)
+        return grad, np.linalg.norm(r0), new_dual
 
 
     def cost(self, theta):
