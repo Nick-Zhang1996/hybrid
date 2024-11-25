@@ -9,8 +9,8 @@ from CarMergeKinematicBicycle import CarMergeKinematicBicycle
 class SteinMerge(CarMergeKinematicBicycle):
     USE_CPP = True
     def __init__(self):
+        '''
         super().__init__(car_count=2)
-
         main_lane_n = 1
         merge_lane_n = 2 - main_lane_n
         x_pos_main_lane = np.array( [ 1.5] )
@@ -19,6 +19,20 @@ class SteinMerge(CarMergeKinematicBicycle):
         v_merge_lane = 2.0
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n)+0.2,v_main_lane, np.zeros(main_lane_n)]).T
         x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n)-0.2,v_merge_lane, np.zeros(merge_lane_n)]).T
+        self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
+        self.target_y = [1]*(main_lane_n+merge_lane_n)
+        '''
+        super().__init__(car_count=5)
+        car_count = 5
+        # multiple car merge, car_count: main_lane_n + merge_lane_n
+        main_lane_n = min(int(0.67*car_count),car_count-1)
+        merge_lane_n = car_count - main_lane_n
+        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.4,main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 2.5 + np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
+        v_main_lane = 2.0 + np.random.random(main_lane_n)
+        v_merge_lane = 2.0 + np.random.random(merge_lane_n)
+        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
+        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
 
