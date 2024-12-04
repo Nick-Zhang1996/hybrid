@@ -111,6 +111,8 @@ class SteinGame(ResidualGame):
 
         min_idx = np.argsort(cost_vec)[:int(0.9*len(cost_vec))]
         good_u_ref = np.array(theta)[min_idx]
+        good_cost_ref = np.array(cost_vec)[min_idx]
+        self.stein_profiler.e()
 
         # refinement
         '''
@@ -134,10 +136,17 @@ class SteinGame(ResidualGame):
         self.stein_profiler.e('particle refine')
         '''
         good_x_ref = []
+        good_agent_cost = []
         for i in range(len(min_idx)):
             x_ref = self.rollout(self.x0,good_u_ref[i])
             full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
             good_x_ref.append(full_x_ref)
+            agent_cost = 0
+            for k in range(self.T):
+                for agent in range(self.N):
+                    agent_cost += self.J(x_ref[k,agent],good_u_ref[i].reshape(self.T,self.N,self.m)[k,agent],agent).item()
+            good_agent_cost.append(agent_cost)
+
 
         # DEBUG check: do particles converge to the same equilibrium? how many equilibriums?
         # check distance between equilibriums:
@@ -167,13 +176,16 @@ class SteinGame(ResidualGame):
         # form belief
         self.belief_support = np.array(good_u_ref)
         self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
+        # this is actually the residual, we use that as cost in the Stein descent
+        self.belief_support_residual = np.array(good_cost_ref)
+        # total agent cost, this is the negative social utility
+        self.belief_support_cost = np.array(good_agent_cost)
 
         '''
         for u_ref in good_u_ref:
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
         '''
 
-        self.stein_profiler.e()
         return good_u_ref[0], full_x_ref[0], has_converged
 
     # given observed state, update belief, assume ego agent is agent 0

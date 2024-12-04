@@ -7,13 +7,16 @@ constexpr int m = 2;
 class CarMergeKinematicBicycle : public ResidualGame<n,m> {
     private:
         Matrix A,B,J_Qr,J_Q,J_R,h_Qh,target_y;
+        Scalar collision_radius;
     public:
         CarMergeKinematicBicycle(const int _N, const int _T,
                 const Scalar _dt, const Scalar _rho, const Scalar _rho_b, const Scalar _bc_a, const Scalar _bc_b,
                 const Scalar _tolerance, const int _backtracking_max_iter,
-                const Matrix _J_Qr, const Matrix _J_Q, const Matrix _J_R, const Matrix _h_Qh, const Matrix _target_y,
+                const Matrix _J_Qr, const Matrix _J_Q, const Matrix _J_R, const Matrix _h_Qh, const Matrix _target_y, const Scalar _collision_radius,
                 const int _max_iter, const bool _verbose):
-            ResidualGame(_N, _T, _dt, _rho, _rho_b, _bc_a, _bc_b, _tolerance, _backtracking_max_iter, _max_iter, _verbose),J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), h_Qh(_h_Qh), target_y(_target_y) {
+            ResidualGame(_N, _T,
+                    _dt, _rho, _rho_b, _bc_a, _bc_b,
+                    _tolerance, _backtracking_max_iter, _max_iter, _verbose),J_Qr(_J_Qr), J_Q(_J_Q), J_R(_J_R), h_Qh(_h_Qh), target_y(_target_y),collision_radius(_collision_radius) {
                 /*
                 cout << "N = " << N;
                 cout << "T = " << T;
@@ -53,7 +56,7 @@ class CarMergeKinematicBicycle : public ResidualGame<n,m> {
 
         // collision constraint function
         Scalar h(const Matrix x_i, const Matrix x_j){
-            return -sqr(x_i(0,0)-x_j(0,0)) - sqr(x_i(1,0)-x_j(1,0)) + 7.0;
+            return -sqr(x_i(0,0)-x_j(0,0)) - sqr(x_i(1,0)-x_j(1,0)) + collision_radius*collision_radius;
         }
         Matrix dh_dxi(const Matrix x_i, const Matrix x_j){
             return 2*(x_i-x_j).transpose() * h_Qh;
