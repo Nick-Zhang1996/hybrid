@@ -96,7 +96,8 @@ class CarMergeKinematicBicycle(SteinGame):
         main_lane_n = min(int(0.67*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.4,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
+        #x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_merge_lane = (np.random.random()-0.5)*2*2.5 +np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T

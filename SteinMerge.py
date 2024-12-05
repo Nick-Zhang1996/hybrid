@@ -61,7 +61,7 @@ if __name__=="__main__":
     main = SteinMerge(car_count=5)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
-    #main.final()
+    main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
 
