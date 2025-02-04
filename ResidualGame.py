@@ -1038,9 +1038,9 @@ class ResidualGame(PrintObject,ABC):
                             self.print_debug(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
-            dLL_dxi_dx_num = jacobianNumerical(lambda xx:self.dLLi_dxi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_x)
-            self.print_debug(f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
-            assert(np.linalg.norm(dLL_dxi_dx_num - dLL_dxi_dx)<1e-4)
+            dLLi_dxi_dx_num = jacobianNumerical(lambda xx:self.dLLi_dxi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=T*n)
+            self.print_debug(f'dLL_dxdx err {np.linalg.norm(dLLi_dxi_dx_num - dLL_dxi_dx)}')
+            assert(np.linalg.norm(dLLi_dxi_dx_num - dLL_dxi_dx)<1e-4)
         if (self.CPP_DEBUG):
             alt = self.cpp.dLLi_dxi_dx([xx for xx in x],[uu for uu in u],[hh for hh in h_plus_mask],[ll for ll in lamda],[mm for mm in mu],i)
             if (np.linalg.norm(alt-dLL_dxdx)>1e-4):

@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
 from util import *
 from TimeUtil import TimeUtil
 
@@ -8,6 +10,7 @@ from SteinGame import SteinGame
 # example for paper Stein Variational Game, Low Dimension Examples 1)
 class BimodalConvergence(SteinGame):
     USE_CPP = False
+    DEBUG = False
     def __init__(self):
         super().__init__()
 
@@ -19,11 +22,13 @@ class BimodalConvergence(SteinGame):
         '''
         self.print_debug_enable()
         self.N = 2
-        self.T = 10
-        self.dt = dt = 0.1
+        self.T = 20
+        self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.tolerance = 5e-4
+        self.particles = 100
+
+        self.tolerance = 1e-4 # 5e-4
         self.iterations = 50 # 30
 
         # x^i: [position, velocity (1D)]
@@ -38,9 +43,13 @@ class BimodalConvergence(SteinGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_Q = np.diag([1,0])
-        self.J_R = np.eye(self.m)*0.1
+        self.J_R = np.eye(self.m)*0.01
+        self.p1 = np.array([1,0])
+        self.p2 = np.array([-1,0])
         self.A = np.array([[1,dt],[0,1]])
         self.B = np.array([[0.5*dt*dt],[dt]])
+
+        self.x0 = np.array([[-0.1,-0.1],[0.2,0.1]])
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
@@ -107,14 +116,22 @@ class BimodalConvergence(SteinGame):
                 +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2) )
         sigval2 = self.sigmoid( (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
                 +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1) )
+        retval = None
         if (i == 0):
-            return sigval1 * (1 - sigval1) * 2 * (x_T[i] - self.p1).T @ self.J_Q \
+            retval = sigval1 * (1 - sigval1) * 2 * (x_T[i] - self.p1).T @ self.J_Q \
                  + sigval2 * (1 - sigval2) * 2 * (x_T[i] - self.p2).T @ self.J_Q
         else:
-            return sigval2 * (1 - sigval2) * 2 * (x_T[i] - self.p1).T @ self.J_Q \
+            retval = sigval2 * (1 - sigval2) * 2 * (x_T[i] - self.p1).T @ self.J_Q \
                  + sigval1 * (1 - sigval1) * 2 * (x_T[i] - self.p2).T @ self.J_Q
 
-        return self.dJi_dxi(x_T,np.zeros(self.m),i)
+        if (self.DEBUG):
+            dJfi_dxi_num = jacobianNumerical(lambda xx:self.Jfi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=1)
+            dJfi_dxi_num = dJfi_dxi_num[:,i*2:(i+1)*2]
+
+            self.print_debug(f'dJfi_dxi err {np.linalg.norm(dJfi_dxi_num - retval)}')
+            assert(np.linalg.norm(dJfi_dxi_num - retval)<1e-4)
+        return retval
+
     def dJfi_dxj(self, x_T, i,j):
         return self.dJfi_dxi(x_T,j)
 
@@ -124,29 +141,24 @@ class BimodalConvergence(SteinGame):
                 +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2) )
         sig2 = self.sigmoid( (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
                 +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1) )
+        I = np.eye(self.n)
+        dsig1 = sig1 * (1 - sig1)
+        ddsig1 = dsig1*(1 - sig1) - sig1*dsig1
+        dsig2 = sig2 * (1 - sig2)
+        ddsig2 = dsig2*(1 - sig2) - sig2*dsig2
         if (i==0):
-            # dsig1 dx0
-            dsig1 = sig1 * (1 - sig1) * 2 * Q @ (x_T[0] - self.p1)
-            # dsig2 dx0
-            dsig2 = sig2 * (1 - sig2) * 2 * Q @ (x_T[0] - self.p2)
-            retval = dsig1 * (1-sig1) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig1 * (-dsig1) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig1 * (1-sig1) * 2 * Q
-            retval += dsig2 * (1-sig2) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig2 * (-dsig2) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig2 * (1-sig2) * 2 * Q
+            retval = dsig1 * 2 * Q + 4* ddsig1 * Q @ (x_T[0] - self.p1).reshape(-1,1) @  (x_T[0] - self.p1).reshape(1,-1) @ Q \
+                   + dsig2 * 2 * Q + 4* ddsig2 * Q @ (x_T[0] - self.p2).reshape(-1,1) @  (x_T[0] - self.p2).reshape(1,-1) @ Q
         else:
-            # dsig1 dx1
-            dsig1 = sig1 * (1 - sig1) * 2 * Q @ (x_T[0] - self.p2)
-            # dsig2 dx1
-            dsig2 = sig2 * (1 - sig2) * 2 * Q @ (x_T[0] - self.p1)
+            retval = dsig1 * 2 * Q + 4* ddsig1 * Q @ (x_T[1] - self.p2).reshape(-1,1) @  (x_T[1] - self.p2).reshape(1,-1) @ Q \
+                   + dsig2 * 2 * Q + 4* ddsig2 * Q @ (x_T[1] - self.p1).reshape(-1,1) @  (x_T[1] - self.p1).reshape(1,-1) @ Q
 
-            retval = dsig1 * (1-sig1) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig1 * (-dsig1) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig1 * (1-sig1) * 2 * Q
-            retval += dsig2 * (1-sig2) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig2 * (-dsig2) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig2 * (1-sig2) * 2 * Q
+        if (self.DEBUG):
+            dJfi_dxi_dxi_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
+            dJfi_dxi_dxi_num = dJfi_dxi_dxi_num[:,i*2:(i+1)*2]
+            self.print_debug(f'dJfi_dxi_dxi err {np.linalg.norm(dJfi_dxi_dxi_num - retval)}')
+            assert(np.linalg.norm(dJfi_dxi_dxi_num - retval)<1e-4)
+        return retval
 
     def dJfi_dxi_dxj(self, x_T, i,j):
         Q = self.J_Q
@@ -154,25 +166,25 @@ class BimodalConvergence(SteinGame):
                 +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2) )
         sig2 = self.sigmoid( (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
                 +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1) )
+        I = np.eye(self.n)
+        dsig1 = sig1 * (1 - sig1)
+        ddsig1 = dsig1*(1 - sig1) - sig1*dsig1
+        dsig2 = sig2 * (1 - sig2)
+        ddsig2 = dsig2*(1 - sig2) - sig2*dsig2
+        assert(i != j)
         if (i==0):
-            # dsig1 dx1
-            dsig1 = sig1 * (1 - sig1) * 2 * Q @ (x_T[0] - self.p2)
-            # dsig2 dx1
-            dsig2 = sig2 * (1 - sig2) * 2 * Q @ (x_T[0] - self.p1)
-            retval = dsig1 * (1-sig1) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig1 * (-dsig1) * 2 * Q @ (x_T[0] - self.p1) \
-                    + dsig2 * (1-sig2) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig2 * (-dsig2) * 2 * Q @ (x_T[0] - self.p2)
+            retval =  4* ddsig1 * Q @ (x_T[0] - self.p1).reshape(-1,1) @  (x_T[1] - self.p2).reshape(1,-1) @ Q \
+                   +  4* ddsig2 * Q @ (x_T[0] - self.p2).reshape(-1,1) @  (x_T[1] - self.p1).reshape(1,-1) @ Q
         else:
-            # dsig1 dx0
-            dsig1 = sig1 * (1 - sig1) * 2 * Q @ (x_T[0] - self.p1)
-            # dsig2 dx0
-            dsig2 = sig2 * (1 - sig2) * 2 * Q @ (x_T[0] - self.p2)
+            retval =  4* ddsig1 * Q @ (x_T[1] - self.p2).reshape(-1,1) @  (x_T[0] - self.p1).reshape(1,-1) @ Q \
+                   +  4* ddsig2 * Q @ (x_T[1] - self.p1).reshape(-1,1) @  (x_T[0] - self.p2).reshape(1,-1) @ Q
 
-            retval = dsig1 * (1-sig1) * 2 * Q @ (x_T[0] - self.p2) \
-                    + sig1 * (-dsig1) * 2 * Q @ (x_T[0] - self.p2) \
-                    + dsig2 * (1-sig2) * 2 * Q @ (x_T[0] - self.p1) \
-                    + sig2 * (-dsig2) * 2 * Q @ (x_T[0] - self.p1)
+        if (self.DEBUG):
+            dJfi_dxi_dxj_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
+            dJfi_dxi_dxj_num = dJfi_dxi_dxj_num[:,j*2:(j+1)*2]
+            self.print_debug(f'dJfi_dxi_dxj err {np.linalg.norm(dJfi_dxi_dxj_num - retval)}')
+            assert(np.linalg.norm(dJfi_dxi_dxj_num - retval)<1e-4)
+        return retval
 
     def dJfi_dxj_dxj(self, x_T, i,j):
         return self.dJfi_dxi_dxi(x_T, j)
@@ -192,21 +204,22 @@ class BimodalConvergence(SteinGame):
     def h(self, x_i, x_j):
         return -1
     def dh_dxi(self,x_i,x_j):
-        return 0
+        return np.zeros((1,self.n))
     def dh_dxj(self,x_i,x_j):
-        return 0
+        return np.zeros((1,self.n))
     def dh_dxi_dxi(self,x_i,x_j):
-        return 0
+        return np.zeros((self.n,self.n))
     def dh_dxj_dxi(self,x_i,x_j):
-        return 0
+        return np.zeros((self.n,self.n))
     def dh_dxi_dxj(self,x_i,x_j):
-        return 0
+        return np.zeros((self.n,self.n))
     def dh_dxj_dxj(self,x_i,x_j):
-        return 0
+        return np.zeros((self.n,self.n))
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))
         u_ref[:,0,:] = 1
+        u_ref[:,1,:] = -2
         x_ref = self.rollout(self.x0,u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self._visualize(u_ref,full_x_ref)
@@ -218,8 +231,38 @@ if __name__=="__main__":
     #np.random.seed(0)
     main = BimodalConvergence()
     main.setup()
-    #u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
-    #main.final()
-    #print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
-    main.testAnimation()
+    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
+    main.final()
+    print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}, has_converged: {has_converged}')
+
+    #self.belief_support = np.array(good_u_ref)
+    #self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
+    # this is actually the residual, we use that as cost in the Stein descent
+    #self.belief_support_residual = np.array(good_cost_ref)
+    # total agent cost, this is the negative social utility
+    #self.belief_support_cost = np.array(good_agent_cost)
+
+    # plot end position
+    x_ref_vec = []
+    for u_ref in main.belief_support:
+        x_ref = main.rollout(main.x0,u_ref)
+        x_ref_vec.append(x_ref)
+    x_ref_vec = np.array(x_ref_vec)
+
+    fig, ax = plt.subplots()
+    # target points, p1, p2
+    ax.plot([-1],[1], 'o')
+    ax.plot([1],[-1], 'o')
+
+    # plot agent 0,1's position as x,y coordinate
+    xx = x_ref_vec[:,-1,0,0]
+    yy = x_ref_vec[:,-1,1,0]
+    plt.plot(xx,yy,'*')
+    ax.set_aspect('equal', adjustable='box')
+    plt.show()
+
+
+
+
+    #main.testAnimation()
 

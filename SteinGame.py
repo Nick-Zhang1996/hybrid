@@ -228,7 +228,10 @@ class SteinGame(ResidualGame):
             new_x_ref = _x_ref; new_u_ref = _u_ref
         '''
         try:
-            retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            if (self.USE_CPP):
+                retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
+            else:
+                retval = self.step(x_ref, u_ref, lambda_ref, mu_ref)
             new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
         except StopIteration as e:
             #self.print_info(e)
