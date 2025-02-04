@@ -56,12 +56,17 @@ class CarMergeKinematicBicycle(SteinGame):
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
 
+
         self.tolerance = 5e-4
         self.iterations = 50 # 30
 
         # dimension of x and u for single agent
         self.n = 4
         self.m = 2
+
+        # stein sampling prior
+        self.dim_theta = self.T*self.N*self.m
+        self.covariance_mtx = np.diag([2*0.5]*self.dim_theta)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]

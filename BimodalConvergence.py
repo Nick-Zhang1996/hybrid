@@ -26,15 +26,19 @@ class BimodalConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 100
+        self.particles = 50
 
         self.tolerance = 1e-4 # 5e-4
-        self.iterations = 50 # 30
+        self.iterations = 20 # 30
 
         # x^i: [position, velocity (1D)]
         # u^i: [acceleration]
         self.n = 2
         self.m = 1
+
+        # stein sampling prior
+        self.dim_theta = self.T*self.N*self.m
+        self.covariance_mtx = np.diag([0.1]*self.dim_theta)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
@@ -43,16 +47,20 @@ class BimodalConvergence(SteinGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_Q = np.diag([1,0])
-        self.J_R = np.eye(self.m)*0.01
+        self.J_R = np.eye(self.m)*1e-4
         self.p1 = np.array([1,0])
         self.p2 = np.array([-1,0])
         self.A = np.array([[1,dt],[0,1]])
         self.B = np.array([[0.5*dt*dt],[dt]])
 
-        self.x0 = np.array([[-0.1,-0.1],[0.2,0.1]])
+        #self.x0 = np.array([[1,0],[-1,0]])
+        self.x0 = np.zeros((self.N,self.n))
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
+        #self.guess[:,0,0] = 0.1
+        #self.guess[:,1,0] = 0.08
+
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         if (self.USE_CPP or self.CPP_DEBUG):
@@ -105,7 +113,6 @@ class BimodalConvergence(SteinGame):
         return 2*self.J_R
 
     # terminal cost
-    # TODO verify these derivatives
     def Jfi(self, x_T, i):
         return    self.sigmoid( (x_T[0] - self.p1).T @ self.J_Q @ (x_T[0] - self.p1)  \
                 +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2) ) \
@@ -225,6 +232,21 @@ class BimodalConvergence(SteinGame):
         self._visualize(u_ref,full_x_ref)
         plt.show()
 
+    def getAgentCost(self, x, u):
+        cost_vec = []
+        for i in range(self.N):
+            cost = 0
+            for k in range(self.T):
+                cost += self.J(x[k], u[k,i], i)
+
+            final_cost = self.Jfi(x[self.T], i)
+            cost += final_cost
+            print(f'agent {i}, total cost {cost} final cost {final_cost}')
+            cost_vec.append(cost)
+        return cost_vec
+
+
+
 
 
 if __name__=="__main__":
@@ -234,6 +256,8 @@ if __name__=="__main__":
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}, has_converged: {has_converged}')
+    cost_vec = main.getAgentCost(full_x_ref, u_ref)
+    print(f'cost_vec: {cost_vec}')
 
     #self.belief_support = np.array(good_u_ref)
     #self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
@@ -260,9 +284,6 @@ if __name__=="__main__":
     plt.plot(xx,yy,'*')
     ax.set_aspect('equal', adjustable='box')
     plt.show()
-
-
-
-
+    breakpoint()
     #main.testAnimation()
 

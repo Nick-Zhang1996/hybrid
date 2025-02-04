@@ -19,10 +19,11 @@ class SteinGame(ResidualGame):
         self.stein_iterations = 30
         # theta = u in this version
         self.stein_profiler = TimeUtil(True)
+        self.covariance_mtx = None
 
     def solve(self,save_gif=False,visualize=False,animate=False):
-        self.dim_theta = self.T*self.N*self.m
         T = self.T; N = self.N; n = self.n
+        self.dim_theta = self.T*self.N*self.m
 
         # Stage 1: Stein variational inference
         # sample initial particles
@@ -136,15 +137,17 @@ class SteinGame(ResidualGame):
         self.stein_profiler.e('particle refine')
         '''
         good_x_ref = []
+        # social cost, i.e. sum of cost from all agents
         good_agent_cost = []
         for i in range(len(min_idx)):
             x_ref = self.rollout(self.x0,good_u_ref[i])
             full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
             good_x_ref.append(full_x_ref)
             agent_cost = 0
-            for k in range(self.T):
-                for agent in range(self.N):
-                    agent_cost += self.J(x_ref[k,agent],good_u_ref[i].reshape(self.T,self.N,self.m)[k,agent],agent).item()
+            for agent in range(self.N):
+                for k in range(self.T):
+                    agent_cost += self.J(full_x_ref[k,agent],good_u_ref[i].reshape(self.T,self.N,self.m)[k,agent],agent).item()
+                agent_cost += self.Jfi(full_x_ref[self.T], agent)
             good_agent_cost.append(agent_cost)
 
 
@@ -176,6 +179,7 @@ class SteinGame(ResidualGame):
         # form belief
         self.belief_support = np.array(good_u_ref)
         self.belief_weight = np.array([1/len(good_u_ref)]*len(good_u_ref))
+        self.belief_x_ref = np.array(good_x_ref)
         # this is actually the residual, we use that as cost in the Stein descent
         self.belief_support_residual = np.array(good_cost_ref)
         # total agent cost, this is the negative social utility
@@ -186,7 +190,7 @@ class SteinGame(ResidualGame):
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
         '''
 
-        return good_u_ref[0], full_x_ref[0], has_converged
+        return good_u_ref[0].reshape(self.T,self.N,self.m), good_x_ref[0], has_converged
 
     # given observed state, update belief, assume ego agent is agent 0
     # u: current control
@@ -309,9 +313,9 @@ class SteinGame(ResidualGame):
         ''' make [self.particles] samples of size theta from an initial belief'''
         # TODO need to tune scale
         if (count is None):
-            return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([2*0.5]*self.dim_theta), self.particles)
+            return np.random.multivariate_normal(np.zeros(self.dim_theta),self.covariance_mtx, self.particles)
         else:
-            return np.random.multivariate_normal(np.zeros(self.dim_theta),np.diag([2*0.5]*self.dim_theta), count)
+            return np.random.multivariate_normal(np.zeros(self.dim_theta),self.covariance_mtx, count)
 
     def proposal(self,theta):
         ''' evaluate marginal of proposal distribution, output: scalar '''
