@@ -42,7 +42,7 @@ class BimodalConvergence(SteinGame):
 
         # stein sampling prior
         self.dim_theta = self.T*self.N*self.m
-        self.covariance_mtx = np.diag([4]*self.dim_theta)
+        self.covariance_mtx = np.diag([6]*2)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
@@ -62,13 +62,23 @@ class BimodalConvergence(SteinGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = -2
+        self.guess[:,0,0] = -3
         self.guess[:,1,0] = 2
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         if (self.USE_CPP or self.CPP_DEBUG):
             self.print_error('cpp implementation not available')
+
+    # use a uniform prior
+    def initialSample(self,count=None):
+        ''' make [self.particles] samples of size theta from an initial belief'''
+        if (count is None):
+            count = self.particles
+        val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
+        val = np.tile(val, (1,self.T,1))
+        dim_u = (self.T, self.N, self.m)
+        return val.reshape(count,-1)
 
     def _visualize(self,U,X=None):
         if (X is None):
