@@ -6,9 +6,10 @@ from TimeUtil import TimeUtil
 
 from ResidualGame import ResidualGame
 from SteinGame import SteinGame
+import pickle as p
 
 # example for paper Stein Variational Game, Low Dimension Examples 1)
-class BimodalConvergence(ResidualGame):
+class BimodalConvergence(SteinGame):
     USE_CPP = False
     DEBUG = False
     def __init__(self):
@@ -22,7 +23,7 @@ class BimodalConvergence(ResidualGame):
         '''
         self.print_debug_enable()
         self.N = 2
-        self.T = 20
+        self.T = 5
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
@@ -41,7 +42,7 @@ class BimodalConvergence(ResidualGame):
 
         # stein sampling prior
         self.dim_theta = self.T*self.N*self.m
-        self.covariance_mtx = np.diag([0.1]*self.dim_theta)
+        self.covariance_mtx = np.diag([4]*self.dim_theta)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
@@ -50,7 +51,7 @@ class BimodalConvergence(ResidualGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.J_Q = np.diag([1,0])
-        self.J_R = np.eye(self.m)*1e-4
+        self.J_R = np.eye(self.m)*1e-2
         self.p1 = np.array([1,0])
         self.p2 = np.array([-1,0])
         self.A = np.array([[1,dt],[0,1]])
@@ -61,8 +62,8 @@ class BimodalConvergence(ResidualGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = 0.1
-        self.guess[:,1,0] = -0.05
+        self.guess[:,0,0] = -2
+        self.guess[:,1,0] = 2
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -97,18 +98,18 @@ class BimodalConvergence(ResidualGame):
         i: agent id
         '''
         val = u_k_i.T @ self.J_R @ u_k_i
-        return val
+        return val + self.Jfi(x_k,i)
 
     def dJi_dxi(self,x_k,u_k_i,i):
-        return np.zeros((1,self.n))
+        return np.zeros((1,self.n)) + self.dJfi_dxi(x_k,  i)
     def dJi_dxj(self,x_k,u_k_i,i,j):
-        return np.zeros((1,self.n))
+        return np.zeros((1,self.n)) + self.dJfi_dxj(x_k,  i, j)
     def dJi_dxi_dxi(self,x_k,u_k_i,i):
-        return np.zeros((self.n,self.n))
+        return np.zeros((self.n,self.n)) + self.dJfi_dxi_dxi(x_k, i)
     def dJi_dxi_dxj(self,x_k,u_k_i,i,j):
-        return np.zeros((self.n,self.n))
+        return np.zeros((self.n,self.n)) + self.dJfi_dxi_dxj(x_k, i, j)
     def dJi_dxj_dxj(self,x_k,u_k_i,i,j):
-        return np.zeros((self.n,self.n))
+        return np.zeros((self.n,self.n)) + self.dJfi_dxj_dxj(x_k, i, j)
     def dJi_du(self,x_k,u_k_i,i):
         val = 2* u_k_i.T @ self.J_R
         return val
@@ -305,5 +306,9 @@ if __name__=="__main__":
     ax.set_aspect('equal', adjustable='box')
     plt.show()
     breakpoint()
+    # TODO add x_ref in stored data
+    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost}
+    with open('particles.p', 'wb') as f:
+        p.dump(data,f)
     #main.testAnimation()
 

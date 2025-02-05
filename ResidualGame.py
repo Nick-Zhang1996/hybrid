@@ -199,6 +199,16 @@ class ResidualGame(PrintObject,ABC):
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
+        '''
+        # check second order conditions
+        h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
+        for i in range(self.N):
+            M = self.dLLi_dxi_dx(x_ref, u_ref, h_plus_mask, lambda_ref*0, mu_ref*0,i)[:,i*self.T*self.n:(i+1)*self.T*self.n]
+            pde = np.all(np.linalg.eigvals(M) > -1e-3)
+            self.print_info(f'{i} eig val: {np.linalg.eigvals(M)}')
+            has_converged = pde and has_converged
+        '''
+
         return u_ref, full_x_ref, has_converged
 
     def step(self,x_ref,u_ref,lambda_ref,mu_ref):
@@ -1368,6 +1378,7 @@ class ResidualGame(PrintObject,ABC):
             if (np.linalg.norm(alt-dr_dmu)>1e-4):
                 breakpoint()
         return dr_dmu
+
 
 
     # ---------- Defaults for  some Application specific functions -------

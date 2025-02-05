@@ -10,8 +10,8 @@ def Jfi( x_T, i):
             +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+1)
 
 main = BimodalConvergence()
-x = np.linspace(-4,4,100)
-y = np.linspace(-4,4,100)
+x = np.linspace(-10,10,100)
+y = np.linspace(-10,10,100)
 [xx,yy] = np.meshgrid(x,y)
 zz = np.zeros_like(xx)
 for i in range(zz.shape[0]):
