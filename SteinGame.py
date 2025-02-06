@@ -52,8 +52,7 @@ class SteinGame(ResidualGame):
                 #current_grad = retval[0]
                 #alt_grad = jacobianNumerical(self.cost, theta[i])
                 grad, posterior_residual, new_dual = self.d_theta(theta[i], theta_dual[i])
-                # NOTE not keeping dual
-                #theta_dual[i] = new_dual
+                theta_dual[i] = new_dual
                 cost_vec.append(posterior_residual)
                 val = - self.alpha * grad #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
@@ -77,6 +76,7 @@ class SteinGame(ResidualGame):
             for i in range(self.particles):
                 new_theta.append(theta[i] + self.epsilon * des_dir[i])
             new_theta = np.array(new_theta)
+
             # resample really bad samples
             sort_idx = np.argsort(cost_vec)
             bad_samples_idx = sort_idx[-int(0.1*self.particles):]
@@ -89,12 +89,12 @@ class SteinGame(ResidualGame):
             #old_cost = np.sum([self.cost(val) for val in theta])
             if (iter > 0):
                 count = np.sum( (np.array(cost_vec) - np.array(old_cost_vec)) < 0)
-                self.print_info(f' cost decrease particle ratio : {count/self.particles}')
+                #self.print_info(f' cost decrease particle ratio : {count/self.particles}')
             cost_vec = np.array(cost_vec)
             mean_cost = np.mean(cost_vec[sort_idx[:-int(0.1*self.particles)]])
-            self.print_info(f'overall mean cost: ', mean_cost)
+            self.print_debug(f'overall mean cost: ', mean_cost)
             min_cost = np.min(cost_vec)
-            self.print_info(f'min cost: ', min_cost)
+            self.print_debug(f'min cost: ', min_cost)
             theta = new_theta
             # DEBUG plot cost
             #plt.hist(cost_vec[sort_idx[:-int(0.1*self.particles)]])

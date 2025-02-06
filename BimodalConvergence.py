@@ -14,20 +14,19 @@ class BimodalConvergence(SteinGame):
     DEBUG = False
     def __init__(self):
         super().__init__()
-
         '''
         x_i_k: 1..T, T*N*n  NOTE starts from 1
         u_i_k: 0..T-1, T*N*m
         lamda_i_k: 0..T-1 T*N*n
         mu_k_i_j: 1..T T*N*N NOTE starts from 1
         '''
-        self.print_debug_enable()
+        #self.print_debug_enable()
         self.N = 2
         self.T = 5
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 10
+        self.particles = 300
 
         self.tolerance = 1e-4 # 5e-4
         self.iterations = 20 # 30
@@ -62,8 +61,8 @@ class BimodalConvergence(SteinGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = -3.4
-        self.guess[:,1,0] = 2.6
+        self.guess[:,0,0] = 5.50
+        self.guess[:,1,0] = -5.12
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -75,8 +74,11 @@ class BimodalConvergence(SteinGame):
         ''' make [self.particles] samples of size theta from an initial belief'''
         if (count is None):
             count = self.particles
-        #val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
-        val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
+        val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
+        #val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
+        print(val)
+        #val[0,0] = 5.50
+        #val[0,1] = -5.12
         val = np.tile(val, (1,self.T,1))
         dim_u = (self.T, self.N, self.m)
         return val.reshape(count,-1)
@@ -324,8 +326,9 @@ if __name__=="__main__":
     plt.show()
     breakpoint()
     # TODO add x_ref in stored data
-    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost}
+    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref}
     with open('particles.p', 'wb') as f:
         p.dump(data,f)
+    print(np.sum(np.linalg.norm(main.belief_x_ref[:,-1,:,0],axis=1) > 0.5)/270)
     #main.testAnimation()
 
