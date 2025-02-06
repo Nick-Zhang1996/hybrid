@@ -9,9 +9,9 @@ from SteinGame import SteinGame
 import pickle as p
 
 # example for paper Stein Variational Game, Low Dimension Examples 1)
-class BimodalConvergence(ResidualGame):
+class BimodalConvergence(SteinGame):
     USE_CPP = False
-    DEBUG = True
+    DEBUG = False
     def __init__(self):
         super().__init__()
 
@@ -27,7 +27,7 @@ class BimodalConvergence(ResidualGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 300
+        self.particles = 10
 
         self.tolerance = 1e-4 # 5e-4
         self.iterations = 20 # 30
@@ -62,8 +62,8 @@ class BimodalConvergence(ResidualGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = -3
-        self.guess[:,1,0] = 2
+        self.guess[:,0,0] = -3.4
+        self.guess[:,1,0] = 2.6
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -75,7 +75,8 @@ class BimodalConvergence(ResidualGame):
         ''' make [self.particles] samples of size theta from an initial belief'''
         if (count is None):
             count = self.particles
-        val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
+        #val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
+        val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
         val = np.tile(val, (1,self.T,1))
         dim_u = (self.T, self.N, self.m)
         return val.reshape(count,-1)
@@ -145,16 +146,16 @@ class BimodalConvergence(ResidualGame):
             df1_dx0dx0 = 2 * self.J_Q
             df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
-            dJ1_dx0 = -f1 * np.exp(-f1) * df1_dx0
-            dJ2_dx0 = -f2 * np.exp(-f2) * df2_dx0
+            dJ1_dx0 = np.exp(-f1) * df1_dx0
+            dJ2_dx0 = np.exp(-f2) * df2_dx0
             retval = dJ1_dx0 + dJ2_dx0
         else:
             df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
             df1_dx0dx0 = 2 * self.J_Q
             df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
-            dJ1_dx0 = -f1 * np.exp(-f1) * df1_dx0
-            dJ2_dx0 = -f2 * np.exp(-f2) * df2_dx0
+            dJ1_dx0 = np.exp(-f1) * df1_dx0
+            dJ2_dx0 = np.exp(-f2) * df2_dx0
             retval = dJ1_dx0 + dJ2_dx0
 
         if (self.DEBUG):
@@ -175,21 +176,19 @@ class BimodalConvergence(ResidualGame):
         f2 = (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
              +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1)
         if (i==0):
-            df1_dx0 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx0 = 2 * (x_T[0] - self.p1).reshape(1,-1) @ self.J_Q
             df1_dx0dx0 = 2 * self.J_Q
-            df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx0 = 2 * (x_T[0] - self.p2).reshape(1,-1) @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
-            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
-            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx0  + f1 * np.exp(-f1) * df1_dx0dx0 \
-                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx0  + f2 * np.exp(-f2) * df2_dx0dx0
+            retval = df1_dx0.T * np.exp(-f1) @ -df1_dx0  + np.exp(-f1) * df1_dx0dx0 \
+                    + df2_dx0.T * np.exp(-f2) @ -df2_dx0  + np.exp(-f2) * df2_dx0dx0
         else:
-            df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx0 = 2 * (x_T[1] - self.p2).reshape(1,-1) @ self.J_Q
             df1_dx0dx0 = 2 * self.J_Q
-            df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx0 = 2 * (x_T[1] - self.p1).reshape(1,-1) @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
-            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
-            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx0  + f1 * np.exp(-f1) * df1_dx0dx0 \
-                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx0  + f2 * np.exp(-f2) * df2_dx0dx0
+            retval = df1_dx0.T * np.exp(-f1)  @ -df1_dx0  + np.exp(-f1) * df1_dx0dx0 \
+                    + df2_dx0.T * np.exp(-f2)  @ -df2_dx0  + np.exp(-f2) * df2_dx0dx0
 
         if (self.DEBUG):
             dJfi_dxi_dxi_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
@@ -206,26 +205,26 @@ class BimodalConvergence(ResidualGame):
              +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1)
         assert(i != j)
         if (i==0):
-            df1_dx0 = 2 * (x_T[0] - self.p1).T @ self.J_Q
-            df1_dx1 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx0 = 2 * (x_T[0] - self.p1).reshape(1,-1) @ self.J_Q
+            df1_dx1 = 2 * (x_T[1] - self.p2).reshape(1,-1) @ self.J_Q
             df1_dx0dx0 = 2 * self.J_Q
-            df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
-            df2_dx1 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx0 = 2 * (x_T[0] - self.p2).reshape(1,-1) @ self.J_Q
+            df2_dx1 = 2 * (x_T[1] - self.p1).reshape(1,-1) @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
             dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
-            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx1  \
-                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx1
+            retval = df1_dx0.T * np.exp(-f1)  @ -df1_dx1  \
+                    + df2_dx0.T * np.exp(-f2) @ -df2_dx1
         else:
             # here x0 = xi = x1, a bit confusing
-            df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
-            df1_dx1 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx0 = 2 * (x_T[1] - self.p2).reshape(1,-1) @ self.J_Q
+            df1_dx1 = 2 * (x_T[0] - self.p1).reshape(1,-1) @ self.J_Q
             df1_dx0dx0 = 2 * self.J_Q
-            df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
-            df2_dx1 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx0 = 2 * (x_T[1] - self.p1).reshape(1,-1) @ self.J_Q
+            df2_dx1 = 2 * (x_T[0] - self.p2).reshape(1,-1) @ self.J_Q
             df2_dx0dx0 = 2 * self.J_Q
             dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
-            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx1  \
-                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx1
+            retval = df1_dx0.T * np.exp(-f1)  @ -df1_dx1  \
+                    + df2_dx0.T * np.exp(-f2) @ -df2_dx1
 
 
         if (self.DEBUG):
@@ -314,8 +313,8 @@ if __name__=="__main__":
 
     fig, ax = plt.subplots()
     # target points, p1, p2
-    ax.plot([self.p1[0]],[self.p1[1]], 'o')
-    ax.plot([self.p2[0]],[self.p2[1]], 'o')
+    ax.plot([main.p1[0]],[main.p1[1]], 'o')
+    ax.plot([main.p2[0]],[main.p2[1]], 'o')
 
     # plot agent 0,1's position as x,y coordinate
     xx = x_ref_vec[:,-1,0,0]
