@@ -9,9 +9,9 @@ from SteinGame import SteinGame
 import pickle as p
 
 # example for paper Stein Variational Game, Low Dimension Examples 1)
-class BimodalConvergence(SteinGame):
+class BimodalConvergence(ResidualGame):
     USE_CPP = False
-    DEBUG = False
+    DEBUG = True
     def __init__(self):
         super().__init__()
 
@@ -128,23 +128,34 @@ class BimodalConvergence(SteinGame):
 
     # terminal cost
     def Jfi(self, x_T, i):
-        return    np.log(self.C1*( (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
-                +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2) )+self.C2) \
-                + np.log(self.C1*( (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
-                +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+self.C2)
-    def dJfi_dxi(self, x_T, i):
+        f1 = (x_T[0] - self.p1).T @ self.J_Q @ (x_T[0] - self.p1)  \
+             +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2)
+        f2 = (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
+             +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1)
+        return - np.exp(-f1) - np.exp(-f2)
 
-        sig1 = self.C1*( (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
-                +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2) )+self.C2 
-        sig2 = self.C1*( (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
-                +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+self.C2
-        retval = None
-        if (i == 0):
-            retval = 1/sig1 * self.C1 * 2 * (x_T[i] - self.p1).T @ self.J_Q \
-                 + 1/sig2* self.C1 * 2 * (x_T[i] - self.p2).T @ self.J_Q
+    def dJfi_dxi(self, x_T, i):
+        # J = J1 + J2 = [- np.exp(-f1)] + [- np.exp(-f2)]
+        f1 = (x_T[0] - self.p1).T @ self.J_Q @ (x_T[0] - self.p1)  \
+             +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2)
+        f2 = (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
+             +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1)
+        if (i==0):
+            df1_dx0 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = -f1 * np.exp(-f1) * df1_dx0
+            dJ2_dx0 = -f2 * np.exp(-f2) * df2_dx0
+            retval = dJ1_dx0 + dJ2_dx0
         else:
-            retval = 1/sig2 * self.C1 * 2 * (x_T[i] - self.p1).T @ self.J_Q \
-                 + 1/sig1 * self.C1 * 2 * (x_T[i] - self.p2).T @ self.J_Q
+            df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = -f1 * np.exp(-f1) * df1_dx0
+            dJ2_dx0 = -f2 * np.exp(-f2) * df2_dx0
+            retval = dJ1_dx0 + dJ2_dx0
 
         if (self.DEBUG):
             dJfi_dxi_num = jacobianNumerical(lambda xx:self.Jfi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=1)
@@ -159,25 +170,26 @@ class BimodalConvergence(SteinGame):
 
     def dJfi_dxi_dxi(self, x_T, i):
         Q = self.J_Q
-        sig1 = self.C1*( (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
-                +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2) )+self.C2
-        sig2 = self.C1*( (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
-                +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+self.C2
-        I = np.eye(self.n)
+        f1 = (x_T[0] - self.p1).T @ self.J_Q @ (x_T[0] - self.p1)  \
+             +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2)
+        f2 = (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
+             +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1)
         if (i==0):
-            dsig1 = 2 * self.C1 * (x_T[i] - self.p1).reshape(1,-1) @ Q
-            ddsig1 = 2 * self.C1 * Q
-            dsig2 = 2 * self.C1 * (x_T[i] - self.p2).reshape(1,-1) @ Q
-            ddsig2 = 2 * self.C1 * Q
-            retval = dsig1.T * -sig1**(-2) @ dsig1 + 1/sig1 * ddsig1 \
-                    +dsig2.T * -sig2**(-2) @ dsig2 + 1/sig2 * ddsig2
+            df1_dx0 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
+            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx0  + f1 * np.exp(-f1) * df1_dx0dx0 \
+                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx0  + f2 * np.exp(-f2) * df2_dx0dx0
         else:
-            dsig1 = 2 * self.C1 * (x_T[i] - self.p2).reshape(1,-1) @ Q
-            ddsig1 = 2 * self.C1 * Q
-            dsig2 = 2 * self.C1 * (x_T[i] - self.p1).reshape(1,-1) @ Q
-            ddsig2 = 2 * self.C1 * Q
-            retval = dsig1.T * -sig1**(-2) @ dsig1 + 1/sig1 * ddsig1 \
-                    +dsig2.T * -sig2**(-2) @ dsig2 + 1/sig2 * ddsig2
+            df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
+            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx0  + f1 * np.exp(-f1) * df1_dx0dx0 \
+                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx0  + f2 * np.exp(-f2) * df2_dx0dx0
 
         if (self.DEBUG):
             dJfi_dxi_dxi_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
@@ -188,37 +200,33 @@ class BimodalConvergence(SteinGame):
 
     def dJfi_dxi_dxj(self, x_T, i,j):
         Q = self.J_Q
+        f1 = (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
+             +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2)
+        f2 = (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
+             +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1)
         assert(i != j)
-        # f(x)
-        sig1 = self.C1*( (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
-                +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2) )+self.C2
-        sig2 = self.C1*( (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
-                +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+self.C2
-        I = np.eye(self.n)
         if (i==0):
-            # df(x)/dx0
-            dsig1 = 2 * self.C1 * (x_T[i] - self.p1).reshape(1,-1) @ Q
-            # df(x)/dx1
-            csig1 = 2 * self.C1 * (x_T[j] - self.p2).reshape(1,-1) @ Q
-            # df(x)/dx0
-            dsig2 = 2 * self.C1 * (x_T[i] - self.p2).reshape(1,-1) @ Q
-            # df(x)/dx1
-            csig2 = 2 * self.C1 * (x_T[j] - self.p1).reshape(1,-1) @ Q
-
-            retval = dsig1.T * (-sig1**(-2)) @ csig1\
-                    +dsig2.T * (-sig2**(-2)) @ csig2
+            df1_dx0 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx1 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx1 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
+            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx1  \
+                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx1
         else:
-            # df(x)/dx0
-            dsig1 = 2 * self.C1 * (x_T[i] - self.p2).reshape(1,-1) @ Q
-            # df(x)/dx1
-            csig1 = 2 * self.C1 * (x_T[j] - self.p1).reshape(1,-1) @ Q
-            # df(x)/dx0
-            dsig2 = 2 * self.C1 * (x_T[i] - self.p1).reshape(1,-1) @ Q
-            # df(x)/dx1
-            csig2 = 2 * self.C1 * (x_T[j] - self.p2).reshape(1,-1) @ Q
+            # here x0 = xi = x1, a bit confusing
+            df1_dx0 = 2 * (x_T[1] - self.p2).T @ self.J_Q
+            df1_dx1 = 2 * (x_T[0] - self.p1).T @ self.J_Q
+            df1_dx0dx0 = 2 * self.J_Q
+            df2_dx0 = 2 * (x_T[1] - self.p1).T @ self.J_Q
+            df2_dx1 = 2 * (x_T[0] - self.p2).T @ self.J_Q
+            df2_dx0dx0 = 2 * self.J_Q
+            dJ1_dx0 = f1 * np.exp(-f1) * df1_dx0
+            retval = df1_dx0.T * np.exp(-f1) * (1- f1**2) @ df1_dx1  \
+                    + df2_dx0.T * np.exp(-f2) * (1- f2**2) @ df2_dx1
 
-            retval = dsig1.T * (-sig1**(-2)) @ csig1\
-                    +dsig2.T * (-sig2**(-2)) @ csig2
 
         if (self.DEBUG):
             dJfi_dxi_dxj_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
