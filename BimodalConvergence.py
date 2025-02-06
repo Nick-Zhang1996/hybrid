@@ -27,7 +27,7 @@ class BimodalConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 50
+        self.particles = 300
 
         self.tolerance = 1e-4 # 5e-4
         self.iterations = 20 # 30
@@ -42,7 +42,7 @@ class BimodalConvergence(SteinGame):
 
         # stein sampling prior
         self.dim_theta = self.T*self.N*self.m
-        self.covariance_mtx = np.diag([6]*2)
+        self.covariance_mtx = np.diag([8]*2)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
@@ -52,8 +52,8 @@ class BimodalConvergence(SteinGame):
         # NOTE this lambda fun needs to be implemented in c++
         self.J_Q = np.diag([1,0])
         self.J_R = np.eye(self.m)*1e-2
-        self.p1 = np.array([1,0])
-        self.p2 = np.array([-1,0])
+        self.p1 = np.array([-1,1])
+        self.p2 = np.array([1,-1])
         self.A = np.array([[1,dt],[0,1]])
         self.B = np.array([[0.5*dt*dt],[dt]])
 
@@ -306,8 +306,8 @@ if __name__=="__main__":
 
     fig, ax = plt.subplots()
     # target points, p1, p2
-    ax.plot([-1],[1], 'o')
-    ax.plot([1],[-1], 'o')
+    ax.plot([self.p1[0]],[self.p1[1]], 'o')
+    ax.plot([self.p2[0]],[self.p2[1]], 'o')
 
     # plot agent 0,1's position as x,y coordinate
     xx = x_ref_vec[:,-1,0,0]
