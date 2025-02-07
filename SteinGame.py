@@ -115,6 +115,29 @@ class SteinGame(ResidualGame):
         good_cost_ref = np.array(cost_vec)[min_idx]
         self.stein_profiler.e()
 
+        # check second order conditions
+        mask = []
+        lambda_ref = np.zeros((T,N,self.n))
+        mu_ref = np.zeros((T,N,N))
+        h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
+        for u_ref in good_u_ref:
+            x_ref = self.rollout(self.x0,u_ref)
+            accept = True
+            for i in range(self.N):
+                # x: T,N,n
+                idx = []
+                for k in range(self.T):
+                    idx.append(range(k*self.N*self.n + i*self.n, k*self.N*self.n + (i+1)*self.n))
+                idx = [i for item in idx for i in item]
+
+                # dLL / dxdx, hessian
+                M = self.dLLi_dxi_dx(x_ref, u_ref.reshape(self.T,self.N,self.m), h_plus_mask, lambda_ref, mu_ref,i)[:,idx]
+                saddle = np.all(np.linalg.eigvals(M) < 1e-3)
+                accept = accept and (not saddle)
+            mask.append(accept)
+        good_u_ref = good_u_ref[mask]
+        good_cost_ref = good_cost_ref[mask]
+
         # refinement
         '''
         min_idx = np.argsort(cost_vec)
@@ -139,7 +162,7 @@ class SteinGame(ResidualGame):
         good_x_ref = []
         # social cost, i.e. sum of cost from all agents
         good_agent_cost = []
-        for i in range(len(min_idx)):
+        for i in range(len(good_u_ref)):
             x_ref = self.rollout(self.x0,good_u_ref[i])
             full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
             good_x_ref.append(full_x_ref)

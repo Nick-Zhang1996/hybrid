@@ -199,15 +199,27 @@ class ResidualGame(PrintObject,ABC):
         full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
         self.visualize(u_ref,full_x_ref,visualize,save_gif,animate,gif_prefix='after')
 
-        '''
         # check second order conditions
         h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
         for i in range(self.N):
-            M = self.dLLi_dxi_dx(x_ref, u_ref, h_plus_mask, lambda_ref*0, mu_ref*0,i)[:,i*self.T*self.n:(i+1)*self.T*self.n]
-            pde = np.all(np.linalg.eigvals(M) > -1e-3)
+            # x: T,N,n
+            idx = []
+            for k in range(self.T):
+                idx.append(range(k*self.N*self.n + i*self.n, k*self.N*self.n + (i+1)*self.n))
+            idx = [i for item in idx for i in item]
+
+            # dLL / dxdx, hessian
+            M = self.dLLi_dxi_dx(x_ref, u_ref, h_plus_mask, lambda_ref, mu_ref,i)[:,idx]
+            pde = not np.all(np.linalg.eigvals(M) < 1e-3)
             self.print_info(f'{i} eig val: {np.linalg.eigvals(M)}')
+            # check the second order condition for J at each time step
+            '''
+            for k in range(self.T):
+                H = self.dJfi_dxi_dxi(x_ref[k], i)
+                self.print_info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
+            '''
             has_converged = pde and has_converged
-        '''
+        #r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
 
         return u_ref, full_x_ref, has_converged
 

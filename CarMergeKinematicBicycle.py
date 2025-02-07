@@ -23,7 +23,7 @@ from SteinGame import SteinGame
 # example: Merging
 # uses kinematic bicycle model
 #class CarMergeKinematicBicycle(ResidualGame):
-class CarMergeKinematicBicycle(SteinGame):
+class CarMergeKinematicBicycle(ResidualGame):
     USE_CPP = True
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):

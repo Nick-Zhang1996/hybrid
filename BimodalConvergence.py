@@ -61,8 +61,8 @@ class BimodalConvergence(SteinGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = 5.50
-        self.guess[:,1,0] = -5.12
+        self.guess[:,0,0] = -2.50
+        self.guess[:,1,0] = 5.12
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -76,9 +76,6 @@ class BimodalConvergence(SteinGame):
             count = self.particles
         val = np.random.multivariate_normal(np.zeros(2),self.covariance_mtx, count)[:,:,np.newaxis]
         #val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
-        print(val)
-        #val[0,0] = 5.50
-        #val[0,1] = -5.12
         val = np.tile(val, (1,self.T,1))
         dim_u = (self.T, self.N, self.m)
         return val.reshape(count,-1)

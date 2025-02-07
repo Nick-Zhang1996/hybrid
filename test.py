@@ -16,11 +16,13 @@ y = np.linspace(-3,3,100)
 zz = np.zeros_like(xx)
 for i in range(zz.shape[0]):
     for j in range(zz.shape[1]):
+        '''
         x0 = np.vstack( [ xx[i,j], 0 ] )
         x1 = np.vstack( [ yy[i,j], 0 ] )
         x_T = np.hstack([x0,x1]).T
         zz[i,j] = Jfi(x_T, 0)
-        #zz[i,j] = -np.exp(-(xx[i,j]-1)**2 - (yy[i,j]+1)**2) -np.exp(-(xx[i,j]+1)**2 - (yy[i,j]-1)**2)
+        '''
+        zz[i,j] = -np.exp(-(xx[i,j]-1)**2 - (yy[i,j]+1)**2) -np.exp(-(xx[i,j]+1)**2 - (yy[i,j]-1)**2)
 idx = np.argmin(zz.flatten())
 x_val = xx.flatten()[idx]
 y_val = yy.flatten()[idx]
@@ -34,12 +36,14 @@ plt.show()
 xx = np.linspace(-3,3)
 yy = -xx + 3
 
+'''
 zz = np.zeros_like(xx)
 for i in range(xx.shape[0]):
     x0 = np.vstack( [ xx[i], 0 ] )
     x1 = np.vstack( [ yy[i], 0 ] )
     x_T = np.hstack([x0,x1]).T
     zz[i] = Jfi(x_T, 0)
-#zz = -np.exp(-(xx-1)**2 - (yy+1)**2) -np.exp(-(xx+1)**2 - (yy-1)**2)
+'''
+zz = -np.exp(-(xx-1)**2 - (yy+1)**2) -np.exp(-(xx+1)**2 - (yy-1)**2)
 plt.plot(zz)
 plt.show()
