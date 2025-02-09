@@ -1376,7 +1376,7 @@ class ResidualGame(PrintObject,ABC):
             dLL_dxi_dmu = self.dLLi_dxi_dmu(x,u,h_plus_mask,lamda,mu,i)
             dr_dmu[index:index+T*n,:] = dLL_dxi_dmu
             if (self.DEBUG):
-                dLL_dxi_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dxi(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=dim_x)
+                dLL_dxi_dmu_num = jacobianNumerical(lambda mm:self.dLLi_dxi(x,u,h_plus_mask,lamda,mm.reshape(mu.shape),i), mu.flatten(),dim=self.T*self.n)
                 assert(np.linalg.norm(dLL_dxi_dmu-dLL_dxi_dmu_num)<1e-4)
 
             index += T*n + T*m + n*T + np.sum(h_plus_mask[:,i])

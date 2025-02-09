@@ -26,7 +26,7 @@ class BimodalConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 300
+        self.particles = 10
 
         self.tolerance = 1e-4 # 5e-4
         self.iterations = 20 # 30

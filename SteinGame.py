@@ -169,7 +169,7 @@ class SteinGame(ResidualGame):
             agent_cost = 0
             for agent in range(self.N):
                 for k in range(self.T):
-                    agent_cost += self.J(full_x_ref[k,agent],good_u_ref[i].reshape(self.T,self.N,self.m)[k,agent],agent).item()
+                    agent_cost += self.J(full_x_ref[k],good_u_ref[i].reshape(self.T,self.N,self.m)[k,agent],agent).item()
                 agent_cost += self.Jfi(full_x_ref[self.T], agent)
             good_agent_cost.append(agent_cost)
 

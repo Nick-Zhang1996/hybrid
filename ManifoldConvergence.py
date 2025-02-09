@@ -9,7 +9,7 @@ from SteinGame import SteinGame
 import pickle as p
 
 # example for paper Stein Variational Game, Low Dimension Examples 2)
-class ManifoldConvergence(ResidualGame):
+class ManifoldConvergence(SteinGame):
     USE_CPP = False
     DEBUG = False
     def __init__(self):
@@ -42,7 +42,7 @@ class ManifoldConvergence(ResidualGame):
 
         # stein sampling prior
         self.dim_theta = self.T*self.N*self.m
-        self.covariance_mtx = np.diag([8]*2)
+        self.covariance_mtx = np.diag([2]*2)
 
         # bounds for visualization
         self.visual_x_lim = [-2.5,2.5]
@@ -51,8 +51,6 @@ class ManifoldConvergence(ResidualGame):
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
         self.Q1 = np.diag([1,0])
-        self.Q2 = np.diag([1,0])
-        self.Q3 = np.diag([1,0])
 
         self.J_R = np.eye(self.m)*1e-2
         self.p1 = np.array([-1,1])
@@ -65,8 +63,8 @@ class ManifoldConvergence(ResidualGame):
 
         # initial guess for u
         self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = 2.50
-        self.guess[:,1,0] = 5.12
+        self.guess[:,0,0] = 1.50
+        self.guess[:,1,0] = 1.12
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -134,18 +132,18 @@ class ManifoldConvergence(ResidualGame):
     def Jfi(self, x_T, i):
         j = 1 if (i==0) else 0
         xi = x_T[i]; xj = x_T[j]
-        f = xi.T @ self.Q1 @ xi - 1
-        df = 2 * xi.T @ self.Q1
+        f = xi.T @ self.Q1 @ xi + xj.T @ self.Q1 @ xj - 1
 
-        retval = -self.C1 * np.exp(-f**2) + self.C3 * (xi - xj).T @ self.Q2 @ (xi - xj)
+        retval = - np.exp(-f**2)
         return retval
 
     def dJfi_dxi(self, x_T, i):
         j = 1 if (i==0) else 0
         xi = x_T[i].reshape(-1,1); xj = x_T[j].reshape(-1,1)
-        f = xi.T @ self.Q1 @ xi - 1
+        f = xi.T @ self.Q1 @ xi + xj.T @ self.Q1 @ xj - 1
         df = 2 * xi.T @ self.Q1
-        retval = self.C1 * np.exp(-f**2)*2*f*2*xi.T @ self.Q1 + 2*self.C3 * (xi-xj).T @ self.Q2
+        ddf = 2*self.Q1
+        retval = np.exp(-f**2) * 2 * f * df
 
         if (self.DEBUG):
             dJfi_dxi_num = jacobianNumerical(lambda xx:self.Jfi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=1)
@@ -161,9 +159,10 @@ class ManifoldConvergence(ResidualGame):
     def dJfi_dxi_dxi(self, x_T, i):
         j = 1 if (i==0) else 0
         xi = x_T[i].reshape(-1,1); xj = x_T[j].reshape(-1,1)
-        f = xi.T @ self.Q1 @ xi - 1
+        f = xi.T @ self.Q1 @ xi + xj.T @ self.Q1 @ xj - 1
         df = 2 * xi.T @ self.Q1
-        retval = self.C1 * np.exp(-f**2) * (-4*f**2 * self.Q1 @ xi @ df + 4*self.Q1 @ xi @ df + 4*f *self.Q1) + 2*self.C3 * self.Q2
+        ddf = 2*self.Q1
+        retval = 2*f*df.T * (-np.exp(-f**2)*2*f*df) + np.exp(-f**2)*df.T*2*df + np.exp(-f**2)*2*f*ddf
 
         if (self.DEBUG):
             dJfi_dxi_dxi_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
@@ -175,9 +174,12 @@ class ManifoldConvergence(ResidualGame):
     def dJfi_dxi_dxj(self, x_T, i,j):
         j = 1 if (i==0) else 0
         xi = x_T[i].reshape(-1,1); xj = x_T[j].reshape(-1,1)
-        f = xi.T @ self.Q1 @ xi - 1
+        f = xi.T @ self.Q1 @ xi + xj.T @ self.Q1 @ xj - 1
+        # dfi
         df = 2 * xi.T @ self.Q1
-        retval =  - 2*self.C3 * self.Q2
+        dfj = 2 * xj.T @ self.Q1
+        ddf = 2*self.Q1
+        retval = 2*f*df.T * (-np.exp(-f**2)*2*f*dfj) + np.exp(-f**2)*df.T*2*dfj
 
         if (self.DEBUG):
             dJfi_dxi_dxj_num = jacobianNumerical(lambda xx:self.dJfi_dxi(xx.reshape(x_T.shape),i), x_T.flatten(),dim=self.n)
@@ -265,8 +267,8 @@ if __name__=="__main__":
 
     fig, ax = plt.subplots()
     # target points, p1, p2
-    ax.plot([main.p1[0]],[main.p1[1]], 'o')
-    ax.plot([main.p2[0]],[main.p2[1]], 'o')
+    #ax.plot([main.p1[0]],[main.p1[1]], 'o')
+    #ax.plot([main.p2[0]],[main.p2[1]], 'o')
 
     # plot agent 0,1's position as x,y coordinate
     xx = x_ref_vec[:,-1,0,0]
