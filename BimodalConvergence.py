@@ -26,10 +26,10 @@ class BimodalConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 30
+        self.particles = 100
 
         self.tolerance = 1e-4 # 5e-4
-        self.iterations = 20 # 30
+        self.stein_iterations = 10 # 30
 
         # x^i: [position, velocity (1D)]
         # u^i: [acceleration]
