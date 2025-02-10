@@ -20,6 +20,7 @@ class SteinGame(ResidualGame):
         # theta = u in this version
         self.stein_profiler = TimeUtil(True)
         self.covariance_mtx = None
+        self.kernel_scaling = 20
 
     def solve(self,save_gif=False,visualize=False,animate=False):
         T = self.T; N = self.N; n = self.n
@@ -41,6 +42,7 @@ class SteinGame(ResidualGame):
                 for j in range(i+1):
                     kernel_val_map[i,j] = kernel_val_map[j,i] = self.kernel(theta[i], theta[j])
             self.stein_profiler.e('kernel map')
+            self.print_info(f'kernel: max:{np.max(kernel_val_map[kernel_val_map<0.999])}')
             # find \nabla_theta log p_posterior(theta|O) for each particle
             posterior_log_grad = []
             if (iter > 0):
@@ -54,6 +56,7 @@ class SteinGame(ResidualGame):
                 grad, posterior_residual, new_dual = self.d_theta(theta[i], theta_dual[i])
                 theta_dual[i] = new_dual
                 cost_vec.append(posterior_residual)
+                # NOTE
                 val = - self.alpha * grad #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
                 posterior_log_grad.append(val.flatten())
             self.stein_profiler.e('particle grad')
@@ -63,11 +66,12 @@ class SteinGame(ResidualGame):
             des_dir = []
             for i in range(self.particles):
                 val = np.zeros(self.dim_theta)
-                #for j in range(self.particles):
-                #    val += self.kernel(theta[i], theta[j]) * posterior_log_grad[j] #+ 0.01*self.d_kernel_d_theta_i(theta[j], theta[i])
-                #phi = 1/self.particles * val
-                val += posterior_log_grad[i]
-                phi = val
+                # NOTE
+                for j in range(self.particles):
+                    val = val + self.kernel(theta[j], theta[i]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
+                phi = 1/self.particles * val
+                #val = val + posterior_log_grad[i]
+                phi = val.flatten()
                 des_dir.append(phi)
             self.stein_profiler.e('dec dir')
 
@@ -324,13 +328,26 @@ class SteinGame(ResidualGame):
         return grad, np.linalg.norm(r_min)
 
     # TODO check
-    def d_kernel_d_theta_i(self, theta_i, theta_j, kernel_val=None):
+    def d_kernel_d_theta_i(self, theta_j, theta_i, kernel_val=None):
         ''' derivative of kernel for RKHS, mapping to positive scalar '''
-        return self.kernel(theta_i,theta_j) * (-1/self.theta_norm_median)*2*(theta_i-theta_j).T
+        #return self.kernel(theta_i,theta_j) * (-1/self.theta_norm_median)*2*(theta_i-theta_j).T
+        dim_u = (self.T, self.N, self.m)
+        dim_x = (self.T, self.N, self.n)
+        u_i = theta_i.reshape(dim_u)
+        u_j = theta_j.reshape(dim_u)
+        x_i = self.rollout(self.x0,u_i).reshape(-1,1)
+        x_j = self.rollout(self.x0,u_j).reshape(-1,1)
+        return self.kernel(theta_j,theta_i) * (-self.kernel_scaling/np.linalg.norm(x_i))*2*(x_i-x_j).T @ self.dx_du(x_i.reshape(dim_x), u_i)
 
-    def kernel(self, theta_i, theta_j):
+    def kernel(self, theta_j, theta_i):
         ''' kernel for RKHS, mapping to positive scalar '''
-        return np.exp(- np.linalg.norm(theta_i-theta_j)**2/self.theta_norm_median)
+        #return np.exp(- np.linalg.norm(theta_i-theta_j)**2/self.theta_norm_median)
+        dim_u = (self.T, self.N, self.m)
+        u_i = theta_i.reshape(dim_u)
+        u_j = theta_j.reshape(dim_u)
+        x_i = self.rollout(self.x0,u_i)
+        x_j = self.rollout(self.x0,u_j)
+        return np.exp(- self.kernel_scaling*np.linalg.norm(x_i - x_j)**2/np.linalg.norm(x_i))
 
     def initialSample(self,count=None):
         ''' make [self.particles] samples of size theta from an initial belief'''

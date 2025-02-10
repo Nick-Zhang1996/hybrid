@@ -1169,6 +1169,26 @@ class ResidualGame(PrintObject,ABC):
         return jacobianNumerical(lambda xx:self.dLLi_du(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten(),dim=dim_u)
     '''
 
+    # for kernel gradient in stein game
+    def dx_du(self, x, u):
+        T = self.T; N = self.N; n = self.n; m = self.m
+        dim_x = T*N*n; dim_u = T*N*m
+        dxdu = np.zeros((dim_x, dim_u))
+        for i in range(N):
+            k = 0
+            dxdu[k*N*n + i*n:k*N*n + (i+1)*n, k*N*m + i*m : k*N*m + (i+1)*m] = self.df_du(self.x0[i], u[0,i],i)
+            for k in range(1,T):
+                dxdu[k*N*n + i*n:k*N*n + (i+1)*n, k*N*m + i*m : k*N*m + (i+1)*m] = self.df_du(x[k-1,i], u[k,i],i)
+
+        if (self.DEBUG):
+            dxdu_num = jacobianNumerical(lambda uu:self.rollout(self.x0, uu.reshape((T,N,m)), u.flatten(),dim=dim_x))
+            self.print_debug(f'dxdu_num err {np.linalg.norm(dxdu_num - retval)}')
+            if (np.linalg.norm(dxdu_num - retval) > 1e-4):
+                breakpoint()
+        return dxdu
+
+
+
     def dF_dx(self,x,u,i,k):
         if (self.USE_CPP):
             return self.cpp.dF_dx([xx for xx in x],[uu for uu in u],i,k)
