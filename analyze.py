@@ -30,7 +30,7 @@ plt.plot(points[:,0], points[:,1], '*')
 plt.show()
 
 def kernel(x,y):
-    return np.exp(- np.linalg.norm(x-y)**2/np.linalg.norm(y))
+    return np.exp(- 10*np.linalg.norm(x-y)**2/np.linalg.norm(y))
 
 # Perform kernel density estimation (KDE)
 #kde = gaussian_kde(points.T)
