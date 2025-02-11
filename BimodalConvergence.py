@@ -198,10 +198,10 @@ class BimodalConvergence(SteinGame):
 
     def dJfi_dxi_dxj(self, x_T, i,j):
         Q = self.J_Q
-        f1 = (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
-             +  (x_T[1] - main.p2).T @ main.J_Q @ (x_T[1] - main.p2)
-        f2 = (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
-             +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1)
+        f1 = (x_T[0] - self.p1).T @ self.J_Q @ (x_T[0] - self.p1)  \
+             +  (x_T[1] - self.p2).T @ self.J_Q @ (x_T[1] - self.p2)
+        f2 = (x_T[0] - self.p2).T @ self.J_Q @ (x_T[0] - self.p2)  \
+             +  (x_T[1] - self.p1).T @ self.J_Q @ (x_T[1] - self.p1)
         assert(i != j)
         if (i==0):
             df1_dx0 = 2 * (x_T[0] - self.p1).reshape(1,-1) @ self.J_Q
@@ -323,7 +323,7 @@ if __name__=="__main__":
     plt.show()
     breakpoint()
     # TODO add x_ref in stored data
-    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref}
+    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref, 'particle_history': main.particle_history}
     with open('particles.p', 'wb') as f:
         p.dump(data,f)
     print(np.sum(np.linalg.norm(main.belief_x_ref[:,-1,:,0],axis=1) > 0.5)/270)

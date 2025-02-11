@@ -278,7 +278,7 @@ if __name__=="__main__":
     plt.show()
     breakpoint()
     # TODO add x_ref in stored data
-    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref}
+    data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref, 'particle_history': main.particle_history}
     with open('particles.p', 'wb') as f:
         p.dump(data,f)
     print(np.sum(np.linalg.norm(main.belief_x_ref[:,-1,:,0],axis=1) > 0.5)/270)

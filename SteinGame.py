@@ -22,6 +22,8 @@ class SteinGame(ResidualGame):
         self.covariance_mtx = None
         self.kernel_scaling = 20
 
+        self.particle_history = []
+
     def solve(self,save_gif=False,visualize=False,animate=False):
         T = self.T; N = self.N; n = self.n
         self.dim_theta = self.T*self.N*self.m
@@ -34,6 +36,7 @@ class SteinGame(ResidualGame):
         theta_dual = [np.zeros(T*N*n + T*N*N ) for i in range(self.particles)]
         # one iteration
         for iter in range(self.stein_iterations):
+            self.particle_history.append(theta)
             self.theta_norm_median = np.median([ np.linalg.norm(particle) for particle in theta ])**2/ np.log(self.particles)
             # calculate kernel table
             kernel_val_map = np.zeros((self.particles,self.particles))
@@ -114,31 +117,14 @@ class SteinGame(ResidualGame):
             self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
         '''
 
+        self.particle_history.append(theta)
         min_idx = np.argsort(cost_vec)[:int(0.9*len(cost_vec))]
         good_u_ref = np.array(theta)[min_idx]
         good_cost_ref = np.array(cost_vec)[min_idx]
         self.stein_profiler.e()
-
         # check second order conditions
-        mask = []
-        lambda_ref = np.zeros((T,N,self.n))
-        mu_ref = np.zeros((T,N,N))
-        h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
-        for u_ref in good_u_ref:
-            x_ref = self.rollout(self.x0,u_ref)
-            accept = True
-            for i in range(self.N):
-                # x: T,N,n
-                idx = []
-                for k in range(self.T):
-                    idx.append(range(k*self.N*self.n + i*self.n, k*self.N*self.n + (i+1)*self.n))
-                idx = [i for item in idx for i in item]
+        mask = self.getMaskForPDHessian(good_u_ref)
 
-                # dLL / dxdx, hessian
-                M = self.dLLi_dxi_dx(x_ref, u_ref.reshape(self.T,self.N,self.m), h_plus_mask, lambda_ref, mu_ref,i)[:,idx]
-                saddle = np.all(np.linalg.eigvals(M) < 1e-3)
-                accept = accept and (not saddle)
-            mask.append(accept)
         good_u_ref = good_u_ref[mask]
         good_cost_ref = good_cost_ref[mask]
 
@@ -211,6 +197,7 @@ class SteinGame(ResidualGame):
         self.belief_support_residual = np.array(good_cost_ref)
         # total agent cost, this is the negative social utility
         self.belief_support_cost = np.array(good_agent_cost)
+        self.particle_history = np.array(self.particle_history)
 
         '''
         for u_ref in good_u_ref:
@@ -218,6 +205,28 @@ class SteinGame(ResidualGame):
         '''
 
         return good_u_ref[0].reshape(self.T,self.N,self.m), good_x_ref[0], has_converged
+
+    def getMaskForPDHessian(self, u_ref_vec):
+        mask = []
+        lambda_ref = np.zeros((self.T,self.N,self.n))
+        mu_ref = np.zeros((self.T,self.N,self.N))
+        h_plus_mask = np.zeros((self.T,self.N,self.N),dtype=bool)
+        for u_ref in u_ref_vec:
+            x_ref = self.rollout(self.x0,u_ref)
+            accept = True
+            for i in range(self.N):
+                # x: T,N,n
+                idx = []
+                for k in range(self.T):
+                    idx.append(range(k*self.N*self.n + i*self.n, k*self.N*self.n + (i+1)*self.n))
+                idx = [i for item in idx for i in item]
+
+                # dLL / dxdx, hessian
+                M = self.dLLi_dxi_dx(x_ref, u_ref.reshape(self.T,self.N,self.m), h_plus_mask, lambda_ref, mu_ref,i)[:,idx]
+                saddle = np.all(np.linalg.eigvals(M) < 1e-3)
+                accept = accept and (not saddle)
+            mask.append(accept)
+        return mask
 
     # given observed state, update belief, assume ego agent is agent 0
     # u: current control
