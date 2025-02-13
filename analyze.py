@@ -13,6 +13,7 @@ with open('particles.p', 'rb') as f:
 main = BimodalConvergence()
 
 x_ref_vec = []
+print(f"particles: {len(data['belief_support_cost'])}")
 for u_ref in data['belief_support']:
     x_ref = main.rollout(main.x0,u_ref)
     x_ref_vec.append(x_ref)
