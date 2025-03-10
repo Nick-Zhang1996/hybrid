@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from BimodalConvergence import BimodalConvergence
+#from BimodalConvergence import BimodalConvergence
 
 def Jfi( x_T, i):
     return    np.log(2*( (x_T[0] - main.p1).T @ main.J_Q @ (x_T[0] - main.p1)  \
@@ -9,22 +9,22 @@ def Jfi( x_T, i):
             + np.log(2*( (x_T[0] - main.p2).T @ main.J_Q @ (x_T[0] - main.p2)  \
             +  (x_T[1] - main.p1).T @ main.J_Q @ (x_T[1] - main.p1) )+3)
 
-main = BimodalConvergence()
+#main = BimodalConvergence()
 x = np.linspace(-3,3,100)
 y = np.linspace(-3,3,100)
 [xx,yy] = np.meshgrid(x,y)
 zz = np.zeros_like(xx)
 for i in range(zz.shape[0]):
     for j in range(zz.shape[1]):
-        '''
         x0 = np.vstack( [ xx[i,j], 0 ] )
         x1 = np.vstack( [ yy[i,j], 0 ] )
         x_T = np.hstack([x0,x1]).T
-        zz[i,j] = Jfi(x_T, 0)
+        #zz[i,j] = Jfi(x_T, 0)
         zz[i,j] = -np.exp(-(xx[i,j]-1)**2 - (yy[i,j]+1)**2) -np.exp(-(xx[i,j]+1)**2 - (yy[i,j]-1)**2)
         '''
         f = xx[i,j]**2 + yy[i,j]**2 -1
         zz[i,j] = -np.exp(-f**2)
+        '''
 
 idx = np.argmin(zz.flatten())
 x_val = xx.flatten()[idx]
