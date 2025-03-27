@@ -1,7 +1,9 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 from time import time
-import time as time2
 from math import sin, cos, tan, atan, radians, degrees
 from PIL import Image
 from scipy import interpolate
@@ -10,8 +12,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
-from util import *
-from TimeUtil import TimeUtil
+from utilities.util import *
+from utilities.TimeUtil import TimeUtil
 from LQGame import LQGame
 
 # NOTE: Adjust car count here

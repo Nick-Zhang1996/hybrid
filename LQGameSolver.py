@@ -1,11 +1,8 @@
+# solve a linear quadratic game
+
 import numpy as np
-import time
-from TimeUtil import TimeUtil
-import os
-
+# import os
 # os.environ['MKL_NUM_THREADS']= '1'
-
-
 
 def my_solve_lq_game(As, Bs, Qs, qs, Rs, rs, t):
     '''

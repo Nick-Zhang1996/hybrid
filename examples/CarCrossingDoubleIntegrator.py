@@ -40,9 +40,11 @@ class CarCrossingDoubleIntegrator(UnstructuredDriving):
         self.J_Q_fun  = lambda i :np.diag([0,0,0,1e-2]) if i in self.v_cars else np.diag([0,0,1e-2,0])
         self.J_R = np.eye(self.m)*1e-2
         #(x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
+        self.guess = np.zeros((self.T,self.N,self.m))
 
-    def _visualize(self,U):
-        X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+    def _visualize(self,U,X=None):
+        if (X is None):
+            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
         fig, ax = plt.subplots()
         #ax.vlines(x=-self.track_width/2,ymin=-1,ymax=self.track_length)
         #ax.vlines(x=self.track_width/2,ymin=-1,ymax=self.track_length)
@@ -71,7 +73,7 @@ class CarCrossingDoubleIntegrator(UnstructuredDriving):
         return  2*self.J_Qr_fun(i) + 2*self.J_Q_fun(i)
 
 if __name__=="__main__":
-    main = CarCrossing(10)
+    main = CarCrossingDoubleIntegrator(10)
     t0 = time()
     main.solve(save_gif=True,visualize=True,animate=True)
     print(f'solution time: {time()-t0}')

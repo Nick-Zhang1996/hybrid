@@ -1,13 +1,14 @@
-import numpy as np
-import scipy.sparse # sparse matrix operations
+# Stein Game logic
+
 from abc import ABC,abstractmethod
-import scipy.sparse.linalg # sparse matrix operations
+import numpy as np
+import scipy.sparse 
+import scipy.sparse.linalg
 import matplotlib.pyplot as plt
 
-from util import *
-from TimeUtil import TimeUtil
+from utilities.util import *
+from utilities.TimeUtil import TimeUtil
 from ResidualGame import ResidualGame
-from Cluster import Cluster
 
 class SteinGame(ResidualGame):
     @abstractmethod

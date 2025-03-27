@@ -40,8 +40,6 @@ class UnstructuredDriving(ResidualGame):
         # Problem formulation
         # decision variables:
         self.N = car_count
-        self.T = 8
-        #self.T = 20
         self.track_width = 5
         self.track_length = 20
         self.dt = dt = 0.25
@@ -76,7 +74,6 @@ class UnstructuredDriving(ResidualGame):
 
         # collision definition
         self.h_Qh = np.diag([-1,-1,0,0])
-        self.guess = np.zeros((self.T,self.N,self.m))
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module

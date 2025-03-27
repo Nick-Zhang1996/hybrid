@@ -1,21 +1,25 @@
+# LQGame for comparison
+
 import os
-import numpy as np
+import sys
+import pickle
 from time import time
-import time as time2
-from PIL import Image
+from itertools import chain
+
+import numpy as np
+from math import sin,cos,tan,radians,degrees,pi,atan
 from scipy import interpolate
-import scipy.sparse
 from scipy.linalg import block_diag
+import scipy.sparse
+
+from PIL import Image
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
-from itertools import chain
-from LQGameSolver import my_solve_lq_game
-from math import sin,cos,tan,radians,degrees,pi,atan
 
-from util import *
-from TimeUtil import TimeUtil
-import pickle
+from utilities.util import *
+from utilities.TimeUtil import TimeUtil
+from LQGameSolver import my_solve_lq_game
 
 class LQGame(PrintObject):
     DEBUG = False
@@ -23,23 +27,22 @@ class LQGame(PrintObject):
     FORCE_PYTHON_SOLVER = False
     CPP_DEBUG = False
     def __init__(self):
-
-        # NOTE: Most of these numbers will be overridden
-        #self.N = 2
-        self.dt = dt = 0.2
+        # parameters
         self.tolerance = 5e-4
         # penalty on dx
         self.normalization_cost = 100
-
-        # Dimension of x and u for single agent
-        self.n = 4
-        self.m = 2
-
-        # Initial state in units of car sizes
-        self.x0 = None
-
         # Max iterations
         self.iterations = 100
+
+        # NOTE: These parameters depend on the actual problem and will be overridden in subclass
+        self.N = None
+        self.dt = dt = None
+        # Dimension of x and u for single agent
+        self.n = None
+        self.m = None
+        self.x0 = None
+
+
 
         # Solver variables
         self.frame_vec = []
@@ -384,7 +387,7 @@ class LQGame(PrintObject):
         """
         # setup log file
         # log file will record state of the vehicle for later analysis
-        logFolder = "./gifs/"
+        logFolder = os.path.abspath(os.path.join(os.path.dirname(__file__),'gifs'))
         logSuffix = ".gif"
         no = 1
         while os.path.isfile(logFolder+logPrefix+str(no)+logSuffix):

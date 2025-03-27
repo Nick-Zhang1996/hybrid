@@ -4,4 +4,4 @@ pics/
 __pycache__/
 *.pyc
 build/
-
+*.gif
