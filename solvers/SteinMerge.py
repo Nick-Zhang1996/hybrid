@@ -28,14 +28,15 @@ class SteinMerge(CarMergeKinematicBicycle):
         main_lane_n = min(int(0.67*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.4,main_lane_n) + np.random.random(main_lane_n)
-        #x_pos_merge_lane = 2.5 + np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
         x_pos_merge_lane = np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
-        v_main_lane = 2.0 + np.random.random(main_lane_n)
-        v_merge_lane = 2.0 + np.random.random(merge_lane_n)
+        v_main_lane = 2.0 + np.random.random(main_lane_n)*0
+        v_merge_lane = 2.0 + np.random.random(merge_lane_n)*0
         x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
         x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1]*(main_lane_n+merge_lane_n)
+        self.stein_iterations = 20
+        self.particles = 20
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -58,12 +59,17 @@ class SteinMerge(CarMergeKinematicBicycle):
 
 if __name__=="__main__":
     #np.random.seed(2)
-    main = SteinMerge(car_count=5)
+    car_count = 5
+    main = SteinMerge(car_count=car_count)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
     main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
+
+    for i in range(5):
+        main.visualize(main.belief_support[i],visualize=True, animate=True,gif_prefix=f'car_{car_count}_case_{i}')
+    exit(0)
 
     # test stein game's prediction
     chosen_id = 0
@@ -85,4 +91,6 @@ if __name__=="__main__":
         for i in high_likelihood_index:
             print(f'showing top 3: id {i}, prob {main.belief_weight[i]:.4f}, residual = {main.belief_support_residual[i]}, social cost = {main.belief_support_cost[i]}')
             main.visualize(main.belief_support[i],visualize=True, animate=False,gif_prefix='before')
+        break # NOTE
+    breakpoint()
 

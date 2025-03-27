@@ -66,6 +66,8 @@ class ManifoldConvergence(SteinGame):
         self.guess[:,0,0] = 1.50
         self.guess[:,1,0] = 1.12
 
+        self.particle_history = []
+
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         if (self.USE_CPP or self.CPP_DEBUG):

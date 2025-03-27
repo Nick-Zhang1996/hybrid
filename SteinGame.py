@@ -71,10 +71,12 @@ class SteinGame(ResidualGame):
             for i in range(self.particles):
                 val = np.zeros(self.dim_theta)
                 # NOTE
+                '''
                 for j in range(self.particles):
                     val = val + self.kernel(theta[j], theta[i]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
                 phi = 1/self.particles * val
-                #val = val + posterior_log_grad[i]
+                '''
+                val = val + posterior_log_grad[i]
                 phi = val.flatten()
                 des_dir.append(phi)
             self.stein_profiler.e('dec dir')
@@ -128,6 +130,7 @@ class SteinGame(ResidualGame):
 
         good_u_ref = good_u_ref[mask]
         good_cost_ref = good_cost_ref[mask]
+        '''
 
         # refinement
         '''
@@ -240,9 +243,11 @@ class SteinGame(ResidualGame):
         prob = np.zeros( len(self.belief_support))
         for i in range(len(prob)):
             reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k,0:,:]
-            prob[i] = np.exp(self.kernel(u, reference)) * self.belief_weight[i]
+            prob[i] = np.exp(self.rbf(u, reference)) * self.belief_weight[i]
         self.belief_weight = prob / np.sum(prob)
         return
+    def rbf(self,a,b):
+        return np.exp(- np.linalg.norm(a - b)**2/np.linalg.norm(b))
 
 
     # find gradient direction for minimizing residual
