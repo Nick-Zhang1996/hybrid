@@ -13,7 +13,7 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 from scipy.interpolate import splprep, splev,CubicSpline,interp1d
 
-from util import *
+from utilities.util import *
 from TimeUtil import TimeUtil
 from src.build.car_racing import CarRacing as cpp_CarRacing
 from ResidualGame import ResidualGame

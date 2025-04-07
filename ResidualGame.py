@@ -14,7 +14,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 from itertools import chain
 
-from util import *
+from utilities.util import *
 from TimeUtil import TimeUtil
 #from src.build.particle_game import ParticleGame
 # FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?

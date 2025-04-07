@@ -13,7 +13,7 @@ from scipy.optimize import fsolve
 import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
-from util import *
+from utilities.util import *
 from TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame

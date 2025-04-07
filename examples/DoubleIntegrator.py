@@ -11,7 +11,7 @@ from matplotlib.patches import Rectangle
 import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
-from util import *
+from utilities.util import *
 #from TimeUtil import TimeUtil
 from ResidualGame import ResidualGame
 

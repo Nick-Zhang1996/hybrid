@@ -1,6 +1,6 @@
 import numpy as np
 from Problem import *
-from util import *
+from utilities.util import *
 import scipy.stats as stats
 from scipy.optimize import minimize
 from math import exp,log

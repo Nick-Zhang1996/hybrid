@@ -14,7 +14,7 @@
 #       v9 supports nonconvexity, but only quadratic models
 # cvxopt -> only quadratic programming
 # FORCES PRO - NLP by SQP
-from util import *
+from utilities.util import *
 import ipopt
 
 
