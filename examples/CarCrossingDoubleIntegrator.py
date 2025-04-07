@@ -1,13 +1,15 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 from time import time
 from UnstructuredDriving import UnstructuredDriving
 import matplotlib.pyplot as plt
 
 class CarCrossingDoubleIntegrator(UnstructuredDriving):
+    USE_CPP = False
     def __init__(self,car_count=4):
-        # TODO: need adaptation
-        # visualization
-        # cost objective
         super().__init__(car_count=car_count)
         self.T = 15
         v_car_count = int(car_count/2)

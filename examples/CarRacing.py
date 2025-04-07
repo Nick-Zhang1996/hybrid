@@ -1,4 +1,6 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
 from math import sin,cos,tan,atan,radians,degrees
@@ -14,11 +16,11 @@ from scipy.ndimage import rotate
 from scipy.interpolate import splprep, splev,CubicSpline,interp1d
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.car_racing import CarRacing as cpp_CarRacing
 from ResidualGame import ResidualGame
 
-from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
+from utilities.SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
 import sympy
 
 from track.NascarTrack import NascarTrack
@@ -95,7 +97,7 @@ class CarRacing(ResidualGame):
         #if (self.sprite_visualization):
         self.car_scale = 0.0005/2
         color_names = ['purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan', 'hot_pink']
-        self.car_img_vec = [mpimg.imread(f'./resources/porsche_{color}.png') for color in color_names]
+        self.car_img_vec = [mpimg.imread(os.path.join(BASEDIR,f'resources/porsche_{color}.png')) for color in color_names]
 
 
         # initial state,
@@ -109,6 +111,7 @@ class CarRacing(ResidualGame):
         self.J_R = np.eye(self.m)*0.1
         self.guess = np.zeros((self.T,self.N,self.m))
         self.target_y = np.array([0,0,0,0]) # unused
+        self.collision_radius = 0.2
 
         self.print_debug_enable()
 
@@ -117,7 +120,7 @@ class CarRacing(ResidualGame):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
-            self.cpp = cpp_CarRacing(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
+            self.cpp = cpp_CarRacing(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.tolerance, self.backtracking_max_iter, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,self.collision_radius,self.iterations, False)
             self.cpp.set_x0(self.x0)
             ss = np.linspace(0, self.track.raceline_len_m, 1024)
             curvature_vec = self.track.curvature_fun(ss)

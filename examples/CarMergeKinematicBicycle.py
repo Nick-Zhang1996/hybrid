@@ -1,4 +1,7 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 from time import time
 from math import sin,cos,tan,atan,radians,degrees
@@ -13,7 +16,7 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 from SteinGame import SteinGame
@@ -28,7 +31,6 @@ class CarMergeKinematicBicycle(SteinGame):
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
         super().__init__()
-
         # u_i = [throttle, steering]
         # x_i = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
         # collision constraint: [(xi-xj)/dx]**2 + [(yi-yj)/dy]**2 >= 1
@@ -77,7 +79,7 @@ class CarMergeKinematicBicycle(SteinGame):
         if (self.sprite_visualization):
             self.car_scale = 0.0045/2 # 0.005/2
             color_names = ['purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan', 'hot_pink']
-            self.car_img_vec = [mpimg.imread(f'./resources/porsche_{color}.png') for color in color_names]
+            self.car_img_vec = [mpimg.imread(os.path.join(BASEDIR,f'resources/porsche_{color}.png')) for color in color_names]
 
         # collision definition
         self.h_Qh = np.diag([-1.0,-1,0,0])

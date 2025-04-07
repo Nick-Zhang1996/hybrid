@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 from UnstructuredDriving import UnstructuredDriving
 
@@ -25,12 +29,16 @@ class CarMergeDoubleIntegrator(UnstructuredDriving):
         main_lane_n = min(int(0.65*car_count),car_count-1)
         merge_lane_n = car_count - main_lane_n
         super().__init__(car_count=main_lane_n+merge_lane_n)
+
         x_pos_main_lane = np.linspace(0,(main_lane_n-1)*2.5,main_lane_n) + np.random.random(main_lane_n)
         x_pos_merge_lane = 1.0+np.linspace(0,(merge_lane_n-1)*2.5,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
         x0_main_lane = np.vstack([x_pos_main_lane,np.zeros(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
         x0_merge_lane = np.vstack([x_pos_merge_lane,1.5*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
+
+        self.T = 15
+        self.guess = np.zeros((self.T,self.N,self.m))
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [0]*(main_lane_n+merge_lane_n)
         self.J_Qr = np.diag([0,1,0.1,0])

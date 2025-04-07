@@ -1,6 +1,6 @@
 # demo to show stien can find two equilibriums
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from SteinGame import SteinGame
 from ResidualGame import ResidualGame

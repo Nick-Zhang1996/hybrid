@@ -9,7 +9,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.unstructured_driving import UnstructuredDriving as cpp_UnstructuredDriving
 from ResidualGame import ResidualGame
 

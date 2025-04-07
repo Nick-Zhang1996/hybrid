@@ -1,4 +1,6 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
 from PIL import Image
@@ -14,12 +16,12 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 from track.Skidpad import Skidpad
 
-from SymbolicDynamics import SymbolicDynamics
+from utilities.SymbolicDynamics import SymbolicDynamics
 import sympy
 
 # example: Car drifting (1/2 car)
@@ -78,7 +80,8 @@ class OneCarDrift(ResidualGame):
         self.print_debug_enable()
 
         self.track = Skidpad()
-        self.car_img = mpimg.imread('./resources/porsche_orange.png')
+        img_dir = os.path.join(BASEDIR,'resources/porsche_orange.png')
+        self.car_img = mpimg.imread(img_dir)
         self.car_scale = 0.004/2
 
         # bounds for visualization

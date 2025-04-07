@@ -1,5 +1,6 @@
-# TODO add omega
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
 from math import sin,cos,tan,atan,radians,degrees
@@ -13,10 +14,11 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-#from TimeUtil import TimeUtil
+#from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 
+# Still Rocket Landing, but without step cost on state, only control cost, only terminal cost contains state cost
 class RocketLanding(ResidualGame):
     DEBUG = False
     USE_CPP = False
@@ -63,8 +65,10 @@ class RocketLanding(ResidualGame):
         # bounds for visualization
         self.visual_x_lim = [-20,20]
         self.visual_y_lim = [-2,30]
-        self.rocket_img = mpimg.imread('./resources/rocket_alpha.png')
-        self.ship_img = mpimg.imread('./resources/ship_alpha.png')
+        rocket_path = os.path.join(BASEDIR,f'resources/rocket_alpha.png')
+        self.rocket_img = mpimg.imread(rocket_path)
+        ship_path = os.path.join(BASEDIR,f'resources/ship_alpha.png')
+        self.ship_img = mpimg.imread(ship_path)
 
         # cost functions R for rocket, S for ship
         self.Q_R = np.diag([1,0,1 ,1,1,1])
@@ -275,6 +279,13 @@ class RocketLanding(ResidualGame):
             val = 2*self.R_S
         return val
 
+    def dJi_dxi_dxi(self,x_k,u_k_i,i):
+        return np.zeros((self.n,self.n))
+    def dJi_dxi_dxj(self,x_k,u_k_i,i,j):
+        return np.zeros((self.n,self.n))
+    def dJi_dxj_dxj(self,x_k,u_k_i,i,j):
+        return np.zeros((self.n,self.n))
+
 
     # terminal cost
     def Jfi(self,x_k,i):
@@ -371,6 +382,7 @@ class RocketLanding(ResidualGame):
             val = 2*self.P_R.T @ self.Q_D @ self.P_R
         return val
 
+
     # --- dynamics ---
     def f(self,x,u,i):
         if (i==0):
@@ -432,6 +444,8 @@ class RocketLanding(ResidualGame):
         return np.zeros((self.n,self.n))
     def dh_dxj_dxj(self,x_i,x_j):
         return np.zeros((self.n,self.n))
+
+
 
     def testAnimation(self):
         u_ref = np.zeros((self.T,self.N,self.m))

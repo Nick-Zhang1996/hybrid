@@ -78,7 +78,7 @@ class Problem:
     def resolveLogname(self,):
         # setup log file
         # log file will record state of the vehicle for later analysis
-        logFolder = "./gifs/"
+        logFolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..','gifs/'))
         logPrefix = "iteration"
         logSuffix = ".gif"
         no = 1

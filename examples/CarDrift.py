@@ -1,4 +1,7 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 from time import time
 from PIL import Image
@@ -14,13 +17,13 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 from track.Skidpad import Skidpad
 from OneCarDrift import OneCarDrift
 
-from SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
+from utilities.SymbolicDynamics import SymbolicDynamics,MultiAgentSymbolicDynamics
 import sympy
 
 # example: Car drifting (1/2 car)
@@ -82,7 +85,10 @@ class CarDrift(ResidualGame):
 
         self.print_debug_enable()
 
-        self.car_img_vec = [mpimg.imread('./resources/porsche_orange.png'),mpimg.imread('./resources/porsche_blue.png')]
+        img_path_orange = os.path.join(BASEDIR,'resources/porsche_orange.png')
+        img_path_blue = os.path.join(BASEDIR,'resources/porsche_blue.png')
+        self.car_img = mpimg.imread(img_path_orange)
+        self.car_img_vec = [mpimg.imread(img_path_orange),mpimg.imread(img_path_blue)]
         self.car_scale = 0.004/2
 
         # bounds for visualization
@@ -220,7 +226,6 @@ class CarDrift(ResidualGame):
 
 
     ''' --------  math functions and their derivatives ------ '''
-    # TODO
     def J(self,x_k,u_k_i,i):
         '''
         step cost for an agent, given x,u

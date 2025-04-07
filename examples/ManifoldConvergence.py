@@ -1,8 +1,11 @@
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 import matplotlib.pyplot as plt
 
 from utilities.util import *
-from TimeUtil import TimeUtil
+from utilities.TimeUtil import TimeUtil
 
 from ResidualGame import ResidualGame
 from SteinGame import SteinGame
@@ -278,8 +281,6 @@ if __name__=="__main__":
     plt.plot(xx,yy,'*')
     ax.set_aspect('equal', adjustable='box')
     plt.show()
-    breakpoint()
-    # TODO add x_ref in stored data
     data = {'belief_support':main.belief_support, 'belief_weight':main.belief_weight, 'belief_support_residual':main.belief_support_residual, 'belief_support_cost':main.belief_support_cost, 'belief_x_ref':main.belief_x_ref, 'particle_history': main.particle_history}
     with open('particles.p', 'wb') as f:
         p.dump(data,f)

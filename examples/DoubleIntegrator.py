@@ -1,4 +1,7 @@
+# sanity check example for trivial game on double integrator
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
 from math import sin,cos,tan,atan,radians,degrees
@@ -12,7 +15,7 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-#from TimeUtil import TimeUtil
+#from utilities.TimeUtil import TimeUtil
 from ResidualGame import ResidualGame
 
 class DoubleIntegrator(ResidualGame):
@@ -70,8 +73,6 @@ class DoubleIntegrator(ResidualGame):
         # and setting x0
         if (self.USE_CPP or self.CPP_DEBUG):
             raise RuntimeError
-            self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a, self.bc_b, self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y)
-            self.cpp.set_x0(self.x0)
 
     def _visualize(self,U,X=None):
 

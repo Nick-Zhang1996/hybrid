@@ -59,7 +59,7 @@ class OneCarDriftMpc(OneCarDrift):
         #plt.show()
         v_total = (x_vec[:,0,3]**2 + x_vec[:,0,4]**2)**0.5
         print(v_total)
-        breakpoint()
+        #breakpoint()
 
 
 if __name__=="__main__":

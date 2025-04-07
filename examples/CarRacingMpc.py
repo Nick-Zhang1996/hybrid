@@ -1,10 +1,12 @@
 # apply CarRacing in a receding horizon style
+# NOTE for some reason, for the car racing problem the cpp version has trouble getting good solutions
 from CarRacing import CarRacing
 from math import radians, degrees
 import matplotlib.pyplot as plt
 import numpy as np
 
 class CarRacingMpc(CarRacing):
+    USE_CPP = False
     def __init__(self):
         super().__init__()
         self.T = 40

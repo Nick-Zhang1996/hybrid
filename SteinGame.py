@@ -130,7 +130,6 @@ class SteinGame(ResidualGame):
 
         good_u_ref = good_u_ref[mask]
         good_cost_ref = good_cost_ref[mask]
-        '''
 
         # refinement
         '''

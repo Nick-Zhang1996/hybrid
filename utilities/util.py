@@ -1,5 +1,9 @@
+import os
 import numpy as np
 import inspect
+
+global BASEDIR
+BASEDIR = os.path.abspath(os.path.join(os.path.dirname(__file__),'..'))
 
 def printCurrentMemoryUsage(text=''):
     # Open the /proc/self/status file

@@ -1,5 +1,6 @@
-# TODO add omega
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
 from math import sin,cos,tan,atan,radians,degrees
@@ -13,7 +14,7 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
 from utilities.util import *
-#from TimeUtil import TimeUtil
+#from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 
@@ -62,8 +63,10 @@ class RocketLanding(ResidualGame):
         # bounds for visualization
         self.visual_x_lim = [-20,20]
         self.visual_y_lim = [-2,30]
-        self.rocket_img = mpimg.imread('./resources/rocket_alpha.png')
-        self.ship_img = mpimg.imread('./resources/ship_alpha.png')
+        rocket_path = os.path.join(BASEDIR,f'resources/rocket_alpha.png')
+        self.rocket_img = mpimg.imread(rocket_path)
+        ship_path = os.path.join(BASEDIR,f'resources/ship_alpha.png')
+        self.ship_img = mpimg.imread(ship_path)
 
         # cost functions R for rocket, S for ship
         self.Q_R = np.diag([1,0,1 ,0,0.0,1])
