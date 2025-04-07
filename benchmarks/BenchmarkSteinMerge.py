@@ -1,7 +1,10 @@
 # benchmark stein merge, simulate and find collision rate with and without stein
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 import pickle
-from SteinMerge import SteinMerge
+from examples.SteinMerge import SteinMerge
 
 def checkCollisions(u_ref):
     x_ref = main.rollout(main.x0,u_ref)

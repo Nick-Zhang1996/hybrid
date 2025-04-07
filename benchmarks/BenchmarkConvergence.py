@@ -1,7 +1,10 @@
 # benchmark linear convergence of 10 car
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from time import time
 import numpy as np
-from CarMergeKinematicBicycle import CarMergeKinematicBicycle
+from examples.CarMergeKinematicBicycle import CarMergeKinematicBicycle
 import matplotlib.pyplot as plt
 import pickle
 

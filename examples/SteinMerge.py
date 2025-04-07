@@ -1,10 +1,14 @@
-# demo to show stien can find two equilibriums
+# demo to show SVG can find two equilibriums
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from utilities.util import *
 from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from SteinGame import SteinGame
 from ResidualGame import ResidualGame
-from CarMergeKinematicBicycle import CarMergeKinematicBicycle
+from examples.CarMergeKinematicBicycle import CarMergeKinematicBicycle
 
 class SteinMerge(CarMergeKinematicBicycle):
     USE_CPP = True

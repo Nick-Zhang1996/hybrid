@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import numpy as np
 from time import time
-from UnstructuredDriving import UnstructuredDriving
+from examples.UnstructuredDriving import UnstructuredDriving
 import matplotlib.pyplot as plt
 
 class CarCrossingDoubleIntegrator(UnstructuredDriving):

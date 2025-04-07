@@ -4,13 +4,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pickle as p
 
 from utilities.util import *
 from utilities.TimeUtil import TimeUtil
 
 from ResidualGame import ResidualGame
 from SteinGame import SteinGame
-import pickle as p
 
 # example for paper Stein Variational Game, Low Dimension Examples 1)
 class BimodalConvergence(SteinGame):
