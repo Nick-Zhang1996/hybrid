@@ -231,18 +231,30 @@ class SteinGame(ResidualGame):
             mask.append(accept)
         return mask
 
-    # given observed state, update belief, assume ego agent is agent 0
-    # u: current control
+    # given observed state, update belief
+    # u: observed control for all agents at time step k, shape: N*m
     # k: time step
-    # TODO maybe we should add a prior based on residual
-    def update(self, u, k):
-        ego_agent_index = 0 # if changed, need to update following code
-        u_others = u.reshape(( self.N, self.m))[1:,:]
+    # TODO maybe we should add a prior based on residual (for self.belief_weight)
+    def updateEgo(self, u, k, ego_agent_index = 0):
+        u = u.reshape((self.N, self.m))
+        u_others = np.concatenate([ u[:ego_agent_index], u[ego_agent_index+1:] ])
 
         prob = np.zeros( len(self.belief_support))
         for i in range(len(prob)):
-            reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k,0:,:]
-            prob[i] = np.exp(self.rbf(u, reference)) * self.belief_weight[i]
+            reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k]
+            reference = np.concatenate([ reference[:ego_agent_index], reference[ego_agent_index+1:] ])
+            prob[i] = np.exp(self.rbf(u_others, reference)) * self.belief_weight[i]
+        self.belief_weight = prob / np.sum(prob)
+        return
+
+    def updateNonego(self, u, k, ego_agent_index = 0):
+        u = u.reshape((self.N, self.m))
+        u_ego = u[ego_agent_index]
+        prob = np.zeros( len(self.belief_support))
+        for i in range(len(prob)):
+            reference = self.belief_support[i].reshape((self.T,self.N,self.m))[k]
+            reference = reference[ego_agent_index]
+            prob[i] = np.exp(self.rbf(u_ego, reference)) * self.belief_weight[i]
         self.belief_weight = prob / np.sum(prob)
         return
     def rbf(self,a,b):

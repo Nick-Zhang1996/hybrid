@@ -14,7 +14,8 @@ def checkCollisions(u_ref):
 
 def displayResults(data):
     #  no.cars, case 1 - collision % , case 1 - avg collision, case 2...
-    print('  no.cars, case 1 - collision % , case 1 - avg collision, case 2...')
+    #print('  no.cars, case 1 - collision % , case 1 - avg collision, case 2...')
+    print('  no.cars, case 4 - collision % , case 5 - avg collision, case 5_alt, 6...')
     for records in data:
         repeats = len(records)
         records = np.array(records)
@@ -41,10 +42,11 @@ if __name__=='__main__':
             main = SteinMerge(car_count=car_count)
             main.silent_mode_enable()
             main.setup()
-            u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
+            u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=False,animate=False)
             #main.final()
 
-            # Case 1: what if just randomly pick two solutions
+            '''
+            # Case 1: what if just randomly pick two solutions, no coordination
             # ego agent
             chosen_ego = np.random.randint(0,len(main.belief_support))
             # non-ego, N-1 agents will share this NE
@@ -86,9 +88,62 @@ if __name__=='__main__':
             ego_u_ref = np.array(ego_u_ref).reshape((main.T,main.m))
             observed_u_ref[:,0,:] = ego_u_ref
             case_3_collisions = checkCollisions(observed_u_ref)
+            '''
 
-            print(car_count, case_1_collisions, case_2_collisions, case_3_collisions)
-            records.append((car_count, case_1_collisions, case_2_collisions, case_3_collisions))
+            # Case 4: What if all agents pick their NE at random
+            # randomly pick N NE, with replacement
+            indices = np.random.randint(0, len(main.belief_support)//3, size = car_count )
+            u_ref_4 = np.zeros_like(u_ref)
+            # assemble joint-control, we assume agent 0 is ego
+            for i in range(car_count):
+                u_ref_4[:,i,:] = main.belief_support[indices[i]].reshape((main.T,main.N,main.m)).copy()[:,i,:]
+            case_4_collisions = checkCollisions(u_ref_4)
+
+            # Case 5: What if all agents use SVG and use the "Best" NE (N instances)
+            # Case 5_alt: what if ego agent and the non-ago agents each use SVG and use best ne (2 instances)
+            agent_vec = []
+            agent_u_ref = []
+            u_ref_5 = np.zeros_like(u_ref)
+            for i in range(car_count):
+                this_agent = SteinMerge(car_count=car_count)
+                this_agent.silent_mode_enable()
+                this_agent.setup()
+                this_u_ref, full_x_ref, has_converged = this_agent.solve(save_gif=False,visualize=False,animate=False)
+                agent_vec.append(this_agent)
+                agent_u_ref.append(this_u_ref)
+                u_ref_5[:,i,:] = this_u_ref.copy()[:,i,:]
+            case_5_collisions = checkCollisions(u_ref_5)
+            u_ref_5_alt = agent_u_ref[1].copy()
+            u_ref_5_alt[:,0,:] = agent_u_ref[0][:,0,:]
+            case_5_alt_collisions = checkCollisions(u_ref_5_alt)
+
+            # Case 6, co-learning, ego agent runs SVG and all non-ago agents run a shared instance of SVG
+            # reusing case 5's solution
+            # adding noise to agents action so learning more challenging
+            chosen_ego = agent_u_ref[0]
+            chosen_nonego = agent_u_ref[1]
+
+            # k=0 control
+            u_ref_6 = chosen_nonego.copy()
+            u_ref_6[0,0,:] = chosen_ego[0,0,:]
+            for k in range(main.T-1):
+                # send the control of the opponent to bayesian, we include ego agent's u_ref here to keep dimension, it's unused
+                agent_vec[0].updateEgo(u_ref_6[k,:,:], k, ego_agent_index = 0)
+                agent_vec[1].updateNonego(u_ref_6[k,:,:], k, ego_agent_index = 0)
+                # maximum likelihood NE
+                max_likelihood_index = np.argsort(agent_vec[0].belief_weight)[-1:]
+                ego_u_k = agent_vec[0].belief_support[max_likelihood_index].reshape((main.T,main.N,main.m)).copy()[k+1,0]
+                max_likelihood_index = np.argsort(agent_vec[1].belief_weight)[-1:]
+                nonego_u_k = agent_vec[1].belief_support[max_likelihood_index].reshape((main.T,main.N,main.m)).copy()[k+1,1:]
+                u_ref_6[k+1,0] = ego_u_k
+                u_ref_6[k+1,1:] = nonego_u_k
+            case_6_collisions = checkCollisions(u_ref_6)
+
+
+            #print(car_count, case_1_collisions, case_2_collisions, case_3_collisions)
+            #records.append((car_count, case_1_collisions, case_2_collisions, case_3_collisions))
+            print(car_count, case_4_collisions, case_5_collisions, case_5_alt_collisions, case_6_collisions)
+            records.append((car_count, case_4_collisions, case_5_collisions, case_5_alt_collisions, case_6_collisions))
         data.append(records)
         displayResults(data)
         with open('benchmark.p', 'wb') as f:
