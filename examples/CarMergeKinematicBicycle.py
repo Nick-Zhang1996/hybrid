@@ -17,7 +17,7 @@ from scipy.ndimage import rotate
 
 from utilities.util import *
 from utilities.TimeUtil import TimeUtil
-from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
+#from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ResidualGame import ResidualGame
 from SteinGame import SteinGame
 
@@ -25,9 +25,9 @@ from SteinGame import SteinGame
 
 # example: Merging
 # uses kinematic bicycle model
-#class CarMergeKinematicBicycle(ResidualGame):
-class CarMergeKinematicBicycle(SteinGame):
-    USE_CPP = True
+class CarMergeKinematicBicycle(ResidualGame):
+#class CarMergeKinematicBicycle(SteinGame):
+    USE_CPP = False
     FORCE_PYTHON_SOLVER = False
     def __init__(self,car_count=3):
         super().__init__()
@@ -446,7 +446,7 @@ if __name__=="__main__":
     #np.random.seed(0)
     main = CarMergeKinematicBicycle(car_count=5)
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=False)
+    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,visualize=True,animate=True)
     main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()

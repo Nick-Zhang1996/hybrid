@@ -70,10 +70,10 @@ if __name__=="__main__":
     main.final()
     print(f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     #main.testAnimation()
+    exit(0)
 
     for i in range(5):
         main.visualize(main.belief_support[i],visualize=True, animate=True,gif_prefix=f'car_{car_count}_case_{i}')
-    exit(0)
 
     # test stein game's prediction
     chosen_id = 0
