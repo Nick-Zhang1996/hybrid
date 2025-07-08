@@ -15,7 +15,7 @@ from matplotlib.patches import Rectangle
 from itertools import chain
 
 from utilities.util import *
-from utilities.TimeUtil import TimeUtil
+from utilities.time_util import TimeUtil
 #from src.build.particle_game import ParticleGame
 # FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?
 # TODO for cpp, change gradient for barrier function to cap at 1e20 instead of 1e10

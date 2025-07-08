@@ -1,72 +1,77 @@
 # apply CarDrift in a receding horizon style
-from OneCarDrift import OneCarDrift
+from examples.one_car_drift import OneCarDrift
 from math import radians, degrees
 import matplotlib.pyplot as plt
 import numpy as np
 
 
-
 class OneCarDriftMpc(OneCarDrift):
+
     def __init__(self):
         super().__init__()
         self.T = 100
-        self.Tmax = 0.174*0.4
+        self.Tmax = 0.174 * 0.4
         self.dt = dt = 0.05
         # initial state,
         #self.x0 = np.array([[0,0,radians(10),1,0.2,0.1, radians(10),10]])
-        vx = 0.5; vy = -0.38;  r= 0.1333;
-        theta = -radians(10.45); Br = radians(3.82);
-        self.x0 = np.array([[0,0,radians(17),vx,vy,r,theta,Br]])
-        self.guess = np.zeros((self.T,self.N,self.m))
-        self.guess[:,0,0] = -radians(0)
+        vx = 0.5
+        vy = -0.38
+        r = 0.1333
+        theta = -radians(10.45)
+        Br = radians(3.82)
+        self.x0 = np.array([[0, 0, radians(17), vx, vy, r, theta, Br]])
+        self.guess = np.zeros((self.T, self.N, self.m))
+        self.guess[:, 0, 0] = -radians(0)
 
-        self.mu_ref = radians(17); self.vx_ref = 1.0
+        self.mu_ref = radians(17)
+        self.vx_ref = 1.0
         self.control_cost = 1e-2
         self.n_cost = 0.3
         self.vx_cost = 0.1
 
     def simulate(self):
-        overlap_steps = self.T//2
+        overlap_steps = self.T // 2
         original_x0 = self.x0.copy()
 
-        x_vec = [self.x0[np.newaxis,:,:]]
+        x_vec = [self.x0[np.newaxis, :, :]]
         u_vec = []
         # set  x0, u_ref
 
         for i in range(20):
             # find solution
-            u_ref, full_x_ref, has_converged = self.solve(save_gif=False, visualize=False, animate=False)
+            u_ref, full_x_ref, has_converged = self.solve(save_gif=False,
+                                                          visualize=False,
+                                                          animate=False)
             # log state/control, move horizon forward
-            x_vec.append(full_x_ref[1:overlap_steps+1])
+            x_vec.append(full_x_ref[1:overlap_steps + 1])
             u_vec.append(u_ref[:overlap_steps])
-            self.init() # reset solver dynamic parameters
+            self.init()  # reset solver dynamic parameters
             self.x0 = full_x_ref[overlap_steps]
-            self.guess = np.zeros((self.T,self.N,self.m))
+            self.guess = np.zeros((self.T, self.N, self.m))
             self.guess[:overlap_steps] = u_ref[overlap_steps:]
 
         self.x0 = original_x0
         x_vec = np.vstack(x_vec)
         u_vec = np.vstack(u_vec)
         self.T = len(u_vec)
-        vi = (x_vec[0,0,3]**2 + x_vec[0,0,4]**2)**0.5
-        vf = (x_vec[-1,0,3]**2 + x_vec[-1,0,4]**2)**0.5
+        vi = (x_vec[0, 0, 3]**2 + x_vec[0, 0, 4]**2)**0.5
+        vf = (x_vec[-1, 0, 3]**2 + x_vec[-1, 0, 4]**2)**0.5
         print(f' vi {vi:.2f}, vf {vf:.2f}')
 
-        self._visualize(u_vec,X=x_vec)
+        self._visualize(u_vec, X=x_vec)
         plt.show()
 
         #self._visualize(u_vec)
         #plt.show()
-        v_total = (x_vec[:,0,3]**2 + x_vec[:,0,4]**2)**0.5
+        v_total = (x_vec[:, 0, 3]**2 + x_vec[:, 0, 4]**2)**0.5
         print(v_total)
         #breakpoint()
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main = OneCarDriftMpc()
     main.setup()
     main.simulate()
-
     '''
     u_vec = np.zeros((main.T*10, main.N, main.m))
     main.T = len(u_vec)

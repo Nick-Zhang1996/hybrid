@@ -7,7 +7,7 @@ from time import time
 from itertools import chain
 
 import numpy as np
-from math import sin,cos,tan,radians,degrees,pi,atan
+from math import sin, cos, tan, radians, degrees, pi, atan
 from scipy import interpolate
 from scipy.linalg import block_diag
 import scipy.sparse
@@ -18,14 +18,16 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
 from utilities.util import *
-from utilities.TimeUtil import TimeUtil
+from utilities.time_util import TimeUtil
 from LQGameSolver import my_solve_lq_game
+
 
 class LQGame(PrintObject):
     DEBUG = False
     USE_CPP = False
     FORCE_PYTHON_SOLVER = False
     CPP_DEBUG = False
+
     def __init__(self):
         # parameters
         self.tolerance = 5e-4
@@ -42,8 +44,6 @@ class LQGame(PrintObject):
         self.m = None
         self.x0 = None
 
-
-
         # Solver variables
         self.frame_vec = []
         self.residuals = None
@@ -51,7 +51,7 @@ class LQGame(PrintObject):
         self.profiler = TimeUtil(False)
         self.alpha = 1
 
-    def solve(self, save_gif = False, visualize = False, animate = False):
+    def solve(self, save_gif=False, visualize=False, animate=False):
         """Runs main iteration loop, sets up variables and handles visualization.
 
         Args:
@@ -59,11 +59,14 @@ class LQGame(PrintObject):
             visualize: Boolean to toggle feature. Defaults to False.
             animate: Boolean to toggle feature. Defaults to False.
         """
-        N = self.N; T = self.T; n = self.n; m = self.m
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
 
         Ps = [np.array([np.zeros((m, n * N))] * T) for i in range(N)]
         alphas = [np.array([np.zeros((m, 1))] * T) for i in range(N)]
-        u_ref = np.array([np.zeros((N, m, 1)) for i in range(T)]) # T, N,m,1
+        u_ref = np.array([np.zeros((N, m, 1)) for i in range(T)])  # T, N,m,1
         x_ref = np.array(self.rollout(self.x0, np.array(u_ref)))
         '''
         with open('u_ref.p','rb') as f:
@@ -72,7 +75,10 @@ class LQGame(PrintObject):
 
         full_x = []
 
-        self.visualize(np.array(u_ref), visualize=visualize, animate = animate, gif_prefix = 'before')
+        self.visualize(np.array(u_ref),
+                       visualize=visualize,
+                       animate=animate,
+                       gif_prefix='before')
         t0 = time()
         t = self.profiler
         i = 0
@@ -80,11 +86,12 @@ class LQGame(PrintObject):
 
         while True:
             t.s()
-            if i == self.iterations: # NOTE: Adjust to whatever max iteration desired 
+            if i == self.iterations:  # NOTE: Adjust to whatever max iteration desired
                 self.print_ok('iteration limit reached, now stopping')
                 break
             try:
-                x_ref, u_ref, Ps, alphas, full_x = self.solve_iteration(x_ref, u_ref, Ps, alphas, i, full_x)
+                x_ref, u_ref, Ps, alphas, full_x = self.solve_iteration(
+                    x_ref, u_ref, Ps, alphas, i, full_x)
                 '''
                 with open('u_ref.p','wb') as f:
                     pickle.dump(u_ref,f)
@@ -98,10 +105,15 @@ class LQGame(PrintObject):
             #self.visualize(np.array(u_ref), x_ref, visualize, save_gif, gif_prefix = 'after')
             i += 1
 
-        t_solve = time()-t0
+        t_solve = time() - t0
         self.print_info(f'total solve time: {t_solve}')
         #full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
-        self.visualize(np.array(u_ref), x_ref, visualize, save_gif, animate, gif_prefix = 'after')
+        self.visualize(np.array(u_ref),
+                       x_ref,
+                       visualize,
+                       save_gif,
+                       animate,
+                       gif_prefix='after')
         return u_ref, x_ref, has_converged
 
     def solve_iteration(self, x_ref, u_ref, Ps, alphas, iteration, full_x):
@@ -122,18 +134,22 @@ class LQGame(PrintObject):
             Reference trajectory and controls of horizon, optimal solution to ARE, and updated trajectory list for each
                 iteration
         """
-        N = self.N; T = horizon = self.T; n = self.n; m = self.m
+        N = self.N
+        T = horizon = self.T
+        n = self.n
+        m = self.m
         xx = []
-        xx.append([self.x0[i] for i in range(N)]) # T,N
-        uu = [[] for i in range(T)] # T,N
-        As_agents = [[] for i in range(N)] # N,T
+        xx.append([self.x0[i] for i in range(N)])  # T,N
+        uu = [[] for i in range(T)]  # T,N
+        As_agents = [[] for i in range(N)]  # N,T
         Bs_agents = [[] for i in range(N)]
         # 1. Find new control based on optimal solution and then roll out new trajectory + linearize
         for t in range(T):
             dx = np.hstack([xx[-1][i] - x_ref[t][i] for i in range(N)])
             xx_t = []
             for i in range(N):
-                new_u_i = u_ref[t][i] - Ps[i][t] @ dx.reshape(-1, 1) + alphas[i][t]
+                new_u_i = u_ref[t][i] - Ps[i][t] @ dx.reshape(-1,
+                                                              1) + alphas[i][t]
                 new_x_i = self.f(xx[-1][i], new_u_i.T[0], i)
                 A = self.df_dx(new_x_i, new_u_i, i) * self.dt
                 B = self.df_du(new_x_i, new_u_i, i) * self.dt
@@ -145,15 +161,25 @@ class LQGame(PrintObject):
         x_ref = np.array(xx)
         u_ref = np.array(uu)
 
-        As = [block_diag(*[As_agents[i][t] for i in range(N)]) for t in range(T)]
-        Bs = [[np.vstack([Bs_agents[i][t] if i == j else np.zeros((n, m)) for i in range(N)]) for t in range(T)] for j in range(N)]
+        As = [
+            block_diag(*[As_agents[i][t] for i in range(N)]) for t in range(T)
+        ]
+        Bs = [[
+            np.vstack([
+                Bs_agents[i][t] if i == j else np.zeros((n, m))
+                for i in range(N)
+            ]) for t in range(T)
+        ] for j in range(N)]
 
         # 2. Find cost matrices using new trajectory and controls
-        Qs, qs, Rs, rs, has_collision = self.getCostMatrices(x_ref, u_ref, iteration)
+        Qs, qs, Rs, rs, has_collision = self.getCostMatrices(
+            x_ref, u_ref, iteration)
 
         # 3. Find optimal solution
-        new_Ps, new_alphas = my_solve_lq_game(As, Bs, Qs, qs, Rs, rs, self.profiler)
-        new_Ps = np.array(new_Ps); new_alphas = np.array(new_alphas)
+        new_Ps, new_alphas = my_solve_lq_game(As, Bs, Qs, qs, Rs, rs,
+                                              self.profiler)
+        new_Ps = np.array(new_Ps)
+        new_alphas = np.array(new_alphas)
 
         # DEBUG test which option gives lower cost
         # only test feedforward
@@ -176,7 +202,7 @@ class LQGame(PrintObject):
             self.print_debug(f'agent {i}, d_cost = {cost_vec[i]}')
         '''
 
-        alpha = 1.0 # NOTE: This determines "how much of" the new solution we want to be applied to next iter
+        alpha = 1.0  # NOTE: This determines "how much of" the new solution we want to be applied to next iter
         if (iteration == 0):
             alphas = alpha * new_alphas
             Ps = alpha * new_Ps
@@ -241,7 +267,10 @@ class LQGame(PrintObject):
             Quadratic and linear cost terms with respect to state and controls
         """
         global scalar
-        N = self.N; T = horizon = self.T; m = self.m; n = self.n
+        N = self.N
+        T = horizon = self.T
+        m = self.m
+        n = self.n
         # first we formulate cost on x,u, and later transform it to cost on dx, du
         Qs = [[] for i in range(N)]
         qs = [[] for i in range(N)]
@@ -263,36 +292,39 @@ class LQGame(PrintObject):
 
                 # Check collision violation + apply cost
                 for j in range(i + 1, N):
-                    h = -((xx[t][i][0] - xx[t][j][0]) / 1.0) ** 2 - (xx[t][i][1] - xx[t][j][1]) ** 2 + 7
+                    h = -((xx[t][i][0] - xx[t][j][0]) / 1.0)**2 - (
+                        xx[t][i][1] - xx[t][j][1])**2 + 7
                     if h >= 0:
                         has_collision = True
                         # for agent i
                         # Hessian dh/dxdx
                         Q_i_col = 2 * self.h_Qh.T
-                        Q_i[i * n:(i+1) * n, i * n:(i+1) * n] += Q_i_col
+                        Q_i[i * n:(i + 1) * n, i * n:(i + 1) * n] += Q_i_col
 
                         #Gradient dh/dx
                         q_i_col = 2 * (xx[t][i] - xx[t][j]).T @ self.h_Qh
-                        q_i[0, i * n:(i+1) * n] += q_i_col
+                        q_i[0, i * n:(i + 1) * n] += q_i_col
 
                         # for agent j
                         # Hessian dh/dxdx
                         Q_j_col = 2 * self.h_Qh.T
-                        Q_i[j * n:(j+1) * n, j * n:(j+1) * n] += Q_j_col
+                        Q_i[j * n:(j + 1) * n, j * n:(j + 1) * n] += Q_j_col
 
                         #Gradient dh/dx
                         q_j_col = 2 * (xx[t][j] - xx[t][i]).T @ self.h_Qh
-                        q_i[0, j * n:(j+1) * n] += q_j_col
+                        q_i[0, j * n:(j + 1) * n] += q_j_col
 
                 # Step cost
 
                 # Hessian dJ/dxdx
-                Q_i_step =  2* (self.J_Qr + self.J_Q) + self.normalization_cost*np.eye(n)
-                Q_i[i * n:(i+1) * n, i * n:(i+1) * n] += Q_i_step
+                Q_i_step = 2 * (self.J_Qr +
+                                self.J_Q) + self.normalization_cost * np.eye(n)
+                Q_i[i * n:(i + 1) * n, i * n:(i + 1) * n] += Q_i_step
 
                 # Gradient dJ/dx
-                q_i_step = 2 * (xx[t][i] - self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * xx[t][i].T @ self.J_Q
-                q_i[0, i * n:(i+1) * n] += q_i_step
+                q_i_step = 2 * (xx[t][i] - self.J_x_ref_fun(i)
+                                ).T @ self.J_Qr + 2 * xx[t][i].T @ self.J_Q
+                q_i[0, i * n:(i + 1) * n] += q_i_step
 
                 # We want to dampen the swerve reactions from the main lane cars, so we have control cost specific for these cars
                 # Hessian dJ/dudu
@@ -307,7 +339,7 @@ class LQGame(PrintObject):
                 else:
                     r_i = 2 * uu[t][i].T @ self.J_R_merge
                 '''
-                R_i = 2*self.J_R
+                R_i = 2 * self.J_R
                 r_i = 2 * uu[t][i].T @ self.J_R
 
                 Qs[i].append(Q_i)
@@ -328,10 +360,12 @@ class LQGame(PrintObject):
             J_R = self.J_R_main
         else:
             J_R = self.J_R_merge
-        cost = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i] - self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ J_R @ u_k_i
+        cost = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
+            x_k[i] - self.J_x_ref_fun(i)
+        ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ J_R @ u_k_i
         return cost
 
-    def rollout(self,x0,U):
+    def rollout(self, x0, U):
         """ Given initial state and controls for time horizon, find state for every time step based on controls
 
         Args:
@@ -341,9 +375,9 @@ class LQGame(PrintObject):
         Returns:
             Vehicle states for each time step
         """
-        U = U.reshape(self.T,self.N,self.m)
-        X = np.zeros((self.T + 1,self.N,self.n))
-        X[0, :, :] = x0.reshape(self.N,self.n)
+        U = U.reshape(self.T, self.N, self.m)
+        X = np.zeros((self.T + 1, self.N, self.n))
+        X[0, :, :] = x0.reshape(self.N, self.n)
         # x+ = x + vx*dt + 0.5*ax*dt*dt
         # vx+ = vx + ax*dt
         for i in range(self.N):
@@ -351,7 +385,13 @@ class LQGame(PrintObject):
                 X[k, i] = self.f(X[k - 1, i], U[k - 1, i], i)
         return X[1:, :, :]
 
-    def visualize(self,U,X=None,visualize=False,save_gif=False,animate=False,gif_prefix='run'):
+    def visualize(self,
+                  U,
+                  X=None,
+                  visualize=False,
+                  save_gif=False,
+                  animate=False,
+                  gif_prefix='run'):
         """Handles visualization of the simulation.
 
         Args:
@@ -363,20 +403,20 @@ class LQGame(PrintObject):
             gif_prefix: Prefix for saved file. Defaults to 'run'.
         """
         if (visualize or save_gif):
-            fig = self._visualize(U,X)
+            fig = self._visualize(U, X)
             if (save_gif):
                 fig.canvas.draw()
-                frame = Image.frombytes('RGB',
-                fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+                frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
+                                        fig.canvas.tostring_rgb())
                 self.frame_vec.append(frame)
             if (visualize):
                 plt.show()
         if (animate):
-            self._animation(U,X,gif_prefix=gif_prefix)
+            self._animation(U, X, gif_prefix=gif_prefix)
 
         return
 
-    def resolveLogname(self,logPrefix='run'):
+    def resolveLogname(self, logPrefix='run'):
         """Saves gif file.
 
         Args:
@@ -387,14 +427,15 @@ class LQGame(PrintObject):
         """
         # setup log file
         # log file will record state of the vehicle for later analysis
-        logFolder = os.path.abspath(os.path.join(os.path.dirname(__file__),'gifs'))
+        logFolder = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), 'gifs'))
         logSuffix = ".gif"
         no = 1
-        while os.path.isfile(logFolder+logPrefix+str(no)+logSuffix):
+        while os.path.isfile(logFolder + logPrefix + str(no) + logSuffix):
             no += 1
 
         log_no = no
-        logFilename = logFolder+logPrefix+str(no)+logSuffix
+        logFilename = logFolder + logPrefix + str(no) + logSuffix
         return logFilename
 
     def final(self):
@@ -403,6 +444,10 @@ class LQGame(PrintObject):
         self.profiler.summary()
         if (len(self.frame_vec) > 0):
             gif_filename = self.resolveLogname()
-            self.frame_vec[0].save(fp=gif_filename,format='GIF',append_images=self.frame_vec,save_all=True,duration = 200,loop=0)
+            self.frame_vec[0].save(fp=gif_filename,
+                                   format='GIF',
+                                   append_images=self.frame_vec,
+                                   save_all=True,
+                                   duration=200,
+                                   loop=0)
             self.print_debug(f'GIf saved to {gif_filename}')
-

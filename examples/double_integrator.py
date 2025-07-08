@@ -1,13 +1,10 @@
 # sanity check example for trivial game on double integrator
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import numpy as np
 from time import time
-from math import sin,cos,tan,atan,radians,degrees
+from math import sin, cos, tan, atan, radians, degrees
 from PIL import Image
 from scipy import interpolate
-import scipy.sparse # sparse matrix operations
+import scipy.sparse  # sparse matrix operations
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
@@ -16,11 +13,13 @@ from scipy.ndimage import rotate
 
 from utilities.util import *
 #from utilities.TimeUtil import TimeUtil
-from ResidualGame import ResidualGame
+from residual_game import ResidualGame
+
 
 class DoubleIntegrator(ResidualGame):
     USE_CPP = False
     FORCE_PYTHON_SOLVER = False
+
     def __init__(self):
         super().__init__()
 
@@ -45,7 +44,7 @@ class DoubleIntegrator(ResidualGame):
         self.T = 20
         self.dt = dt = 0.1
 
-        self.x0 = np.array([[1,0]])
+        self.x0 = np.array([[1, 0]])
 
         # dimension of x and u for single agent
         # max(n^i)
@@ -53,20 +52,19 @@ class DoubleIntegrator(ResidualGame):
         self.m = 1
 
         # bounds for visualization
-        self.visual_x_lim = [-20,20]
-        self.visual_y_lim = [-2,30]
+        self.visual_x_lim = [-20, 20]
+        self.visual_y_lim = [-2, 30]
 
         # cost functions R for rocket, S for ship
-        self.Q = np.diag([1.0,1.0])
-        self.R = np.diag([1])*1e-2
+        self.Q = np.diag([1.0, 1.0])
+        self.R = np.diag([1]) * 1e-2
 
         self.print_debug_enable()
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
 
-        u_ref = np.zeros((self.T,self.N,self.m))
+        u_ref = np.zeros((self.T, self.N, self.m))
         self.guess = u_ref
-
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -74,25 +72,30 @@ class DoubleIntegrator(ResidualGame):
         if (self.USE_CPP or self.CPP_DEBUG):
             raise RuntimeError
 
-    def _visualize(self,U,X=None):
+    def _visualize(self, U, X=None):
 
         if (X is None):
-            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
-        rollout_X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+            X = np.vstack(
+                [self.x0[np.newaxis, :, :],
+                 self.rollout(self.x0, U)])
+        rollout_X = np.vstack(
+            [self.x0[np.newaxis, :, :],
+             self.rollout(self.x0, U)])
         fig, ax = plt.subplots()
 
         # plot rollout trajectory
-        plt.plot(X[:,0,0],'r-')
-        plt.plot(X[:,0,1],'r-')
-        plt.plot(rollout_X[:,0,0],'bo-')
-        plt.plot(rollout_X[:,0,1],'bo-')
+        plt.plot(X[:, 0, 0], 'r-')
+        plt.plot(X[:, 0, 1], 'r-')
+        plt.plot(rollout_X[:, 0, 0], 'bo-')
+        plt.plot(rollout_X[:, 0, 1], 'bo-')
         return fig
 
-    def _animation(self,U,X=None,gif_prefix=''):
+    def _animation(self, U, X=None, gif_prefix=''):
         return
 
     ''' --------  math functions and their derivatives ------ '''
-    def J(self,x_k,u_k_i,i):
+
+    def J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
         i: agent id
@@ -101,78 +104,83 @@ class DoubleIntegrator(ResidualGame):
         return val
 
     # dJi dxi
-    def dJi_dxi(self,x_k,u_k_i,i):
-        val = 2*x_k[i] @ self.Q
+    def dJi_dxi(self, x_k, u_k_i, i):
+        val = 2 * x_k[i] @ self.Q
         return val
 
     # dJi dxj
-    def dJi_dxj(self,x_k,u_k_i,i,j):
-        return np.zeros((1,self.n))
+    def dJi_dxj(self, x_k, u_k_i, i, j):
+        return np.zeros((1, self.n))
 
-    def dJi_du(self,x_k,u_k_i,i):
-        val = 2* u_k_i.T @ self.R
+    def dJi_du(self, x_k, u_k_i, i):
+        val = 2 * u_k_i.T @ self.R
         return val
 
     # dJ^i / dxi dxi
-    def dJi_dxi_dxi(self,x_k,u,i):
-        return 2*self.Q
+    def dJi_dxi_dxi(self, x_k, u, i):
+        return 2 * self.Q
 
     # dJi / dxi dxj
     def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
-        return np.zeros((self.n,self.n))
+        return np.zeros((self.n, self.n))
+
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
-        return np.zeros((self.n,self.n))
+        return np.zeros((self.n, self.n))
+
     def dJi_dudu(self, x_k, u_k_i, i):
-        val = 2*self.R
+        val = 2 * self.R
         return val
 
-    def f(self,x,u,i):
-        dx = np.array([x[1],u[0]])
-        return x+dx*self.dt
+    def f(self, x, u, i):
+        dx = np.array([x[1], u[0]])
+        return x + dx * self.dt
 
-    def df_dx(self,x,u,i):
-        A = np.zeros((self.n,self.n))
-        A[0,1] = 1
-        val = np.eye(self.n) + A*self.dt
+    def df_dx(self, x, u, i):
+        A = np.zeros((self.n, self.n))
+        A[0, 1] = 1
+        val = np.eye(self.n) + A * self.dt
         return val
 
-    def df_du(self,x,u,i):
-        B = np.zeros((self.n,self.m))
-        B[1,0] = 1
-        val = B*self.dt
+    def df_du(self, x, u, i):
+        B = np.zeros((self.n, self.m))
+        B[1, 0] = 1
+        val = B * self.dt
         return val
 
     # handle collision
     def h(self, x_i, x_j):
         return -1
 
-    def dh_dxi(self,x_i,x_j):
+    def dh_dxi(self, x_i, x_j):
         return np.zeros(self.n)
-    def dh_dxj(self,x_i,x_j):
+
+    def dh_dxj(self, x_i, x_j):
         return np.zeros(self.n)
-    def dh_dxi_dxi(self,x_i,x_j):
-        return np.zeros((self.n,self.n))
-    def dh_dxj_dxi(self,x_i,x_j):
-        return np.zeros((self.n,self.n))
-    def dh_dxi_dxj(self,x_i,x_j):
-        return np.zeros((self.n,self.n))
-    def dh_dxj_dxj(self,x_i,x_j):
-        return np.zeros((self.n,self.n))
+
+    def dh_dxi_dxi(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxj_dxi(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxi_dxj(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxj_dxj(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
 
     def testAnimation(self):
-        u_ref = np.zeros((self.T,self.N,self.m))
-        x_ref = self.rollout(self.x0,u_ref)
-        full_x_ref = np.vstack([self.x0[np.newaxis,:,:],x_ref])
+        u_ref = np.zeros((self.T, self.N, self.m))
+        x_ref = self.rollout(self.x0, u_ref)
+        full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
         #self._animation(u_ref,full_x_ref)
-        self._visualize(u_ref,full_x_ref)
+        self._visualize(u_ref, full_x_ref)
         plt.show()
 
 
-
-if __name__=="__main__":
+if __name__ == "__main__":
     main = DoubleIntegrator()
     main.setup()
-    main.solve(save_gif=False,visualize=True,animate=True)
+    main.solve(save_gif=False, visualize=True, animate=True)
     main.final()
     #main.testAnimation()
-

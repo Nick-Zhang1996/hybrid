@@ -1,7 +1,3 @@
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import numpy as np
 from time import time
 from math import sin, cos, tan, atan, radians, degrees
@@ -13,14 +9,15 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
 from utilities.util import *
-from utilities.TimeUtil import TimeUtil
+from utilities.time_util import TimeUtil
 from LQGame import LQGame
 
 # NOTE: Adjust car count here
 car_count = 10
 
+
 class LQGame_CarMergeKinematicBicycle(LQGame):
-    
+
     def __init__(self, car_count):
         super().__init__()
         """
@@ -50,7 +47,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         rs = [r1s, r2s, ..., rNs]
             ris = [ri_0, ri_1, ..., ri_T-1]
         """
-        
+
         # Decision variables:
         self.N = car_count
         self.T = 20
@@ -59,17 +56,16 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         self.dt = dt = 0.2
         self.main_lane_n = min(int(0.65 * car_count), car_count - 1)
 
-
         # Dimension of x and u for single agent
         self.n = 4
         self.m = 2
 
         # Bounds for visualization
-        self.visual_x_lim = [-2.5,2.5]
-        self.visual_y_lim = [-2,30]
+        self.visual_x_lim = [-2.5, 2.5]
+        self.visual_y_lim = [-2, 30]
 
         # Collision definition
-        self.h_Qh = np.diag([-0.1, -0.1, 0, 0])*10
+        self.h_Qh = np.diag([-0.1, -0.1, 0, 0]) * 10
 
         # Step cost parameters
         #self.J_Qr = np.diag([0, 0.070, 0.01, 0])
@@ -79,26 +75,38 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         #self.J_R = np.diag([2.0, 20.0])
 
         #self.J_Qr = np.diag([0,0.1,0.01,0])
-        self.J_Qr = np.diag([0,0.3,0.01,0])
-        self.J_Q = np.diag([0,0,0,1.0])
-        self.J_R = np.eye(self.m)*0.3
-        self.J_x_ref_fun = lambda i:np.array([0,self.target_y[i],2.0,0])
+        self.J_Qr = np.diag([0, 0.3, 0.01, 0])
+        self.J_Q = np.diag([0, 0, 0, 1.0])
+        self.J_R = np.eye(self.m) * 0.3
+        self.J_x_ref_fun = lambda i: np.array([0, self.target_y[i], 2.0, 0])
 
         # multiple car merge, car_count: main_lane_n + merge_lane_n, Dr 650ms
         #np.random.seed(0)
-        main_lane_n = min(int(0.65*car_count),car_count-1)
+        main_lane_n = min(int(0.65 * car_count), car_count - 1)
         merge_lane_n = car_count - main_lane_n
-        x_pos_main_lane = np.linspace(0,(main_lane_n-1)*5.5,main_lane_n) + np.random.random(main_lane_n)
-        x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.5,merge_lane_n) + np.random.random(merge_lane_n)
+        x_pos_main_lane = np.linspace(
+            0, (main_lane_n - 1) * 5.5,
+            main_lane_n) + np.random.random(main_lane_n)
+        x_pos_merge_lane = 2.5 + np.linspace(
+            0, (merge_lane_n - 1) * 5.5,
+            merge_lane_n) + np.random.random(merge_lane_n)
         # NOTE: Starting position: below is greater spacing, can be adjusted. Recommended to keep 2:1 scale
         # x_pos_main_lane = np.linspace(0,(main_lane_n-1)*8,main_lane_n) + np.random.random(main_lane_n)
         # x_pos_merge_lane = 4.0+np.linspace(0,(merge_lane_n-1)*8,merge_lane_n) + np.random.random(merge_lane_n)
         v_main_lane = 2.0 + np.random.random(main_lane_n)
         v_merge_lane = 2.0 + np.random.random(merge_lane_n)
-        x0_main_lane = np.vstack([x_pos_main_lane,self.track_width/2*np.ones(main_lane_n),v_main_lane, np.zeros(main_lane_n)]).T
-        x0_merge_lane = np.vstack([x_pos_merge_lane,-self.track_width/2*np.ones(merge_lane_n),v_merge_lane, np.zeros(merge_lane_n)]).T
+        x0_main_lane = np.vstack([
+            x_pos_main_lane, self.track_width / 2 * np.ones(main_lane_n),
+            v_main_lane,
+            np.zeros(main_lane_n)
+        ]).T
+        x0_merge_lane = np.vstack([
+            x_pos_merge_lane, -self.track_width / 2 * np.ones(merge_lane_n),
+            v_merge_lane,
+            np.zeros(merge_lane_n)
+        ]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
-        self.target_y = [1]*(main_lane_n+merge_lane_n)
+        self.target_y = [1] * (main_lane_n + merge_lane_n)
         self.print_debug_enable()
 
     def setup(self):
@@ -120,18 +128,24 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             plotted visualization of the simulated road
         """
         if (X is None):
-            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+            X = np.vstack(
+                [self.x0[np.newaxis, :, :],
+                 self.rollout(self.x0, U)])
         fig, ax = plt.subplots()
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
+        ax.vlines(x=-self.track_width,
+                  ymin=self.visual_y_lim[0],
+                  ymax=self.visual_y_lim[1])
+        ax.vlines(x=self.track_width,
+                  ymin=self.visual_y_lim[0],
+                  ymax=self.visual_y_lim[1])
         # dotted line
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 10):
-            ax.vlines(x=0, ymin=i,ymax=i+0.5)
+            ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
         for i in range(self.N):
-            xx = X[:,i,0]
-            yy = X[:,i,1]
-            plt.plot(-yy,xx,'*-')
+            xx = X[:, i, 0]
+            yy = X[:, i, 1]
+            plt.plot(-yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
 
@@ -147,59 +161,81 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             List of cars represented as rectangles
         """
         if X is None:
-            X = np.vstack([self.x0[np.newaxis,:,:],self.rollout(self.x0,U)])
+            X = np.vstack(
+                [self.x0[np.newaxis, :, :],
+                 self.rollout(self.x0, U)])
         car_pos_vec = []
         car_angle_vec = []
         box_vec = []
         circle_vec = []
-        color_vec = ['red','green','blue','black']
-        color_vec = [color_vec[i%len(color_vec)] for i in range(self.N)]
+        color_vec = ['red', 'green', 'blue', 'black']
+        color_vec = [color_vec[i % len(color_vec)] for i in range(self.N)]
         # prepare smoothed animation
-        for i,color in zip(range(self.N),color_vec):
+        for i, color in zip(range(self.N), color_vec):
             # interpolate for smooth graphics
             #tt = np.linspace(0,self.T*self.dt,50)
-            tt = np.linspace(0,self.dt*self.T,self.T+1)
+            tt = np.linspace(0, self.dt * self.T, self.T + 1)
             # for plt.Rectangle, we offset position so this corresponds to top left corner
             # also flip x axis
-            xx = X[:,i,0] - 1.0
-            yy = -(X[:,i,1]) - 0.5
-            angle = X[:,i,3]
-            xx_fun = interpolate.interp1d(tt,xx)
-            yy_fun = interpolate.interp1d(tt,yy)
-            angle_fun = interpolate.interp1d(tt,angle)
+            xx = X[:, i, 0] - 1.0
+            yy = -(X[:, i, 1]) - 0.5
+            angle = X[:, i, 3]
+            xx_fun = interpolate.interp1d(tt, xx)
+            yy_fun = interpolate.interp1d(tt, yy)
+            angle_fun = interpolate.interp1d(tt, angle)
 
-            pos_vec = np.vstack([yy_fun(tt),xx_fun(tt)]).T
-            angle_vec = angle_fun(tt)/np.pi*180.0
+            pos_vec = np.vstack([yy_fun(tt), xx_fun(tt)]).T
+            angle_vec = angle_fun(tt) / np.pi * 180.0
             car_angle_vec.append(angle_vec)
             car_pos_vec.append(pos_vec)
-            box_vec.append(plt.Rectangle(pos_vec[0], 1, 2,angle=angle_vec[0], color=color,rotation_point='center'))
-            circle_vec.append(plt.Circle(pos_vec[0]+np.array([0.5,1.0]), radius=(7**0.5)/2,  color=color, fill=False))
+            box_vec.append(
+                plt.Rectangle(pos_vec[0],
+                              1,
+                              2,
+                              angle=angle_vec[0],
+                              color=color,
+                              rotation_point='center'))
+            circle_vec.append(
+                plt.Circle(pos_vec[0] + np.array([0.5, 1.0]),
+                           radius=(7**0.5) / 2,
+                           color=color,
+                           fill=False))
 
         fig, ax = plt.subplots()
         ax.set_xlim(*self.visual_x_lim)
         ax.set_ylim(*self.visual_y_lim)
+
         def update(frame):
             for i in range(self.N):
                 box_vec[i].set_xy(car_pos_vec[i][frame])
                 box_vec[i].set_angle(car_angle_vec[i][frame])
-                circle_vec[i].set_center(car_pos_vec[i][frame]+np.array([0.5,1.0]))
+                circle_vec[i].set_center(car_pos_vec[i][frame] +
+                                         np.array([0.5, 1.0]))
             return box_vec
+
         # Add the boxes to the plot
         for box in box_vec:
             ax.add_patch(box)
         for circ in circle_vec:
             ax.add_patch(circ)
         # lane boundary lines
-        ax.vlines(x=-self.track_width,ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
-        ax.vlines(x=self.track_width, ymin=self.visual_y_lim[0],ymax=self.visual_y_lim[1])
+        ax.vlines(x=-self.track_width,
+                  ymin=self.visual_y_lim[0],
+                  ymax=self.visual_y_lim[1])
+        ax.vlines(x=self.track_width,
+                  ymin=self.visual_y_lim[0],
+                  ymax=self.visual_y_lim[1])
         # dotted line
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i,ymax=i+1)
+            ax.vlines(x=0, ymin=i, ymax=i + 1)
 
         ax.set_aspect('equal', adjustable='box')
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=len(car_pos_vec[0]), blit=True)
+        anim = FuncAnimation(fig,
+                             update,
+                             frames=len(car_pos_vec[0]),
+                             blit=True)
         gif_filename = self.resolveLogname(logPrefix=gif_prefix)
         anim.save(gif_filename, writer='pillow')
         plt.show()
@@ -214,13 +250,17 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
         Returns:
             Dynamics of next time step
-        """        
-        lf = 1.0; lr = 1.0
-        beta = atan(tan(u[1]) * lr / (lf+lr))
-        dx = np.array([x[2] * cos(x[3] + beta), x[2] * sin(x[3] + beta), u[0], x[2] / lr*sin(beta)])
+        """
+        lf = 1.0
+        lr = 1.0
+        beta = atan(tan(u[1]) * lr / (lf + lr))
+        dx = np.array([
+            x[2] * cos(x[3] + beta), x[2] * sin(x[3] + beta), u[0],
+            x[2] / lr * sin(beta)
+        ])
         return x + dx * self.dt
 
-    def df_dx(self,x,u,i):
+    def df_dx(self, x, u, i):
         """Jacobian of dynamics with respect to x.
 
         Args:
@@ -230,16 +270,15 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
         Returns:
             First time derivative of dynamics with respect to x
-        """        
+        """
         beta = atan(tan(u[1]) * 0.5)
-        A = np.array([[0, 0, cos(x[3]+beta), -x[2]*sin(x[3]+beta)],
-            [0, 0, sin(x[3]+beta), x[2]*cos(x[3]+beta)],
-            [0, 0, 0, 0],
-            [0, 0, sin(beta)/1.0, 0]])
+        A = np.array([[0, 0, cos(x[3] + beta), -x[2] * sin(x[3] + beta)],
+                      [0, 0, sin(x[3] + beta), x[2] * cos(x[3] + beta)],
+                      [0, 0, 0, 0], [0, 0, sin(beta) / 1.0, 0]])
         val = np.eye(4) + A * self.dt
         return val
 
-    def df_du(self,x,u,i):
+    def df_du(self, x, u, i):
         """Jacobian of dynamics with respect to u.
 
         Args:
@@ -251,15 +290,14 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             First time derivative of dynamics with respect to u
         """
         beta = atan(tan(u[1]) * 0.5)
-        dbeta_dst = 0.5/( ((tan(u[1]) * 0.5)**2 + 1) * cos(u[1])**2 )
-        B = np.array([[0, -x[2]*sin(x[3]+beta)*dbeta_dst],
-            [0, x[2]*cos(x[3]+beta)*dbeta_dst],
-            [1, 0],
-            [0, x[2]/1.0*cos(beta)*dbeta_dst]])
-        val = B*self.dt
+        dbeta_dst = 0.5 / (((tan(u[1]) * 0.5)**2 + 1) * cos(u[1])**2)
+        B = np.array([[0, -x[2] * sin(x[3] + beta) * dbeta_dst],
+                      [0, x[2] * cos(x[3] + beta) * dbeta_dst], [1, 0],
+                      [0, x[2] / 1.0 * cos(beta) * dbeta_dst]])
+        val = B * self.dt
         return val
 
-    def J(self,x_k,u_k_i,i):
+    def J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
         x_k.shape (N*n) x_k_i = [x,y,vx,vy]
@@ -268,68 +306,74 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.USE_CPP):
-            return self.cpp.J(x_k,u_k_i,i)
-        val = (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x_k[i]-self.J_x_ref_fun(i)) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+            return self.cpp.J(x_k, u_k_i, i)
+        val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
+            x_k[i] - self.J_x_ref_fun(i)
+        ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
         if (self.CPP_DEBUG):
-            alt = self.cpp.J(x_k,u_k_i,i)
-            if (np.linalg.norm(alt-val)>1e-4):
+            alt = self.cpp.J(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     # dJi dxi
-    def dJi_dxi(self,x_k,u_k_i,i):
+    def dJi_dxi(self, x_k, u_k_i, i):
         if (self.USE_CPP):
-            return self.cpp.dJi_dxi(x_k,u_k_i,i)
-        val = 2* (x_k[i]-self.J_x_ref_fun(i)).T @ self.J_Qr + 2*x_k[i].T @ self.J_Q
+            return self.cpp.dJi_dxi(x_k, u_k_i, i)
+        val = 2 * (x_k[i] -
+                   self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
         # if (i == 1):
         #     print('x_k[i]: ', x_k[i])
         #     print('y diff: ', x_k[i][1] - self.J_x_ref_fun(i)[1])
         #     print('val: ', val)
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJi_dxi(x_k,u_k_i,i)
-            if (np.linalg.norm(alt-val)>1e-4):
+            alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     # dJi dxj
-    def dJi_dxj(self,x_k,u_k_i,i,j):
+    def dJi_dxj(self, x_k, u_k_i, i, j):
         if (self.USE_CPP):
-            return self.cpp.dJi_dxj(x_k,u_k_i,i,j)
+            return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJi_dxj(x_k,u_k_i,i,j)
-            if (np.linalg.norm(alt-val)>1e-4):
+            alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
+            if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
-    def dJi_du(self,x_k,u_k_i,i):
+    def dJi_du(self, x_k, u_k_i, i):
         if (self.USE_CPP):
-            return self.cpp.dJi_du(x_k,u_k_i,i)
-        val = 2* u_k_i.T @ self.J_R
+            return self.cpp.dJi_du(x_k, u_k_i, i)
+        val = 2 * u_k_i.T @ self.J_R
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJi_du(x_k,u_k_i,i)
-            if (np.linalg.norm(alt-val)>1e-4):
+            alt = self.cpp.dJi_du(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     # dJ^i / dxi dxi
-    def dJi_dxi_dxi(self,x_k,u,i):
+    def dJi_dxi_dxi(self, x_k, u, i):
         if (self.USE_CPP):
-            return self.cpp.dJi_dxi_dxi(x_k,u,i)
-        val = 2*self.J_Qr + 2*self.J_Q
+            return self.cpp.dJi_dxi_dxi(x_k, u, i)
+        val = 2 * self.J_Qr + 2 * self.J_Q
         if (self.CPP_DEBUG):
-            alt = self.cpp.dJi_dxi_dxi(x_k,u,i)
-            if (np.linalg.norm(alt-val)>1e-4):
+            alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     # dJi / dxi dxj
     def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
         return 0
+
     def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
         return 0
+
     def dJi_dudu(self, x_k, u_k_i, i):
-        return 2*self.J_R
+        return 2 * self.J_R
+
 
 if __name__ == "__main__":
     main = LQGame_CarMergeKinematicBicycle(car_count)

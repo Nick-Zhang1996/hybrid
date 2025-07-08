@@ -1,12 +1,9 @@
-# benchmark linear convergence of 10 car
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+""" benchmark linear convergence of 10 car"""
 from time import time
-import numpy as np
-from examples.CarMergeKinematicBicycle import CarMergeKinematicBicycle
-import matplotlib.pyplot as plt
 import pickle
+import numpy as np
+from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+import matplotlib.pyplot as plt
 
 x = np.linspace(0, 10, 100)
 '''
@@ -20,10 +17,10 @@ y_lower = y - confidence_interval
 # Create the plot
 plt.figure(figsize=(10, 6))
 plt.plot(x, y, label='Line')
-plt.fill_between(x, y_lower, y_upper, color='b', alpha=0.2, label='Confidence Interval',edgecolor='none')
+plt.fill_between(x, y_lower, y_upper, color='b', alpha=0.2, 
+                label='Confidence Interval',edgecolor='none')
 plt.show()
 '''
-
 
 car_count = 10
 mean_vec = []
@@ -37,27 +34,25 @@ for i in range(20):
     #main.silent_mode_enable()
     main.setup()
     t0 = time()
-    main.solve(save_gif=False,visualize=False,animate=False)
+    main.solve(save_gif=False, visualize=False, animate=False)
     residual_vec_vec.append(main.residual_vec)
-    time_vec.append(time()-t0)
-    print(f'{i}-',end='',flush=True)
+    time_vec.append(time() - t0)
+    print(f'{i}-', end='', flush=True)
 print('')
 
 diverge_count = 0
 
 for residual_vec in residual_vec_vec:
     if (len(residual_vec) == 50):
-        plt.plot(residual_vec,'-')
+        plt.plot(residual_vec, '-')
     else:
         diverge_count += 1
 
 with open('convergence.p', 'wb') as f:
-    pickle.dump(residual_vec_vec,f)
+    pickle.dump(residual_vec_vec, f)
 
 print(f'diverge count {diverge_count}')
 plt.yscale('log')
 plt.xlabel('Iteration')
 plt.ylabel('Residual (exp)')
 plt.show()
-
-
