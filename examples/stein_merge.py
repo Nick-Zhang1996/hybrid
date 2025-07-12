@@ -1,14 +1,19 @@
 """ demo to show SVG can find two equilibriums"""
+import logging
 from time import time
 import numpy as np
 
 from residual_game import ResidualGame
+from stein_game import SteinGame
 from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle  # pylint: disable=no-name-in-module
 
+logger = logging.getLogger("SteinMerge")
+logger.setLevel(logging.INFO)
+
 
 class SteinMerge(CarMergeKinematicBicycle):
-    """ Wrapper for """
+    """ Wrapper for SteinGame version of CarMergeKinematicBicycle"""
     USE_CPP = True
 
     def __init__(self, car_count):
@@ -34,6 +39,7 @@ class SteinMerge(CarMergeKinematicBicycle):
         self.target_y = [1] * (main_lane_n + merge_lane_n)
         """
         super().__init__(car_count, 20)
+        assert isinstance(self, SteinGame)
         self.guess = np.zeros((self.T, self.N, self.m))
         # multiple car merge, car_count: main_lane_n + merge_lane_n
         main_lane_n = min(int(0.67 * car_count), car_count - 1)
@@ -91,59 +97,61 @@ class SteinMerge(CarMergeKinematicBicycle):
 
 
 if __name__ == '__main__':
+    # Solve game for random initial states
     # np.random.seed(2)
-    _car_count = 2
-    main = SteinMerge(car_count=_car_count)
+    car_count = 5
+    main = SteinMerge(car_count=car_count)
     main.setup()
     t0 = time()
     u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
                                                   visualize=True,
                                                   animate=False)
     dt = time() - t0
-    print(f'{dt=}')
+    logger.info(f'Solving {car_count} car merging with {dt=} seconds')
     main.final()
-    print(
+    logger.info(
         f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
     # main.testAnimation()
-    exit(0)
 
-    for i in range(5):
-        main.visualize(main.belief_support[i],
-                       visualize=True,
-                       animate=True,
-                       gif_prefix=f'car_{_car_count}_case_{i}')
+    # Visualize top 5 weighted equilibria
+    #for i in range(5):
+    #    main.visualize(U=main.belief_support[i],
+    #                   visualize=True,
+    #                   animate=True,
+    #                   gif_prefix=f'car_{car_count}_case_{i}')
 
-    # test stein game's prediction
-    chosen_id = 0
-    observed_u_ref = main.belief_support[chosen_id].reshape(
-        (main.T, main.N, main.m))
-    u_size = observed_u_ref.flatten().shape[0]
-    noise = np.random.multivariate_normal(np.zeros(u_size),
-                                          np.diag([1e-4] * u_size)).reshape(
-                                              observed_u_ref.shape)
-    observed_u_ref += noise
+    # Test Stein game's prediction
+    # The Nash Equilibrium chosen by each agent
+    # NOTE: we need to limit the index range to avoid choosing high-residual samples
+    chosen_id_by_agent = np.random.randint(0,
+                                           len(main.belief_support),
+                                           size=car_count)
+    logger.info(chosen_id_by_agent)
+    realized_u_ref_by_agent = []
+    for i, ne_id in enumerate(chosen_id_by_agent):
+        realized_u_ref_by_agent.append(main.belief_support[ne_id].reshape(
+            (main.T, main.N, main.m))[:, i, :])
+    realized_u_ref = np.stack(realized_u_ref_by_agent, axis=1)
+    assert realized_u_ref.shape == (main.T, main.N, main.m)
+    noise = np.random.normal(loc=0, scale=1e-1, size=realized_u_ref.shape)
+    noisy_u_ref = realized_u_ref + noise
 
-    print(
-        f'showing chosen NE, residual = {main.belief_support_residual[chosen_id]}, social cost = {main.belief_support_cost[chosen_id]}'
-    )
-    main.visualize(main.belief_support[chosen_id],
-                   visualize=True,
-                   animate=False,
-                   gif_prefix='before')
-    # Randomly select a NE for "opponent"
+    # Visualize the uncoordinated trajectory
+    main.visualize(U=realized_u_ref,
+                   visualize=False,
+                   gif_prefix='uncoordinated')
+
+    # TODO: find collision count for uncoordinated case
+    # Simulate game, update
     for k in range(main.T // 2):
-        print(f'step {k}')
-        # send the control of the opponent to bayesian
-        main.updateEgo(observed_u_ref[k, :, :], k)
+        main.updateBelief(u_k=noisy_u_ref[k, :, :], k=k)
 
-        # show top 3 scenarios, are they the NE opponent is using?
-        high_likelihood_index = np.argsort(main.belief_weight)[-3:]
-        for i in high_likelihood_index:
-            print(f'showing top 3: id {i},'
-                  f'prob {main.belief_weight[i]:.4f},'
-                  f'residual = {main.belief_support_residual[i]},'
-                  f'social cost = {main.belief_support_cost[i]}')
-            main.visualize(main.belief_support[i],
-                           visualize=True,
-                           animate=False,
-                           gif_prefix='before')
+        # Find statistics on how many agent's intent is correctly estimated
+        correct_estimate_count: int = 0
+        for agent in range(car_count):
+            high_likelihood_indices = np.argsort(
+                main.belief_weight_by_agent[agent])[-3:]
+            if chosen_id_by_agent[agent] in high_likelihood_indices:
+                correct_estimate_count += 1
+        logger.info(
+            f'step {k}, correct estimate {correct_estimate_count}/{car_count}')

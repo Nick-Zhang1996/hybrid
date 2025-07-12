@@ -1,25 +1,36 @@
-# Stein Game logic
+""" Stein Game solver, this calls ResidualGame as a subroutine. Specific game instances 
+should extend this class and implement abstract methods in the ResidualGame subclass, 
+like the system dynamics, constraint function, cost functions, and their derivatives"""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+import logging
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
-import matplotlib.pyplot as plt
 
-from utilities.util import *
 from utilities.time_util import TimeUtil
 from residual_game import ResidualGame
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger("ProfileSteinMerge")
+logger.setLevel(logging.INFO)
+
 
 class SteinGame(ResidualGame):
+    """ Stein Variational Game Solver 
+    Finds the particle-represented distribution of Nash Equilibria in a Differential Dynamic Game.
+    """
 
     @abstractmethod
-    def __init__(self):
+    def __init__(self, *, particles: int = 20, iterations: int = 20):
         super().__init__()
-        self.particles = 20
+        self.particles = particles
+        self.stein_iterations = iterations
         self.epsilon = 1.0  # step size
         self.alpha = 1.0
-        self.stein_iterations = 30
         # theta = u in this version
         self.stein_profiler = TimeUtil(True)
         self.covariance_mtx = None
@@ -55,7 +66,7 @@ class SteinGame(ResidualGame):
                     kernel_val_map[i, j] = kernel_val_map[j, i] = self.kernel(
                         theta[i], theta[j])
             self.stein_profiler.e('kernel map')
-            self.print_info(
+            logger.debug(
                 f'kernel: max:{np.max(kernel_val_map[kernel_val_map<0.999])}')
             # find \nabla_theta log p_posterior(theta|O) for each particle
             posterior_log_grad = []
@@ -111,13 +122,13 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 count = np.sum((np.array(cost_vec) -
                                 np.array(old_cost_vec)) < 0)
-                #self.print_info(f' cost decrease particle ratio : {count/self.particles}')
+                #logger.debug(f' cost decrease particle ratio : {count/self.particles}')
             cost_vec = np.array(cost_vec)
             mean_cost = np.mean(
                 cost_vec[sort_idx[:-int(0.1 * self.particles)]])
-            self.print_debug(f'overall mean cost: ', mean_cost)
+            logger.debug(f'overall mean cost: ', mean_cost)
             min_cost = np.min(cost_vec)
-            self.print_debug(f'min cost: ', min_cost)
+            logger.debug(f'min cost: ', min_cost)
             theta = new_theta
             # DEBUG plot cost
             #plt.hist(cost_vec[sort_idx[:-int(0.1*self.particles)]])
@@ -162,7 +173,7 @@ class SteinGame(ResidualGame):
 
                 good_u_ref.append(u_ref)
                 good_x_ref.append(full_x_ref)
-                self.print_info('converged')
+                logger.debug('converged')
         self.stein_profiler.e('particle refine')
         '''
         good_x_ref = []
@@ -201,7 +212,7 @@ class SteinGame(ResidualGame):
         cov = np.cov( np.vstack([vetted_solution_distance, vetted_particle_distance]).T )
         print(cov)
         '''
-        self.print_info(f'good u_ref {len(good_u_ref)}')
+        logger.debug(f'good u_ref {len(good_u_ref)}')
         if (len(good_u_ref) == 0):
             has_converged = False
         else:
@@ -209,17 +220,18 @@ class SteinGame(ResidualGame):
 
         # form belief
         self.belief_support = np.array(good_u_ref)
-        self.belief_weight = np.array([1 / len(good_u_ref)] * len(good_u_ref))
+        self.belief_weight_by_agent = [
+            np.array([1 / len(good_u_ref)] * len(good_u_ref))
+            for i in range(self.N)
+        ]
         self.belief_x_ref = np.array(good_x_ref)
         # this is actually the residual, we use that as cost in the Stein descent
         self.belief_support_residual = np.array(good_cost_ref)
         # total agent cost, this is the negative social utility
         self.belief_support_cost = np.array(good_agent_cost)
         self.particle_history = np.array(self.particle_history)
-        '''
-        for u_ref in good_u_ref:
-            self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
-        '''
+        #for u_ref in good_u_ref:
+        #    self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
 
         return good_u_ref[0].reshape(self.T, self.N,
                                      self.m), good_x_ref[0], has_converged
@@ -251,11 +263,32 @@ class SteinGame(ResidualGame):
             mask.append(accept)
         return mask
 
-    # given observed state, update belief
-    # u: observed control for all agents at time step k, shape: N*m
-    # k: time step
-    # TODO maybe we should add a prior based on residual (for self.belief_weight)
-    def updateEgo(self, u, k, ego_agent_index=0):
+    def updateBelief(self, *, u_k: np.ndarray, k: int):
+        """
+        Given observed game state, update belief
+
+        Args:
+            u_k: observed control for all agents at time step k, shape: N*m
+            k: time step
+        """
+        #TODO maybe we should add a prior based on residual (for self.belief_weight_by_agent)
+        assert u_k.shape == (self.N, self.m)
+        prob_by_agent = [
+            np.zeros(len(self.belief_support)) for i in range(self.N)
+        ]
+        for agent in range(self.N):
+            for i in range(len(self.belief_support)):
+                reference = self.belief_support[i].reshape(
+                    (self.T, self.N, self.m))[k, agent]
+                prob_by_agent[agent][i] = np.exp(
+                    self.rbf(
+                        u_k[agent],
+                        reference)) * self.belief_weight_by_agent[agent][i]
+            self.belief_weight_by_agent[agent] = prob_by_agent[agent] / np.sum(
+                prob_by_agent[agent])
+        return
+
+    def updateEgo(self, *, u, k, ego_agent_index=0):
         u = u.reshape((self.N, self.m))
         u_others = np.concatenate(
             [u[:ego_agent_index], u[ego_agent_index + 1:]])
@@ -301,7 +334,7 @@ class SteinGame(ResidualGame):
         #mu_ref = np.zeros((T,N,N))
         lambda_ref = dual[:T * N * n].reshape((T, N, n))
         mu_ref = dual[T * N * n:].reshape((T, N, N))
-        '''
+        """
         _x_ref = x_ref; _u_ref = u_ref
         try:
             for i in range(30):
@@ -309,9 +342,9 @@ class SteinGame(ResidualGame):
                 new_x_ref, new_u_ref, lambda_ref, mu_ref = [np.array(val) for val in retval]
                 _x_ref = new_x_ref; _u_ref = new_u_ref
         except StopIteration as e:
-            #self.print_info(e)
+            #logger.debug(e)
             new_x_ref = _x_ref; new_u_ref = _u_ref
-        '''
+        """
         try:
             if (self.USE_CPP):
                 retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
@@ -321,7 +354,7 @@ class SteinGame(ResidualGame):
                 np.array(val) for val in retval
             ]
         except StopIteration as e:
-            #self.print_info(e)
+            logger.debug(e)
             new_x_ref = x_ref
             new_u_ref = u_ref
 
