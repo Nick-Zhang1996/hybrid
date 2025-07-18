@@ -10,8 +10,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
+
 logger = logging.getLogger("ProfileSteinMerge")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 if __name__ == "__main__":
     data = []
@@ -26,7 +27,7 @@ if __name__ == "__main__":
             main.silent_mode_enable()
             main.setup()
             t0 = time.time()
-            retval = main.solve(save_gif=False, visualize=False, animate=False)
+            retval = main.solve()
             u_ref, full_x_ref, has_converged = retval
             dt = time.time() - t0
             solution_time_vec.append(dt)

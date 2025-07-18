@@ -46,9 +46,7 @@ if __name__ == '__main__':
             main = SteinMerge(car_count=car_count)
             main.silent_mode_enable()
             main.setup()
-            u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
-                                                          visualize=False,
-                                                          animate=False)
+            u_ref, full_x_ref, has_converged = main.solve()
             #main.final()
             # Case 1: what if just randomly pick two solutions, no coordination
             # ego agent
@@ -92,7 +90,7 @@ if __name__ == '__main__':
             for k in range(main.T):
                 # send the control of the opponent to bayesian,
                 # we include ego agent's u_ref here to keep dimension, it's unused
-                main.update(observed_u_ref[k, :, :], k)  # pylint: disable=no-member
+                main.updateBelief(observed_u_ref[k, :, :], k)  # pylint: disable=no-member
                 # maximum likelihood NE:w
                 max_likelihood_index = np.argsort(main.belief_weight)[-1:]
                 this_u_ref = main.belief_support[max_likelihood_index].reshape(

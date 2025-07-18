@@ -111,14 +111,14 @@ class PrintObject:
 
     def __init__(self):
         #print_ok(self.prefix() + "in use")
-        #self.debug = False
+        #self.DEBUG = False
         pass
 
     def print_debug_enable(self):
-        self.debug = True
+        self.DEBUG = True
 
     def print_debug_disable(self):
-        self.debug = False
+        self.DEBUG = False
 
     def silent_mode_enable(self):
         self.silent = True
@@ -143,7 +143,7 @@ class PrintObject:
         if (self.silent):
             return
         # yellow
-        if (self.debug):
+        if (self.config.DEBUG):
             print('\033[93m', self.prefix(),
                   inspect.stack()[1][3], *message, '\033[0m')
 
