@@ -20,21 +20,19 @@ from matplotlib.patches import Rectangle
 from utilities.util import *
 from utilities.time_util import TimeUtil
 from LQGameSolver import my_solve_lq_game
+from typing import NamedTuple
+
+
+class LQGameConfig(NamedTuple):
+    tolerance: float = 5e-4
+    iterations: int = 100
 
 
 class LQGame(PrintObject):
-    DEBUG = False
-    USE_CPP = False
-    FORCE_PYTHON_SOLVER = False
-    CPP_DEBUG = False
 
     def __init__(self):
-        # parameters
-        self.tolerance = 5e-4
         # penalty on dx
         self.normalization_cost = 100
-        # Max iterations
-        self.iterations = 100
 
         # NOTE: These parameters depend on the actual problem and will be overridden in subclass
         self.N = None
@@ -86,7 +84,7 @@ class LQGame(PrintObject):
 
         while True:
             t.s()
-            if i == self.iterations:  # NOTE: Adjust to whatever max iteration desired
+            if i == self.config.iterations:  # NOTE: Adjust to whatever max iteration desired
                 self.print_ok('iteration limit reached, now stopping')
                 break
             try:
@@ -250,7 +248,7 @@ class LQGame(PrintObject):
             if iteration >= 3:
                 norm_a = np.linalg.norm(np.array(x_ref) - np.array(full_x[-1]))
                 norm_b = np.linalg.norm(np.array(x_ref) - np.array(full_x[-2]))
-                if norm_a <= self.tolerance and norm_b <= self.tolerance:
+                if norm_a <= self.config.tolerance and norm_b <= self.config.tolerance:
                     raise StopIteration
 
         return x_ref, u_ref, Ps, alphas, full_x
