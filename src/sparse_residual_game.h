@@ -7,10 +7,13 @@
 #include <Eigen/SparseCore>
 #include <fstream>
 #include <iostream>
+#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <stdexcept>
 #include <string.h>
 #include <string>
+
+namespace py = pybind11;
 
 // get virtual memory currently used by this process
 // #include "stdlib.h"
@@ -139,7 +142,7 @@ protected:
   int max_iterations;
   // dim: N*n
   Matrix x0;
-  mutable Profiler<true> profiler;
+  mutable Profiler<false> profiler;
   int current_memory_usage_kb;
   bool verbose;
 
@@ -1340,6 +1343,7 @@ public:
     // additional_memory_usage_kb << "KB" << std::endl;
 
     // cout << "step()" << endl;
+    py::gil_scoped_release release;
     const auto h_plus_mask = getHplusMask(x);
     int h_plus_sum = 0;
     for (const auto &mask : h_plus_mask) {
