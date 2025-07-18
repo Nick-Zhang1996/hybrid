@@ -10,7 +10,7 @@ from matplotlib.patches import Rectangle
 from utilities.util import *
 from utilities.time_util import TimeUtil
 from src.build.unstructured_driving import UnstructuredDriving as cpp_UnstructuredDriving
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 
 
 # example: unstructured lane change
@@ -18,7 +18,7 @@ from residual_game import ResidualGame
 # this version use U as decision variable only
 class UnstructuredDriving(ResidualGame):
 
-    def __init__(self, car_count=3):
+    def __init__(self, config: ResidualGameConfig, car_count=3):
         super().__init__()
 
         # u_i = [ax,ay] longitudinal, lateral acceleration
@@ -80,25 +80,25 @@ class UnstructuredDriving(ResidualGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.cpp = cpp_UnstructuredDriving(
                 self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
-                self.bc_b, self.tolerance, self.backtracking_max_iter,
+                self.bc_b, self.config.tolerance, self.backtracking_max_iter,
                 self.J_Qr, self.J_Q, self.J_R, self.A, self.B, self.h_Qh,
-                self.target_y, self.iterations, False)
+                self.target_y, self.config.iterations, False)
             self.cpp.set_x0(self.x0)
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         ax.vlines(x=-self.track_width / 2, ymin=-1, ymax=self.track_length)
         ax.vlines(x=self.track_width / 2, ymin=-1, ymax=self.track_length)
         for i in range(self.N):
-            xx = X[:, i, 0]
-            yy = X[:, i, 1]
+            xx = x[:, i, 0]
+            yy = x[:, i, 1]
             plt.plot(yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
@@ -159,12 +159,12 @@ class UnstructuredDriving(ResidualGame):
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -172,11 +172,11 @@ class UnstructuredDriving(ResidualGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -184,20 +184,20 @@ class UnstructuredDriving(ResidualGame):
 
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         val = 2 * u_k_i.T @ self.J_R
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -205,10 +205,10 @@ class UnstructuredDriving(ResidualGame):
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         val = 2 * self.J_Qr + 2 * self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -242,73 +242,73 @@ class UnstructuredDriving(ResidualGame):
 
     def h(self, x_i, x_j):
         ''' car distance larger than 1.0 '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.h(x_i, x_j)
         #return (x_i-x_j).T @ self.h_Qh @ (x_i-x_j) + 1.0**2
         # below is faster
         #return -(x_i[0]-x_j[0])**2 - (x_i[1]-x_j[1])**2 + 1.0**2
         val = -(x_i[0] - x_j[0])**2 - (x_i[1] - x_j[1])**2 + 1.2**2
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.h(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi(x_i, x_j)
         val = 2 * (x_i - x_j).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj(x_i, x_j)
         val = 2 * (x_j - x_i).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxi(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxi(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxj(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxj(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -316,7 +316,7 @@ class UnstructuredDriving(ResidualGame):
 
 
 if __name__ == "__main__":
-    main = UnstructuredDriving()
+    main = UnstructuredDriving(ResidualGameConfig())
     main.setup()
     main.solve(save_gif=False, visualize=True)
     main.final()

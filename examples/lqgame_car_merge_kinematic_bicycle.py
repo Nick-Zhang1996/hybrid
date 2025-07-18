@@ -117,7 +117,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         #raise NotImplementedError
         return
 
-    def _visualize(self, U, X=None):
+    def _visualize(self, u, x=None):
         """Plots the track and trajectories of the cars and then shows the visualization.
 
         Args:
@@ -127,10 +127,10 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         Returns:
             plotted visualization of the simulated road
         """
-        if (X is None):
-            X = np.vstack(
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         ax.vlines(x=-self.track_width,
                   ymin=self.visual_y_lim[0],
@@ -143,8 +143,8 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
             ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
         for i in range(self.N):
-            xx = X[:, i, 0]
-            yy = X[:, i, 1]
+            xx = x[:, i, 0]
+            yy = x[:, i, 1]
             plt.plot(-yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
@@ -305,12 +305,12 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -318,7 +318,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
@@ -326,7 +326,7 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
         #     print('x_k[i]: ', x_k[i])
         #     print('y diff: ', x_k[i][1] - self.J_x_ref_fun(i)[1])
         #     print('val: ', val)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -334,20 +334,20 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         val = 2 * u_k_i.T @ self.J_R
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -355,10 +355,10 @@ class LQGame_CarMergeKinematicBicycle(LQGame):
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         val = 2 * self.J_Qr + 2 * self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()

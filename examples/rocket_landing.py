@@ -13,16 +13,13 @@ from scipy.ndimage import rotate
 from utilities.util import *
 #from utilities.TimeUtil import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 
 
 class RocketLanding(ResidualGame):
-    DEBUG = False
-    USE_CPP = False
-    FORCE_PYTHON_SOLVER = False
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: ResidualGameConfig()):
+        super().__init__(config)
 
         # agent 0: rocket
         # x: [x,y,theta, vx,vy,omega]
@@ -94,7 +91,7 @@ class RocketLanding(ResidualGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             raise RuntimeError
             self.cpp = cpp_CarMergeKinematicBicycle(self.N, self.T, self.dt,
                                                     self.rho, self.rho_b,
@@ -105,26 +102,26 @@ class RocketLanding(ResidualGame):
             self.cpp.set_x0(self.x0)
 
     # TODO
-    def _visualize(self, U, X=None):
+    def _visualize(self, u, x=None):
         rocket_scale = 0.01 / 2  # for rocket size
         ship_scale = 0.01 / 2  # for ship size
 
-        if (X is None):
-            X = np.vstack(
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         rollout_X = np.vstack(
             [self.x0[np.newaxis, :, :],
-             self.rollout(self.x0, U)])
+             self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
 
         ax.hlines(y=0, xmin=self.visual_x_lim[0], xmax=self.visual_x_lim[1])
         # agent 0, rocket
-        xx_0 = X[:, 0, 0]
-        yy_0 = X[:, 0, 1]
+        xx_0 = x[:, 0, 0]
+        yy_0 = x[:, 0, 1]
         plt.plot(yy_0, -xx_0, '*-')
         # plot initial pose
-        pose_0 = X[0, 0]
+        pose_0 = x[0, 0]
         rotated_rocket_img = rotate(self.rocket_img,
                                     degrees(pose_0[2]),
                                     reshape=True)
@@ -137,7 +134,7 @@ class RocketLanding(ResidualGame):
                       -pose_0[0] + L * rocket_scale
                   ])
         # plot final pose
-        pose_0 = X[-1, 0]
+        pose_0 = x[-1, 0]
         rotated_rocket_img = rotate(self.rocket_img,
                                     degrees(pose_0[2]),
                                     reshape=True)
@@ -151,10 +148,10 @@ class RocketLanding(ResidualGame):
                   ])
 
         # agent 1: ship
-        yy_1 = X[:, 1, 0]
+        yy_1 = x[:, 1, 0]
         plt.plot(yy_1, np.zeros_like(yy_1), '*-')
         # plot initial pose
-        pose_0 = X[0, 1]
+        pose_0 = x[0, 1]
         L, W, _ = self.ship_img.shape
         ax.imshow(self.ship_img,
                   extent=[
@@ -162,7 +159,7 @@ class RocketLanding(ResidualGame):
                       -L * ship_scale, +L * ship_scale
                   ])
         # plot final pose
-        pose_0 = X[-1, 1]
+        pose_0 = x[-1, 1]
         L, W, _ = self.ship_img.shape
         ax.imshow(self.ship_img,
                   extent=[
@@ -251,7 +248,7 @@ class RocketLanding(ResidualGame):
         u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         if (i == 0):
             dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
@@ -262,7 +259,7 @@ class RocketLanding(ResidualGame):
             val = x_k[1].T @ self.Q_S @ x_k[
                 1] + u_k_i.T @ self.R_S @ u_k_i + dx.T @ self.Q_D @ dx
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -272,7 +269,7 @@ class RocketLanding(ResidualGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         if (i == 0):
             dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
@@ -281,11 +278,11 @@ class RocketLanding(ResidualGame):
             dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
             val = 2 * x_k[1] @ self.Q_S - 2 * dx.T @ self.Q_D @ self.P_S
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             if (i == 0):
                 num = jacobianNumerical(
                     lambda xi: self.J(np.vstack([xi, x_k[1]]), u_k_i, i),
@@ -299,7 +296,7 @@ class RocketLanding(ResidualGame):
 
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         if (i == 0 and j == 1):
             dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
@@ -308,11 +305,11 @@ class RocketLanding(ResidualGame):
             dx = self.P_R @ x_k[0] - self.P_S @ x_k[1]
             val = 2 * dx.T @ self.Q_D @ self.P_R
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             if (i == 0 and j == 1):
                 num = jacobianNumerical(
                     lambda xj: self.J(np.vstack([x_k[0], xj]), u_k_i, i),
@@ -325,31 +322,31 @@ class RocketLanding(ResidualGame):
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         if (i == 0):
             val = 2 * u_k_i.T @ self.R_R
         elif (i == 1):
             val = 2 * u_k_i.T @ self.R_S
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda xi: self.J(x_k, u_k_i, i), u_k_i)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         if (i == 0):
             val = 2 * self.Q_R + 2 * self.P_R.T @ self.Q_D @ self.P_R
         elif (i == 1):
             val = 2 * self.Q_S + 2 * self.P_S.T @ self.Q_D @ self.P_S
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -402,7 +399,7 @@ class RocketLanding(ResidualGame):
             A[0, 1] = 1
 
         val = np.eye(self.n) + A * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
@@ -421,7 +418,7 @@ class RocketLanding(ResidualGame):
             B = np.zeros((self.n, self.m))
             B[1, 0] = 1
         val = B * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
@@ -458,8 +455,8 @@ class RocketLanding(ResidualGame):
 
 
 if __name__ == "__main__":
-    main = RocketLanding()
+    main = RocketLanding(ResidualGameConfig())
     main.setup()
-    main.solve(save_gif=False, visualize=True, animate=True)
+    main.solve()
     main.final()
     #main.testAnimation()

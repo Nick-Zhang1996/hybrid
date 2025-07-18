@@ -1,14 +1,14 @@
 import numpy as np
 from time import time
 from examples.unstructured_driving import UnstructuredDriving
+from residual_game import ResidualGameConfig
 import matplotlib.pyplot as plt
 
 
 class CarCrossingDoubleIntegrator(UnstructuredDriving):
-    USE_CPP = False
 
-    def __init__(self, car_count=4):
-        super().__init__(car_count=car_count)
+    def __init__(self, config: ResidualGameConfig, car_count=4):
+        super().__init__(config, car_count=car_count)
         self.T = 15
         v_car_count = int(car_count / 2)
         h_car_count = car_count - v_car_count
@@ -56,17 +56,17 @@ class CarCrossingDoubleIntegrator(UnstructuredDriving):
         #(x-self.J_x_ref_fun(i)).T @ self.J_Qr @ (x-self.J_x_ref_fun(i)) + x.T @ self.J_Q @ x + u.T @ self.J_R @ u
         self.guess = np.zeros((self.T, self.N, self.m))
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         #ax.vlines(x=-self.track_width/2,ymin=-1,ymax=self.track_length)
         #ax.vlines(x=self.track_width/2,ymin=-1,ymax=self.track_length)
         for i in range(self.N):
-            xx = X[:, i, 0]
-            yy = X[:, i, 1]
+            xx = x[:, i, 0]
+            yy = x[:, i, 1]
             plt.plot(yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
@@ -95,9 +95,9 @@ class CarCrossingDoubleIntegrator(UnstructuredDriving):
 
 
 if __name__ == "__main__":
-    main = CarCrossingDoubleIntegrator(10)
+    main = CarCrossingDoubleIntegrator(ResidualGameConfig(), 10)
     t0 = time()
-    main.solve(save_gif=True, visualize=True, animate=True)
+    main.solve()
     print(f'solution time: {time()-t0}')
     print(f'collisions: {main.violations}')
     main.final()

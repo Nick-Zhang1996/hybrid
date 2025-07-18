@@ -4,12 +4,12 @@ from examples.car_racing import CarRacing
 from math import radians, degrees
 import matplotlib.pyplot as plt
 import numpy as np
+from residual_game import ResidualGameConfig
 
 
 class CarRacingMpc(CarRacing):
-    USE_CPP = False
 
-    def __init__(self):
+    def __init__(self, config: ResidualGameConfig):
         super().__init__()
         self.T = 40
 
@@ -44,11 +44,11 @@ class CarRacingMpc(CarRacing):
 
         self.T = len(u_vec)
         self._animation(u_vec, X=x_vec, gif_prefix='car_racing_mpc')
-        self._visualize(u_vec, X=x_vec)
+        self._visualize(u_vec, x=x_vec)
         plt.show()
 
 
 if __name__ == "__main__":
-    main = CarRacingMpc()
+    main = CarRacingMpc(ResidualGameConfig())
     main.setup()
     main.simulate()

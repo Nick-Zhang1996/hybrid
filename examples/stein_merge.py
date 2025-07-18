@@ -3,8 +3,8 @@ import logging
 from time import time
 import numpy as np
 
-from residual_game import ResidualGame
-from stein_game import SteinGame
+from residual_game import ResidualGame, ResidualGameConfig
+from stein_game import SteinGame, SteinGameConfig
 from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle  # pylint: disable=no-name-in-module
 
@@ -14,9 +14,8 @@ logger.setLevel(logging.INFO)
 
 class SteinMerge(CarMergeKinematicBicycle):
     """ Wrapper for SteinGame version of CarMergeKinematicBicycle"""
-    USE_CPP = True
 
-    def __init__(self, car_count):
+    def __init__(self, config: SteinGameConfig, car_count: int):
         """
         super().__init__(car_count=2)
         main_lane_n = 1
@@ -64,18 +63,18 @@ class SteinMerge(CarMergeKinematicBicycle):
         ]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1] * (main_lane_n + merge_lane_n)
-        self.stein_iterations = 20
-        self.particles = 20
+        self.config.stein_iterations = 20
+        self.config.particles = 20
         self.cpp = None
 
     def setup(self):
         """ Instantiate cpp/eigen module and set initial condition"""
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.cpp = cpp_CarMergeKinematicBicycle(
                 self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
-                self.bc_b, self.tolerance, self.backtracking_max_iter,
+                self.bc_b, self.config.tolerance, self.backtracking_max_iter,
                 self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,
-                self.collision_radius, self.iterations, False)
+                self.collision_radius, self.config.iterations, False)
             self.cpp.set_x0(self.x0)
 
     def TestSolve(self, save_gif=False, visualize=False, animate=False):
@@ -100,12 +99,10 @@ if __name__ == '__main__':
     # Solve game for random initial states
     # np.random.seed(2)
     car_count = 5
-    main = SteinMerge(car_count=car_count)
+    main = SteinMerge(SteinGameConfig(), car_count=car_count)
     main.setup()
     t0 = time()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
-                                                  visualize=True,
-                                                  animate=False)
+    u_ref, full_x_ref, has_converged = main.solve()
     dt = time() - t0
     logger.info(f'Solving {car_count} car merging with {dt=} seconds')
     main.final()
@@ -137,9 +134,7 @@ if __name__ == '__main__':
     noisy_u_ref = realized_u_ref + noise
 
     # Visualize the uncoordinated trajectory
-    main.visualize(U=realized_u_ref,
-                   visualize=False,
-                   gif_prefix='uncoordinated')
+    main.visualize(u=realized_u_ref, gif_prefix='uncoordinated')
 
     # TODO: find collision count for uncoordinated case
     # Simulate game, update

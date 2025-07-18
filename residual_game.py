@@ -2,11 +2,14 @@
 # for an example of a subclass, see UnstructuredDriving.py
 
 import os
+from functools import lru_cache
 import numpy as np
+import logging
 from time import time
 from abc import ABC, abstractmethod
 from scipy import interpolate
 import scipy.sparse  # sparse matrix operations
+from typing import NamedTuple
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -21,19 +24,28 @@ from utilities.time_util import TimeUtil
 # TODO for cpp, change gradient for barrier function to cap at 1e20 instead of 1e10
 # TODO we should maybe build a map for h(xi, xj) values
 
+logger = logging.getLogger("ResidualGame")
+logger.setLevel(logging.INFO)
+
+
+class ResidualGameConfig(NamedTuple):
+    """ Configs for Residual Game """
+    USE_CPP: bool = False
+    CPP_DEBUG: bool = False
+    DEBUG: bool = False
+    FORCE_PYTHON_SOLVER: bool = False
+    tolerance: float = 5e-4
+    iterations: int = 30
+
 
 class ResidualGame(PrintObject, ABC):
-    DEBUG = False
-    USE_CPP = True
-    FORCE_PYTHON_SOLVER = False
-    CPP_DEBUG = False
 
     @abstractmethod
-    def __init__(self):
+    def __init__(self, config: ResidualGameConfig):
         ''' example of a constructor '''
         # application specific parameters, to be overridden in subclass
         # the numbers here are arbitrary
-
+        self.config = config
         # number of agents
         self.N = 0
         # horizon length, excluding x0
@@ -50,8 +62,6 @@ class ResidualGame(PrintObject, ABC):
         # initialize default parameters
         self.init()
 
-        # max iterations
-        self.iterations = 50
         self.guess = np.zeros((self.T, self.N, self.m))
 
     def init(self):
@@ -71,25 +81,24 @@ class ResidualGame(PrintObject, ABC):
         # solver variables
         self.frame_vec = []
         self.profiler = TimeUtil(False)
-        #self.print_debug_enable()
-        self.tolerance = 5e-4
+        #logger.debug_enable()
         self.residual_vec = []
 
     def setup(self):
         # subclass responsible for loading specific cpp/eigen module
         # and setting x0
-        self.print_info(
+        logger.info(
             " ---------------------------------------------------------------------------- "
         )
-        self.print_info(
+        logger.info(
             " subclass did not define custom setup function, cpp module likely unavailable "
         )
-        self.print_info(
+        logger.info(
             " ---------------------------------------------------------------------------- "
         )
         # example usage:
         '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             self.cpp = ParticleGame(...)
             self.cpp.set_x0(self.x0)
         '''
@@ -112,7 +121,7 @@ class ResidualGame(PrintObject, ABC):
                 np.array(val) for val in retval[:-1]
             ]
             has_converged = retval[-1]
-            self.print_ok(f'sample {i} has_converged: {has_converged}')
+            logger.debug(f'sample {i} has_converged: {has_converged}')
 
             # check residual
             h_plus_mask = self.getHplusMask(x_ref)
@@ -120,18 +129,18 @@ class ResidualGame(PrintObject, ABC):
             r0_norm = np.linalg.norm(r0)
             if (r0_norm < best_residual):
                 best_residual = r0_norm
-            self.print_debug(
+            logger.debug(
                 f' residual = {r0_norm}, current best = {best_residual}')
 
             if (has_converged):
-                self.print_ok(f'found a solution at sample {i}')
+                logger.debug(f'found a solution at sample {i}')
                 break
 
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
         return u_ref, full_x_ref, has_converged
 
     def cpp_solve(self, save_gif=False, visualize=False, animate=False):
-        self.print_ok(f'solve using cpp.solve()')
+        logger.debug(f'solve using cpp.solve()')
         u_ref = self.guess
         t0 = time()
         retval = self.cpp.solve(u_ref)
@@ -139,15 +148,15 @@ class ResidualGame(PrintObject, ABC):
             np.array(val) for val in retval[:-1]
         ]
         has_converged = retval[-1]
-        self.print_ok(f'has_converged: {has_converged}')
+        logger.debug(f'has_converged: {has_converged}')
         t_solve = time() - t0
-        self.print_info(f'Total solve time: {t_solve}s')
+        logger.info(f'Total solve time: {t_solve}s')
 
         # FIXME debug - check residual
         h_plus_mask = self.getHplusMask(x_ref)
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         r0_norm = np.linalg.norm(r0)
-        self.print_debug(f' residual = {r0_norm}')
+        logger.debug(f' residual = {r0_norm}')
         self.visualize(u_ref,
                        visualize=visualize,
                        animate=animate,
@@ -163,15 +172,15 @@ class ResidualGame(PrintObject, ABC):
             I forgot why I did the fallback
         '''
         #TODO does cpp lscg fallback to cpp sparseQR?
-        self.print_ok(f'USE_CPP: {self.USE_CPP}')
-        self.print_ok(f'FORCE_PYTHON_SOLVER: {self.FORCE_PYTHON_SOLVER}')
+        logger.info(f'USE_CPP: {self.config.USE_CPP}')
+        logger.info(f'FORCE_PYTHON_SOLVER: {self.config.FORCE_PYTHON_SOLVER}')
 
         N = self.N
         T = self.T
         n = self.n
         m = self.m
         # y: x(T*N*n) ,u(T*N*m), lambda(T,N,n),mu(T,N,N)
-        self.print_debug(
+        logger.debug(
             f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}'
         )
 
@@ -189,10 +198,10 @@ class ResidualGame(PrintObject, ABC):
         t0 = time()
         t = self.profiler
         has_converged = False
-        for i in range(self.iterations):
-            self.print_info(f'------ iter {i+1} ------')
+        for i in range(self.config.iterations):
+            logger.info(f'------ iter {i+1} ------')
             t.s()
-            if (self.USE_CPP and not self.FORCE_PYTHON_SOLVER):
+            if (self.config.USE_CPP and not self.config.FORCE_PYTHON_SOLVER):
                 t.s('cpp step')
                 try:
                     try:
@@ -204,15 +213,13 @@ class ResidualGame(PrintObject, ABC):
                         # put update here because in case solver failed, self.step() will call cpp.post_step_update()
                         self.cpp.post_step_update()
                     except RuntimeError as e:
-                        self.print_warning(
-                            '-----------------------------------')
-                        self.print_warning(f'cpp.step() error: {e}')
-                        self.print_warning(
-                            '-----------------------------------')
+                        logger.warning('-----------------------------------')
+                        logger.warning(f'cpp.step() error: {e}')
+                        logger.warning('-----------------------------------')
                         x_ref, u_ref, lambda_ref, mu_ref = self.step(
                             x_ref, u_ref, lambda_ref, mu_ref)
                 except StopIteration as e:
-                    self.print_ok(e)
+                    logger.debug(e)
                     if 'criteria met' in str(e):
                         has_converged = True
                     break
@@ -223,18 +230,18 @@ class ResidualGame(PrintObject, ABC):
                     x_ref, u_ref, lambda_ref, mu_ref = self.step(
                         x_ref, u_ref, lambda_ref, mu_ref)
                 except StopIteration as e:
-                    self.print_ok(e)
+                    logger.debug(e)
                     has_converged = True
                     break
             # NOTE may not be necessary
             x_ref = self.rollout(self.x0, u_ref)
             t.e()
-            self.print_info(f'------ {N} agents, iter {i} ------')
+            logger.debug(f'------ {N} agents, iter {i} ------')
 
         t_solve = time() - t0
-        self.print_info(f'Total solve time: {t_solve}s')
-        if (i == self.iterations - 1):
-            self.print_warning(f' algorithm did not reach stopping criterion ')
+        logger.info(f'Total solve time: {t_solve}s')
+        if (i == self.config.iterations - 1):
+            logger.warning(f' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
         self.visualize(u_ref,
                        full_x_ref,
@@ -258,12 +265,12 @@ class ResidualGame(PrintObject, ABC):
             M = self.dLLi_dxi_dx(x_ref, u_ref, h_plus_mask, lambda_ref, mu_ref,
                                  i)[:, idx]
             pde = not np.all(np.linalg.eigvals(M) < 1e-3)
-            self.print_info(f'{i} eig val: {np.linalg.eigvals(M)}')
+            logger.debug(f'{i} eig val: {np.linalg.eigvals(M)}')
             # check the second order condition for J at each time step
             '''
             for k in range(self.T):
                 H = self.dJfi_dxi_dxi(x_ref[k], i)
-                self.print_info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
+                logger.info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
             '''
             has_converged = pde and has_converged
         #r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
@@ -301,11 +308,11 @@ class ResidualGame(PrintObject, ABC):
         Dr = self.dr_dy(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         # after we remove the cols associated with unused mu, Dr will be square
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             t0 = time()
             Dr_alt = jacobianNumerical(r_y_fun, y0, dim=r0.shape[0])
-            self.print_debug(f't: Dr numerical {time()-t0}')
-            self.print_debug(np.linalg.norm(Dr - Dr_alt))
+            logger.debug(f't: Dr numerical {time()-t0}')
+            logger.debug(np.linalg.norm(Dr - Dr_alt))
             assert (np.linalg.norm(Dr - Dr_alt) < 1e-4)
 
         # find newton direction, dense matrix
@@ -347,7 +354,7 @@ class ResidualGame(PrintObject, ABC):
         reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(
             sparse_Dr, -r0[nonzero_rows])[:4]
         t.e('reduced-sparse-lstsq')
-        self.print_debug(
+        logger.debug(
             f'Solver status: {"exact solution" if istop==1 else "Least Square Solution"}, iterations: {itn}'
         )
         # use cpp's sparse QR
@@ -359,7 +366,7 @@ class ResidualGame(PrintObject, ABC):
 
         # use cpp's lscg (fastest)
         '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             t.s('cpp lscg')
             reduced_dy = reduced_dy_lscg = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
             t.e('cpp lscg')
@@ -369,11 +376,11 @@ class ResidualGame(PrintObject, ABC):
         dy[nonzero_cols] = reduced_dy.flatten()
         '''
         # FIXME DEBUG - statistics on nonzero entries
-        self.print_debug(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
-        self.print_debug(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
+        logger.debug(f'nonzero rows: {len(nonzero_rows)}, ratio {len(nonzero_rows)/Dr.shape[0]}')
+        logger.debug(f'nonzero cols: {len(nonzero_cols)}, ratio {len(nonzero_cols)/Dr.shape[1]}')
         total_entries = Dr.shape[0]*Dr.shape[1]
         nonzero_entries = len(np.nonzero(Dr.flatten())[0])
-        self.print_debug(f' nonzero entries:  {nonzero_entries/total_entries}')
+        logger.debug(f' nonzero entries:  {nonzero_entries/total_entries}')
         '''
 
         # projection onto dynamics null space
@@ -415,9 +422,9 @@ class ResidualGame(PrintObject, ABC):
 
                 apriori = Fu @ du_i + Fx @ dx_i
                 posterior = Fu @ du_i_after + Fx @ dx_i_after
-                #self.print_debug(f'dynamics correction residuals {np.linalg.norm(apriori)} -> {np.linalg.norm(posterior)}')
-                #self.print_debug(f'du change {np.linalg.norm(dy[u_indices]-du_i_after)}')
-                #self.print_debug(f'dx change {np.linalg.norm(dy[x_indices]-dx_i_after)}')
+                #logger.debug(f'dynamics correction residuals {np.linalg.norm(apriori)} -> {np.linalg.norm(posterior)}')
+                #logger.debug(f'du change {np.linalg.norm(dy[u_indices]-du_i_after)}')
+                #logger.debug(f'dx change {np.linalg.norm(dy[x_indices]-dx_i_after)}')
                 dy[u_indices] = du_i_after
                 dy[x_indices] = dx_i_after
                 index += n * T + np.sum(h_plus_mask[:, i])
@@ -450,16 +457,16 @@ class ResidualGame(PrintObject, ABC):
         # debug
         new_x_ref,new_u_ref,new_lambda,new_mu = split_y(y_new)
         after_h_res = self.getCollisionResidual(new_x_ref)
-        self.print_debug(f'after dyn correction before h_res = {apriori_h_res} -> after {after_h_res}')
+        logger.debug(f'after dyn correction before h_res = {apriori_h_res} -> after {after_h_res}')
         '''
 
         index = 0
         h_plus_violations = 0
 
         # FIXME debug
-        self.print_debug(' r_0 breakdown ')
+        logger.debug(' r_0 breakdown ')
         for i in range(self.N):
-            self.print_debug(f'agent {i}')
+            logger.debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r0[index:index + n * T])
             index += n * T
             dLL_du_res = np.linalg.norm(r0[index:index + m * T])
@@ -467,7 +474,7 @@ class ResidualGame(PrintObject, ABC):
             fx_res = np.linalg.norm(r0[index:index + n * T])
             index += n * T
             index += np.sum(h_plus_mask[:, i])
-            self.print_debug(
+            logger.debug(
                 f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.8f}, h_plus {np.sum(h_plus_mask[:,i])}'
             )
 
@@ -476,9 +483,9 @@ class ResidualGame(PrintObject, ABC):
         #self.rho = 1e4
         index = 0
         h_plus_violations = 0
-        # self.print_debug(f' r_t breakdown, step = {step} ')
+        # logger.debug(f' r_t breakdown, step = {step} ')
         for i in range(self.N):
-            self.print_debug(f'agent {i}')
+            logger.debug(f'agent {i}')
             dLL_dx_res = np.linalg.norm(r_t[index:index + n * T])
             index += n * T
             dLL_du_res = np.linalg.norm(r_t[index:index + m * T])
@@ -486,7 +493,7 @@ class ResidualGame(PrintObject, ABC):
             fx_res = np.linalg.norm(r_t[index:index + n * T])
             index += n * T
             index += np.sum(h_plus_mask[:, i])
-            self.print_debug(
+            logger.debug(
                 f'dLL_dx {dLL_dx_res:.4f}, dLL_du {dLL_du_res:.4f}, fx {fx_res:.8f}, h_plus {np.sum(h_plus_mask[:,i])}'
             )
         self.rho = original_rho
@@ -496,7 +503,7 @@ class ResidualGame(PrintObject, ABC):
         try:
             diff = self.rollout(self.x0, new_u_ref) - new_x_ref
             dyn_res = np.linalg.norm(diff)
-            self.print_debug(f'dynamics residual {dyn_res}')
+            logger.debug(f'dynamics residual {dyn_res}')
             r_diff = np.abs(self.old_rt - r0)>1e-8
         except AttributeError:
             pass
@@ -509,26 +516,44 @@ class ResidualGame(PrintObject, ABC):
         self.violations = violations = np.sum(h_plus_mask) / 2
         expected_posterior_norm = np.linalg.norm(r0 + Dr @ dy)
 
-        self.print_debug(
+        logger.debug(
             f'r0_norm {r0_norm} expected full step {expected_posterior_norm} rt_norm {r_t_norm}, h>0 {violations}'
         )
 
         # stopping criterion
-        if (np.abs(r_t_norm) < self.tolerance and violations == 0):
+        if (np.abs(r_t_norm) < self.config.tolerance and violations == 0):
             raise StopIteration('stopping criterion met!')
         if (flag_no_step):
             raise StopIteration('iteration not making progress')
 
         self.rho *= self.rho_b
 
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             # normally we won't reach here because we'd use  the cpp.step(),
             # but if we are only using the "subfunctions", then this will be called
             self.cpp.post_step_update()
 
         return split_y(y_new)
 
-    def rollout(self, x0: np.ndarray, U: np.ndarray):
+    def rollout(self, x0: np.ndarray, u: np.ndarray):
+        """ Rollout control to get state trajectory (cached)
+        Args:
+            x0: (N,m)
+            u: (T,N,m), u0..u_T-1, will be reshaped
+        Return:
+            X: (T,N,n) x1..xT
+        """
+        x0_tuple = tuple(x0.flatten())
+        u_tuple = tuple(u.flatten())
+        return self._rollout_cached(x0_tuple, u_tuple)
+
+    @lru_cache(maxsize=128)
+    def _rollout_cached(self, x0: tuple, u: tuple):
+        x0_np = np.array(x0)
+        u_np = np.array(u).reshape((self.T, self.N, self.m))
+        return self._rollout(x0_np, u_np)
+
+    def _rollout(self, x0: np.ndarray, u: np.ndarray) -> np.ndarray:
         """ Rollout control to get state trajectory
         Args:
             x0: (N,m)
@@ -536,37 +561,37 @@ class ResidualGame(PrintObject, ABC):
         Return:
             X: (T,N,n) x1..xT
         """
-        U = U.reshape(self.T, self.N, self.m)
+        assert u.shape == (self.T, self.N, self.m)
+        #u = u.reshape(self.T, self.N, self.m)
         X = np.zeros((self.T + 1, self.N, self.n))
         X[0, :, :] = x0.reshape(self.N, self.n)
         # x+ = x + vx*dt + 0.5*ax*dt*dt
         # vx+ = vx + ax*dt
         for i in range(self.N):
             for k in range(1, self.T + 1):
-                X[k, i] = self.f(X[k - 1, i], U[k - 1, i], i)
+                X[k, i] = self.f(X[k - 1, i], u[k - 1, i], i)
         return X[1:, :, :]
 
     @abstractmethod
-    def _visualize(self, U: np.ndarray, X: np.ndarray | None):
-        """ Visualize the control. populate X if not provided. Abstrat method, subclass
+    def _visualize(self, u: np.ndarray, x: np.ndarray | None):
+        """ Visualize the control. populate x if not provided. Abstrat method, subclass
         are expected to implement this for the specific game 
         Args: 
-            U: control, [T,N,m] np.ndarray, but will be reshaped
-            X: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
+            u: control, [T,N,m] np.ndarray, but will be reshaped
+            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
         """
         raise NotImplementedError
 
     def visualize(self,
-                  *,
-                  U,
-                  X=None,
+                  u,
+                  x=None,
                   visualize=False,
                   save_gif=False,
                   animate=False,
                   gif_prefix='run'):
         """ Visualize the control. populate X if not provided"""
         if (visualize or save_gif):
-            fig = self._visualize(U, X)
+            fig = self._visualize(u, x)
             if (save_gif):
                 fig.canvas.draw()
                 frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
@@ -575,12 +600,12 @@ class ResidualGame(PrintObject, ABC):
             if (visualize):
                 plt.show()
         if (animate):
-            self._animation(U, X, gif_prefix=gif_prefix)
+            self._animation(u, x, gif_prefix=gif_prefix)
         return
 
     def final(self):
         self.profiler.summary()
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             self.cpp.summary()
         if (len(self.frame_vec) > 0):
             gif_filename = self.resolveLogname()
@@ -590,7 +615,7 @@ class ResidualGame(PrintObject, ABC):
                                    save_all=True,
                                    duration=200,
                                    loop=0)
-            self.print_debug(f'GIf saved to {gif_filename}')
+            logger.info(f'GIf saved to {gif_filename}')
         plt.plot(self.residual_vec, '*-')
         plt.yscale('log')
         plt.xlabel('Iteration')
@@ -613,7 +638,7 @@ class ResidualGame(PrintObject, ABC):
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         t = self.profiler
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             '''
             t.s('drdy-stacked')
             drdx = self.cpp.dr_dx(x, u, lamda, mu, h_plus_mask)
@@ -665,7 +690,7 @@ class ResidualGame(PrintObject, ABC):
                     h_plus_mask[k - 1, i,
                                 j] = h_plus_mask[k - 1, j, i] = self.h(
                                     x[k - 1, i], x[k - 1, j]) >= 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.getHplusMask([xx for xx in x])
             if (np.linalg.norm(alt - h_plus_mask) > 1e-4):
                 breakpoint()
@@ -680,7 +705,7 @@ class ResidualGame(PrintObject, ABC):
             for j in np.nonzero(h_k_plus_mask[i])[0]
         ],
                         axis=0)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             for j in np.nonzero(h_k_plus_mask[i])[0]:
                 val = self.h(x_k[i], x_k[j.item()])
                 val_cpp = self.cpp.h(x_k[i], x_k[j.item()])
@@ -696,7 +721,7 @@ class ResidualGame(PrintObject, ABC):
         return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,
                                      lamda_k, mu_k, i)
 
@@ -716,7 +741,7 @@ class ResidualGame(PrintObject, ABC):
         #h_val_alt = np.sum([ self.dBh_dxi(x_k[i], x_k[j.item()]) * (j.item()!=i) for j in np.nonzero(~h_k_plus_mask[i])[0] ],axis=0)
 
         # NOTE the behavior of barrier function near boundary may need tuning
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             # dJi_dx -- passed
             num = jacobianNumerical(
                 lambda xx: self.J(xx.reshape(x_k.shape), u_k_i, i),
@@ -742,7 +767,7 @@ class ResidualGame(PrintObject, ABC):
             num = num[0, i * self.n:(i + 1) * self.n]
             assert (np.linalg.norm(num - val) < 1e-4)
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(self.dJi_dxi(x_k, u_k_i, i) - alt) > 1e-4):
                 breakpoint()
@@ -797,7 +822,7 @@ class ResidualGame(PrintObject, ABC):
         return LLi_val
 
     def dLLi_dxi(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dxi([xx for xx in x], [uu for uu in u],
                                      [hh for hh in h_plus_mask],
                                      [ll for ll in lamda], [mmm
@@ -815,7 +840,7 @@ class ResidualGame(PrintObject, ABC):
             sub[:] = self.dL_dx_ik(x[k - 1], u[k, i], x[k,
                                                         i], h_plus_mask[k - 1],
                                    lamda[k], mu[k - 1], i) - lamda[k - 1, i].T
-            if (self.DEBUG):
+            if (self.config.DEBUG):
                 num = jacobianNumerical(
                     lambda xx: self.L(xx.reshape(N, n), u[k, i], x[
                         k, i], h_plus_mask[k - 1], lamda[k], mu[k - 1], i),
@@ -830,7 +855,7 @@ class ResidualGame(PrintObject, ABC):
             -1/self.rho*np.sum([min(1/self.h(x[T-1,i], x[T-1,j.item()]),1e20)*self.dh_dxi(x[T-1,i],x[T-1,j.item()]) *(j.item() != i) for j in np.nonzero(~h_plus_mask[T-1,i])[0] ],axis=0)
 
         val = der.reshape(1, -1)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dxi([xx for xx in x], [uu for uu in u],
                                     [hh for hh in h_plus_mask],
                                     [ll for ll in lamda], [mmm
@@ -841,7 +866,7 @@ class ResidualGame(PrintObject, ABC):
 
     # NOTE obsolete, now we use dLLi_dxi
     def dLLi_dx(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dx([xx for xx in x], [uu for uu in u],
                                     [hh for hh in h_plus_mask],
                                     [ll for ll in lamda], [mmm
@@ -860,7 +885,7 @@ class ResidualGame(PrintObject, ABC):
             sub[:] = self.dL_dx_ik(x[k - 1], u[k, i], x[k,
                                                         i], h_plus_mask[k - 1],
                                    lamda[k], mu[k - 1], i) - lamda[k - 1, i].T
-            if (self.DEBUG):
+            if (self.config.DEBUG):
                 num = jacobianNumerical(
                     lambda xx: self.L(xx.reshape(N, n), u[k, i], x[
                         k, i], h_plus_mask[k - 1], lamda[k], mu[k - 1], i),
@@ -887,7 +912,7 @@ class ResidualGame(PrintObject, ABC):
             sub[:] = self.dJfi_dxj(x[k-1],i,j) + (mu[k-1,i,j] * self.dh_dxj(x[k-1,i], x[k-1,j]) if h_plus_mask[k-1,i,j] else \
                 -1/self.rho*min(1/self.h(x[k-1,i], x[k-1,j]),2e10)*self.dh_dxj(x[k-1,i], x[k-1,j]))
         val = der.reshape(1, -1)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dx([xx for xx in x], [uu for uu in u],
                                    [hh for hh in h_plus_mask],
                                    [ll for ll in lamda], [mmm
@@ -897,7 +922,7 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dui([xx for xx in x], [uu for uu in u],
                                      [hh for hh in h_plus_mask],
                                      [ll for ll in lamda], [mmm
@@ -921,7 +946,7 @@ class ResidualGame(PrintObject, ABC):
                 x[k - 1], u[k, i],
                 i) + lamda[k, i].T @ self.df_du(x[k - 1, i], u[k, i], i)
         val = der.reshape(1, -1)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dui([xx for xx in x], [uu for uu in u],
                                     [hh for hh in h_plus_mask],
                                     [ll for ll in lamda], [mmm
@@ -932,7 +957,7 @@ class ResidualGame(PrintObject, ABC):
 
     # NOTE obsolete
     def dLLi_du(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_du([xx for xx in x], [uu for uu in u],
                                     [hh for hh in h_plus_mask],
                                     [ll for ll in lamda], [mmm
@@ -956,7 +981,7 @@ class ResidualGame(PrintObject, ABC):
             sub[:] = self.dJi_du(
                 x[k - 1], u[k, i],
                 i) + lamda[k, i].T @ self.df_du(x[k - 1, i], u[k, i], i)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_du([xx for xx in x], [uu for uu in u],
                                    [hh for hh in h_plus_mask],
                                    [ll for ll in lamda], [mmm
@@ -966,7 +991,7 @@ class ResidualGame(PrintObject, ABC):
         return der
 
     def dLLi_dxi_dmu(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dxi_dmu([xx for xx in x], [uu for uu in u],
                                          [hh for hh in h_plus_mask],
                                          [ll for ll in lamda],
@@ -985,7 +1010,7 @@ class ResidualGame(PrintObject, ABC):
                 dLLi_dxki_dmuijk = self.dh_dxi(x[k - 1, i], x[k - 1, j])
                 dLL_dxi_dmu[(k - 1) * n:k * n,
                             (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dxi_dmu([xx for xx in x], [uu for uu in u],
                                         [hh for hh in h_plus_mask],
                                         [ll for ll in lamda],
@@ -996,7 +1021,7 @@ class ResidualGame(PrintObject, ABC):
 
     # NOTE obsolete, use dLLi_dxi_dmu now
     def dLLi_dx_dmu(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dx_dmu([xx for xx in x], [uu for uu in u],
                                         [hh for hh in h_plus_mask],
                                         [ll for ll in lamda],
@@ -1020,7 +1045,7 @@ class ResidualGame(PrintObject, ABC):
                 dLL_dx_dmu[(k - 1) * N * n + j * n:(k - 1) * N * n +
                            (j + 1) * n,
                            (k - 1) * N * N + i * N + j] = dLLi_dxkj_dmuijk
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dx_dmu([xx for xx in x], [uu for uu in u],
                                        [hh for hh in h_plus_mask],
                                        [ll for ll in lamda],
@@ -1052,7 +1077,7 @@ class ResidualGame(PrintObject, ABC):
     '''
 
     def r(self, x, u, lamda, mu, h_plus_mask):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.r([xx for xx in x], [uu for uu in u],
                               [ll for ll in lamda], [mmm for mmm in mu],
                               [hh for hh in h_plus_mask])
@@ -1064,7 +1089,7 @@ class ResidualGame(PrintObject, ABC):
                 dLL_dui = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
                 '''
                 # this needs to be updated
-                if (self.DEBUG):
+                if (self.config.DEBUG):
                     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
                     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
@@ -1095,7 +1120,7 @@ class ResidualGame(PrintObject, ABC):
             raise e
             breakpoint()
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.r([xx for xx in x], [uu for uu in u],
                              [ll for ll in lamda], [mmm for mmm in mu],
                              [hh for hh in h_plus_mask])
@@ -1114,7 +1139,7 @@ class ResidualGame(PrintObject, ABC):
             for i in range(self.N):
                 dLL_dx = self.dLLi_dx(x,u,h_plus_mask,lamda,mu,i)
                 dLL_du = self.dLLi_du(x,u,h_plus_mask,lamda,mu,i)
-                if (self.DEBUG):
+                if (self.config.DEBUG):
                     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),h_plus_mask,lamda,mu,i), u.flatten())
                     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
                     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),u,h_plus_mask,lamda,mu,i), x.flatten())
@@ -1146,51 +1171,51 @@ class ResidualGame(PrintObject, ABC):
         return -1 / self.rho * np.log(-min(self.h(x_i, x_j), -1e-100))
 
     def dBh_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dBh_dxi(x_i, x_j)
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxi(x_i, x_j)
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             val_num = jacobianNumerical(
                 lambda xx: self.Bh(xx.reshape(x_i.shape), x_j), x_i.flatten())
             assert (np.linalg.norm(val - val_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dBh_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dBh_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dBh_dxj(x_i, x_j)
         # B(h) = -rho^-1 log(-h)
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxj(x_i, x_j)
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             val_num = jacobianNumerical(
                 lambda xx: self.Bh(x_i, xx.reshape(x_j.shape)), x_j.flatten())
             assert (np.linalg.norm(val - val_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dBh_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dBh_dxi_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dBh_dxi_dxi(x_i, x_j)
         h = self.h(x_i, x_j)
         dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
         val = 1 / (self.rho * h) * (-self.dh_dxi_dxi(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxi)
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             val_num = jacobianNumerical(
                 lambda xx: self.dBh_dxi(xx.reshape(x_i.shape), x_j),
                 x_i.flatten(),
                 dim=self.n)
             assert (np.linalg.norm(val - val_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.h(x_i, x_j)
             if (np.linalg.norm(alt - h) > 1e-4):
                 breakpoint()
@@ -1208,20 +1233,20 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dBh_dxi_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dBh_dxi_dxj(x_i, x_j)
         h = self.h(x_i, x_j)
         dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
         dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
         val = 1 / (self.rho * h) * (-self.dh_dxi_dxj(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxj)
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             val_num = jacobianNumerical(
                 lambda xx: self.dBh_dxi(x_i, xx.reshape(x_j.shape)),
                 x_j.flatten(),
                 dim=self.n)
             assert (np.linalg.norm(val - val_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi(x_i, x_j)
             if (np.linalg.norm(alt - dhdxi) > 1e-4):
                 breakpoint()
@@ -1235,27 +1260,27 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dBh_dxj_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dBh_dxj_dxj(x_i, x_j)
         h = self.h(x_i, x_j)
         dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
         dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
         val = 1 / (self.rho * h) * (-self.dh_dxj_dxj(x_i, x_j) +
                                     1 / h * dhdxj.T @ dhdxj)
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             val_num = jacobianNumerical(
                 lambda xx: self.dBh_dxj(x_i, xx.reshape(x_j.shape)),
                 x_j.flatten(),
                 dim=self.n)
             assert (np.linalg.norm(val - val_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dBh_dxj_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dLLi_dxi_dx(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dxi_dx([xx for xx in x], [uu for uu in u],
                                         [hh for hh in h_plus_mask],
                                         [ll for ll in lamda],
@@ -1333,7 +1358,7 @@ class ResidualGame(PrintObject, ABC):
                 mtx = submtx(k, j)
                 mtx[:, :] = val
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             '''
             for k in range(1,T+1):
                 for ii in range(N):
@@ -1341,17 +1366,17 @@ class ResidualGame(PrintObject, ABC):
                         mtx_num = submtx_num(k,ii,j)
                         mtx = submtx(k,ii,j)
                         if(not np.linalg.norm(mtx-mtx_num)<1e-4):
-                            self.print_debug(f'i = {i} ii={ii},j={j},k={k}')
+                            logger.debug(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
             dLLi_dxi_dx_num = jacobianNumerical(lambda xx: self.dLLi_dxi(
                 xx.reshape(x.shape), u, h_plus_mask, lamda, mu, i),
                                                 x.flatten(),
                                                 dim=T * n)
-            self.print_debug(
+            logger.debug(
                 f'dLL_dxdx err {np.linalg.norm(dLLi_dxi_dx_num - dLL_dxi_dx)}')
             assert (np.linalg.norm(dLLi_dxi_dx_num - dLL_dxi_dx) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dxi_dx([xx for xx in x], [uu for uu in u],
                                        [hh for hh in h_plus_mask],
                                        [ll for ll in lamda], [mm
@@ -1362,7 +1387,7 @@ class ResidualGame(PrintObject, ABC):
 
     # NOTE obsolete
     def dLLi_dxdx(self, x, u, h_plus_mask, lamda, mu, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dLLi_dxdx([xx for xx in x], [uu for uu in u],
                                       [hh for hh in h_plus_mask],
                                       [ll for ll in lamda], [mm
@@ -1469,7 +1494,7 @@ class ResidualGame(PrintObject, ABC):
                                               j) + self.dBh_dxj_dxj(
                                                   x[k - 1, i], x[k - 1, j])
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             '''
             for k in range(1,T+1):
                 for ii in range(N):
@@ -1477,17 +1502,17 @@ class ResidualGame(PrintObject, ABC):
                         mtx_num = submtx_num(k,ii,j)
                         mtx = submtx(k,ii,j)
                         if(not np.linalg.norm(mtx-mtx_num)<1e-4):
-                            self.print_debug(f'i = {i} ii={ii},j={j},k={k}')
+                            logger.debug(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
             dLL_dxdx_num = jacobianNumerical(lambda xx: self.dLLi_dx(
                 xx.reshape(x.shape), u, h_plus_mask, lamda, mu, i),
                                              x.flatten(),
                                              dim=dim_x)
-            self.print_debug(
+            logger.debug(
                 f'dLL_dxdx err {np.linalg.norm(dLL_dxdx_num - dLL_dxdx)}')
             assert (np.linalg.norm(dLL_dxdx_num - dLL_dxdx) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dxdx([xx for xx in x], [uu for uu in u],
                                      [hh for hh in h_plus_mask],
                                      [ll for ll in lamda], [mm
@@ -1522,17 +1547,16 @@ class ResidualGame(PrintObject, ABC):
                      k * N * m + i * m:k * N * m + (i + 1) * m] = self.df_du(
                          x[k - 1, i], u[k, i], i)
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dxdu_num = jacobianNumerical(lambda uu: self.rollout(
                 self.x0, uu.reshape((T, N, m)), u.flatten(), dim=dim_x))
-            self.print_debug(
-                f'dxdu_num err {np.linalg.norm(dxdu_num - retval)}')
+            logger.debug(f'dxdu_num err {np.linalg.norm(dxdu_num - retval)}')
             if (np.linalg.norm(dxdu_num - retval) > 1e-4):
                 breakpoint()
         return dxdu
 
     def dF_dx(self, x, u, i, k):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dF_dx([xx for xx in x], [uu for uu in u], i, k)
         ''' F(x,u) = f(x_k_i,u_k_i)-x_k+1_i, find dF_dx, note x here is of dim(T*N*n) '''
         T = self.T
@@ -1544,14 +1568,14 @@ class ResidualGame(PrintObject, ABC):
         dFdx[:, (k - 1) * N * n + i * n:(k - 1) * N * n +
              (i + 1) * n] = self.df_dx(x[k - 1, i], u[k, i], i)
         dFdx[:, k * N * n + i * n:k * N * n + (i + 1) * n] = -np.eye(n)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dF_dx([xx for xx in x], [uu for uu in u], i, k)
             if (np.linalg.norm(alt - dFdx) > 1e-4):
                 breakpoint()
         return dFdx
 
     def dF0_dx(self, x, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dF0_dx([xx for xx in x], [uu for uu in u], i)
         ''' F0(x,u) = f(x_0_i,u_0_i)-x_1_i, find dF_dx note x here is of dim(T*N*n)
             A specialization for dF_dx when k=0, since we need x0
@@ -1563,14 +1587,14 @@ class ResidualGame(PrintObject, ABC):
         dim_x = T * N * n
         dFdx = np.zeros((n, dim_x))
         dFdx[:, i * n:(i + 1) * n] = -np.eye(n)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dF0_dx([xx for xx in x], [uu for uu in u], i)
             if (np.linalg.norm(alt - dFdx) > 1e-4):
                 breakpoint()
         return dFdx
 
     def dh_dx(self, x, k, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dx([xx for xx in x], k, i, j)
         ''' find d h(x_i,x_j)/ d x note x here is of dim(T*N*n) '''
         T = self.T
@@ -1583,14 +1607,14 @@ class ResidualGame(PrintObject, ABC):
              (i + 1) * n] = self.dh_dxi(x[k - 1, i], x[k - 1, j])
         dhdx[:, (k - 1) * N * n + j * n:(k - 1) * N * n +
              (j + 1) * n] = self.dh_dxj(x[k - 1, i], x[k - 1, j])
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dx([xx for xx in x], k, i, j)
             if (np.linalg.norm(alt - dhdx) > 1e-4):
                 breakpoint()
         return dhdx
 
     def dr_dx(self, x, u, lamda, mu, h_plus_mask):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dr_dx([xx for xx in x], [uu for uu in u],
                                   [ll for ll in lamda], [mmm for mmm in mu],
                                   [hh for hh in h_plus_mask])
@@ -1627,14 +1651,14 @@ class ResidualGame(PrintObject, ABC):
                 drdx[index:index + dhdx.shape[0], :] = dhdx
                 index += len(indices)
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             drdx_num = jacobianNumerical(lambda xx: self.r(
                 xx.reshape(x.shape), u, lamda, mu, h_plus_mask),
                                          x.flatten(),
                                          dim=dim_r)
-            self.print_debug(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            logger.debug(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert (np.linalg.norm(drdx - drdx_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dr_dx([xx for xx in x], [uu for uu in u],
                                  [ll for ll in lamda], [mmm for mmm in mu],
                                  [hh for hh in h_plus_mask])
@@ -1667,13 +1691,13 @@ class ResidualGame(PrintObject, ABC):
 
         if (DEBUG):
             drdx_num = jacobianNumerical(lambda xx:self.r(xx.reshape(x.shape),u,lamda,mu,h_plus_mask), x.flatten(),dim=dim_r)
-            self.print_debug(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
+            logger.debug(f'drdx err {np.linalg.norm(drdx-drdx_num)}')
             assert(np.linalg.norm(drdx-drdx_num)<1e-4)
         return drdx
     '''
 
     def dr_du(self, x, u, lamda, mu, h_plus_mask):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dr_du([xx for xx in x], [uu for uu in u],
                                   [ll for ll in lamda], [mmm for mmm in mu],
                                   [hh for hh in h_plus_mask])
@@ -1708,7 +1732,7 @@ class ResidualGame(PrintObject, ABC):
             index += n * T + np.sum(h_plus_mask[:,
                                                 i])  # skip  f(x,u)-x+,  h(x,x)
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             drdu_num = jacobianNumerical(lambda uu: self.r(
                 x, uu.reshape(u.shape), lamda, mu, h_plus_mask),
                                          u.flatten(),
@@ -1720,11 +1744,11 @@ class ResidualGame(PrintObject, ABC):
                         val_num = drdu_num[:, k * N * m + i * m:k * N * m +
                                            i * m + m]
                         if (np.linalg.norm(val - val_num) > 1e-4):
-                            self.print_debug(
+                            logger.debug(
                                 f'k={k}, i={i},{np.nonzero(val-val_num)}')
                 breakpoint()
             assert (np.linalg.norm(drdu - drdu_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dr_du([xx for xx in x], [uu for uu in u],
                                  [ll for ll in lamda], [mmm for mmm in mu],
                                  [hh for hh in h_plus_mask])
@@ -1733,7 +1757,7 @@ class ResidualGame(PrintObject, ABC):
         return drdu
 
     def dr_dlamda(self, x, u, lamda, mu, h_plus_mask):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dr_dlamda([xx for xx in x], [uu for uu in u],
                                       [ll
                                        for ll in lamda], [mmm for mmm in mu],
@@ -1774,16 +1798,16 @@ class ResidualGame(PrintObject, ABC):
             index += T * m + n * T + np.sum(
                 h_plus_mask[:, i])  # skip  dLL_dui, f(x,u)-x+,  h(x,x)
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dr_dlamda_num = jacobianNumerical(lambda ll: self.r(
                 x, u, ll.reshape(lamda.shape), mu, h_plus_mask),
                                               lamda.flatten(),
                                               dim=dim_r)
-            self.print_debug(
+            logger.debug(
                 f'dr_dlamda err {np.linalg.norm(dr_dlamda-dr_dlamda_num)}')
             diff = dr_dlamda_num - dr_dlamda
             assert (np.linalg.norm(dr_dlamda - dr_dlamda_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dr_dlamda([xx for xx in x], [uu for uu in u],
                                      [ll for ll in lamda], [mmm for mmm in mu],
                                      [hh for hh in h_plus_mask])
@@ -1792,7 +1816,7 @@ class ResidualGame(PrintObject, ABC):
         return dr_dlamda
 
     def dr_dmu(self, x, u, lamda, mu, h_plus_mask):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dr_dmu([xx for xx in x], [uu for uu in u],
                                    [ll for ll in lamda], [mmm for mmm in mu],
                                    [hh for hh in h_plus_mask])
@@ -1812,7 +1836,7 @@ class ResidualGame(PrintObject, ABC):
             # dmu i,j,k
             dLL_dxi_dmu = self.dLLi_dxi_dmu(x, u, h_plus_mask, lamda, mu, i)
             dr_dmu[index:index + T * n, :] = dLL_dxi_dmu
-            if (self.DEBUG):
+            if (self.config.DEBUG):
                 dLL_dxi_dmu_num = jacobianNumerical(lambda mm: self.dLLi_dxi(
                     x, u, h_plus_mask, lamda, mm.reshape(mu.shape), i),
                                                     mu.flatten(),
@@ -1821,14 +1845,14 @@ class ResidualGame(PrintObject, ABC):
 
             index += T * n + T * m + n * T + np.sum(h_plus_mask[:, i])
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dr_dmu_num = jacobianNumerical(lambda mm: self.r(
                 x, u, lamda, mm.reshape(mu.shape), h_plus_mask),
                                            mu.flatten(),
                                            dim=dim_r)
-            self.print_debug(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
+            logger.debug(f'drdx err {np.linalg.norm(dr_dmu-dr_dmu_num)}')
             assert (np.linalg.norm(dr_dmu - dr_dmu_num) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dr_dmu([xx for xx in x], [uu for uu in u],
                                   [ll for ll in lamda], [mmm for mmm in mu],
                                   [hh for hh in h_plus_mask])
@@ -1891,3 +1915,37 @@ class ResidualGame(PrintObject, ABC):
     @abstractmethod
     def dJi_dudu(self, x_k, u_k_i, i):
         return np.zeros((self.m, self.m))
+
+    # --- dynamics and related derivatives ---
+    @abstractmethod
+    def f(self, x, u, i):
+        pass
+
+    @abstractmethod
+    def df_dx(self, x, u, i):
+        pass
+
+    @abstractmethod
+    def df_du(self, x, u, i):
+        pass
+
+    def h(self, x_i, x_j):
+        return -1
+
+    def dh_dxi(self, x_i, x_j):
+        return np.zeros((1, self.n))
+
+    def dh_dxj(self, x_i, x_j):
+        return np.zeros((1, self.n))
+
+    def dh_dxi_dxi(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxj_dxi(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxi_dxj(self, x_i, x_j):
+        return np.zeros((self.n, self.n))
+
+    def dh_dxj_dxj(self, x_i, x_j):
+        return np.zeros((self.n, self.n))

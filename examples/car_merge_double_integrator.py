@@ -1,11 +1,11 @@
 import numpy as np
 from examples.unstructured_driving import UnstructuredDriving
+from residual_game import ResidualGameConfig
 
 
 class CarMergeDoubleIntegrator(UnstructuredDriving):
-    USE_CPP = False
 
-    def __init__(self, car_count=8):
+    def __init__(self, config: ResidualGameConfig, car_count: int = 8):
         #super().__init__(car_count=5)
         # simplest, 3 car
         #super().__init__(car_count=3)
@@ -53,12 +53,12 @@ class CarMergeDoubleIntegrator(UnstructuredDriving):
         self.J_Qr = np.diag([0, 1, 0.1, 0])
         self.J_Q = np.diag([0, 0, 0, 0.5])
         self.print_debug_enable()
-        self.iterations = 30
+        self.config.iterations = 30
         self.final_resolution = 1e-10
 
 
 if __name__ == "__main__":
-    main = CarMergeDoubleIntegrator(3)
+    main = CarMergeDoubleIntegrator(ResidualGameConfig(), 3)
     main.setup()
-    main.solve(save_gif=False, visualize=True, animate=True)
+    main.solve()
     main.final()

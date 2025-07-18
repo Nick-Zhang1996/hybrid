@@ -3,12 +3,13 @@ from examples.one_car_drift import OneCarDrift
 from math import radians, degrees
 import matplotlib.pyplot as plt
 import numpy as np
+from residual_game import ResidualGameConfig
 
 
 class OneCarDriftMpc(OneCarDrift):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: ResidualGameConfig):
+        super().__init__(config)
         self.T = 100
         self.Tmax = 0.174 * 0.4
         self.dt = dt = 0.05
@@ -58,7 +59,7 @@ class OneCarDriftMpc(OneCarDrift):
         vf = (x_vec[-1, 0, 3]**2 + x_vec[-1, 0, 4]**2)**0.5
         print(f' vi {vi:.2f}, vf {vf:.2f}')
 
-        self._visualize(u_vec, X=x_vec)
+        self._visualize(u_vec, x=x_vec)
         plt.show()
 
         #self._visualize(u_vec)
@@ -69,7 +70,7 @@ class OneCarDriftMpc(OneCarDrift):
 
 
 if __name__ == "__main__":
-    main = OneCarDriftMpc()
+    main = OneCarDriftMpc(ResidualGameConfig())
     main.setup()
     main.simulate()
     '''

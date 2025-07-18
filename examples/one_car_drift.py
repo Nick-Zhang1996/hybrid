@@ -15,7 +15,7 @@ from scipy.ndimage import rotate
 from utilities.util import *
 from utilities.time_util import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 from track.Skidpad import Skidpad
 
 from utilities.symbolic_dynamics import SymbolicDynamics
@@ -25,12 +25,9 @@ import sympy
 # example: Car drifting (1/2 car)
 # uses dynamic bicycle model, defined on Frenet frame
 class OneCarDrift(ResidualGame):
-    USE_CPP = False
-    FORCE_PYTHON_SOLVER = False
 
-    #DEBUG = True
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: ResidualGameConfig):
+        super().__init__(config)
 
         # u_i = [ds, db] time derivative of steering angle, and rear tire slip angle
         # x_i = [s,n,mu,vx,vy,r,theta,beta_r] ref:
@@ -145,16 +142,16 @@ class OneCarDrift(ResidualGame):
         #breakpoint()
         return (r[0], r[1], heading)
 
-    def _visualize(self, U, X=None, snapshots=5):
+    def _visualize(self, u, x=None, snapshots=5):
         car_scale = self.car_scale
-        if (X is None):
-            X = np.vstack(
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
 
-        for index in range(0, len(X), len(X) // snapshots):
-            pose = self.getCartesianFromFrenet(X[index, 0])
+        for index in range(0, len(x), len(x) // snapshots):
+            pose = self.getCartesianFromFrenet(x[index, 0])
             rotated_car_img = np.clip(
                 rotate(self.car_img, degrees(pose[2]), reshape=True), 0.0, 1.0)
             L, W, _ = rotated_car_img.shape
@@ -186,8 +183,8 @@ class OneCarDrift(ResidualGame):
 
         # draw car trajectory
         for i in range(self.N):
-            ss = X[:, i, 0]
-            nn = X[:, i, 1]
+            ss = x[:, i, 0]
+            nn = x[:, i, 1]
             rr = np.array(splev(ss, self.track.raceline_s))
             dr = np.array(splev(ss, self.track.raceline_s, der=1))
             normal_dir = A @ dr / np.linalg.norm(dr, axis=0)
@@ -280,14 +277,14 @@ class OneCarDrift(ResidualGame):
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         s, n, mu, vx, vy, r, theta, Br = x_k[i]
         dsteer, dB = u_k_i
         val = (mu - self.mu_ref)**2 + self.vx_cost * (
             vx - self.vx_ref)**2 + self.n_cost * n**2 + self.control_cost * (
                 dsteer**2 + dB**2)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -295,7 +292,7 @@ class OneCarDrift(ResidualGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         x0, x1, x2, x3, x4, x5, x6, x7 = x_k[i]
         u0, u1 = u_k_i
@@ -303,7 +300,7 @@ class OneCarDrift(ResidualGame):
             0, 2 * self.n_cost * x1, -2 * self.mu_ref + 2 * x2,
             self.vx_cost * (-2 * self.vx_ref + 2 * x3), 0, 0, 0, 0
         ]])
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -311,23 +308,23 @@ class OneCarDrift(ResidualGame):
 
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         x0, x1, x2, x3, x4, x5, x6, x7 = x_k[i]
         u0, u1 = u_k_i
         val = np.array([[self.control_cost * u0, self.control_cost * u1]])
 
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -335,7 +332,7 @@ class OneCarDrift(ResidualGame):
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         val = np.array([[0, 0, 0, 0, 0, 0, 0, 0],
                         [0, 2 * self.n_cost, 0, 0, 0, 0, 0, 0],
@@ -343,7 +340,7 @@ class OneCarDrift(ResidualGame):
                         [0, 0, 0, 2 * self.vx_cost, 0, 0, 0, 0],
                         [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0],
                         [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -445,7 +442,7 @@ class OneCarDrift(ResidualGame):
              ], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]])
 
         val = np.eye(self.n) + dfdx * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
@@ -456,7 +453,7 @@ class OneCarDrift(ResidualGame):
         B[6, 0] = 1
         B[7, 1] = 1
         val = B * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
@@ -789,12 +786,12 @@ class OneCarDrift(ResidualGame):
 
 
 if __name__ == "__main__":
-    main = OneCarDrift()
+    main = OneCarDrift(ResidualGameConfig())
     #main.findSaddlePoint()
     #main.testAnimation()
     #main.buildDynamicsJacobian()
     #main.phasePortrait_vx_r()
     #main.phasePortrait_vy_r()
     main.setup()
-    main.solve(save_gif=False, visualize=True, animate=True)
+    main.solve()
     main.final()

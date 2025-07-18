@@ -13,15 +13,13 @@ from scipy.ndimage import rotate
 
 from utilities.util import *
 #from utilities.TimeUtil import TimeUtil
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 
 
 class DoubleIntegrator(ResidualGame):
-    USE_CPP = False
-    FORCE_PYTHON_SOLVER = False
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: ResidualGameConfig):
+        super().__init__(config)
 
         # agent 0:
         # x: [y,vy]
@@ -69,23 +67,23 @@ class DoubleIntegrator(ResidualGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             raise RuntimeError
 
-    def _visualize(self, U, X=None):
+    def _visualize(self, u, x=None):
 
-        if (X is None):
-            X = np.vstack(
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         rollout_X = np.vstack(
             [self.x0[np.newaxis, :, :],
-             self.rollout(self.x0, U)])
+             self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
 
         # plot rollout trajectory
-        plt.plot(X[:, 0, 0], 'r-')
-        plt.plot(X[:, 0, 1], 'r-')
+        plt.plot(x[:, 0, 0], 'r-')
+        plt.plot(x[:, 0, 1], 'r-')
         plt.plot(rollout_X[:, 0, 0], 'bo-')
         plt.plot(rollout_X[:, 0, 1], 'bo-')
         return fig
@@ -179,8 +177,8 @@ class DoubleIntegrator(ResidualGame):
 
 
 if __name__ == "__main__":
-    main = DoubleIntegrator()
+    main = DoubleIntegrator(ResidualGameConfig())
     main.setup()
-    main.solve(save_gif=False, visualize=True, animate=True)
+    main.solve()
     main.final()
     #main.testAnimation()

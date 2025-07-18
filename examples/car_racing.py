@@ -15,7 +15,7 @@ from scipy.interpolate import splprep, splev, CubicSpline, interp1d
 from utilities.util import *
 from utilities.time_util import TimeUtil
 from src.build.car_racing import CarRacing as cpp_CarRacing
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 
 from utilities.symbolic_dynamics import SymbolicDynamics, MultiAgentSymbolicDynamics
 import sympy
@@ -33,13 +33,9 @@ def wrap(val):
 # two car racing game
 # uses curvilinear model
 class CarRacing(ResidualGame):
-    USE_CPP = True
-    FORCE_PYTHON_SOLVER = False
-    CPP_DEBUG = False
-    CPP_DEBUG_INTERNAL = False
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: ResidualGameConfig):
+        super().__init__(config)
 
         # animation/visualization related
         self.sprite_visualization = False  # True would use car images instead of boaxes
@@ -75,9 +71,6 @@ class CarRacing(ResidualGame):
         # dimension of x and u for single agent
         self.n = 4
         self.m = 2
-
-        self.tolerance = 5e-4
-        self.iterations = 30
 
         # collision definition
         # (x-x)T h_Qh (x-x) < C
@@ -124,12 +117,12 @@ class CarRacing(ResidualGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.cpp = cpp_CarRacing(
                 self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
-                self.bc_b, self.tolerance, self.backtracking_max_iter,
+                self.bc_b, self.config.tolerance, self.backtracking_max_iter,
                 self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,
-                self.collision_radius, self.iterations, False)
+                self.collision_radius, self.config.iterations, False)
             self.cpp.set_x0(self.x0)
             ss = np.linspace(0, self.track.raceline_len_m, 1024)
             curvature_vec = self.track.curvature_fun(ss)
@@ -147,11 +140,11 @@ class CarRacing(ResidualGame):
             plt.show()
             '''
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         '''
         # draw trajectory in Frenet frame
@@ -166,7 +159,7 @@ class CarRacing(ResidualGame):
         for k in range(self.T):
             this_states = []
             for i in range(self.N):
-                this_states.append(self.curv2Cart(X[k, i]))
+                this_states.append(self.curv2Cart(x[k, i]))
             car_cart_states.append(this_states)
         car_cart_states = np.array(car_cart_states)
         # draw track
@@ -363,7 +356,7 @@ class CarRacing(ResidualGame):
         u_k_i.shape (m) u_k_i = [ax, ay]
         i: agent id
         '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         j = 1 - i
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
@@ -373,7 +366,7 @@ class CarRacing(ResidualGame):
         if (i==0):
             val += -(x_k[i,0] - x_k[j,0])
         '''
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4
                     or np.any(np.isnan(alt - val))):
@@ -382,7 +375,7 @@ class CarRacing(ResidualGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
@@ -390,7 +383,7 @@ class CarRacing(ResidualGame):
         if (i==0):
             val += -np.array([1,0,0,0])
         '''
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4
                     or np.any(np.isnan(alt - val))):
@@ -400,10 +393,10 @@ class CarRacing(ResidualGame):
     # NOTE obsolete
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4
                     or np.any(np.isnan(alt - val))):
@@ -411,10 +404,10 @@ class CarRacing(ResidualGame):
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         val = 2 * u_k_i.T @ self.J_R
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4
                     or np.any(np.isnan(alt - val))):
@@ -423,10 +416,10 @@ class CarRacing(ResidualGame):
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         val = 2 * self.J_Qr + 2 * self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4
                     or np.any(np.isnan(alt - val))):
@@ -480,7 +473,7 @@ class CarRacing(ResidualGame):
         dphidt = ay / v - k_s * dsdt
         dx = np.array([dsdt, dvdt, dndt, dphidt])
         val = x + dx * self.dt
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.f(x, u, i)
             if (np.linalg.norm(alt.flatten() - val.flatten()) > 1e-3):
                 breakpoint()
@@ -502,10 +495,10 @@ class CarRacing(ResidualGame):
                              k_s * x1 * sin(x3) / (-k_s * x2 + 1)
                          ]])
         val = np.eye(4) + dfdx * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-3)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.df_dx(x, u, i)
             if (np.linalg.norm(alt.flatten() - val.flatten()) > 1e-3):
                 breakpoint()
@@ -515,10 +508,10 @@ class CarRacing(ResidualGame):
         x0, x1, x2, x3 = x
         dfdu = np.array([[0, 0], [0, 1], [0, 0], [1 / x1, 0]])
         val = dfdu * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.df_du(x, u, i)
             if (np.linalg.norm(alt.flatten() - val.flatten()) > 5e-4):
                 breakpoint()
@@ -527,70 +520,70 @@ class CarRacing(ResidualGame):
     # collision definition is similar to Double Integrator, car is an "ellipsis"
     def h(self, x_i, x_j):
         ''' car distance larger than sqrt(7) normalized '''
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.h(x_i, x_j)
         val = -((x_i[0] - x_j[0]))**2 - (x_i[2] - x_j[2])**2 + self.car_size**2
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.h(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi(x_i, x_j)
         val = 2 * (x_i - x_j).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj(x_i, x_j)
         val = 2 * (x_j - x_i).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxi_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxi(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxj_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxi(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxi_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxj(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
         return val
 
     def dh_dxj_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxj(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-3):
                 breakpoint()
@@ -680,9 +673,9 @@ class CarRacing(ResidualGame):
 
 
 if __name__ == "__main__":
-    main = CarRacing()
+    main = CarRacing(ResidualGameConfig())
     #main.buildDynamicsJacobian()
     main.setup()
-    main.solve(save_gif=False, visualize=True, animate=False)
+    main.solve()
     main.final()
     #main.testAnimation()

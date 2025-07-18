@@ -4,18 +4,16 @@ import matplotlib.pyplot as plt
 from utilities.util import *
 from utilities.time_util import TimeUtil
 
-from residual_game import ResidualGame
-from stein_game import SteinGame
+from residual_game import ResidualGame, ResidualGameConfig
+from stein_game import SteinGame, SteinGameConfig
 import pickle as p
 
 
 # example for paper Stein Variational Game, Low Dimension Examples 2)
 class ManifoldConvergence(SteinGame):
-    USE_CPP = False
-    DEBUG = False
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: SteinGameConfig):
+        super().__init__(config)
         '''
         x_i_k: 1..T, T*N*n  NOTE starts from 1
         u_i_k: 0..T-1, T*N*m
@@ -28,10 +26,10 @@ class ManifoldConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 100
+        self.config.particles = 100
 
-        self.tolerance = 1e-4  # 5e-4
-        self.stein_iterations = 10  # 30
+        #self.config.tolerance = 1e-4  # 5e-4
+        #self.config.stein_iterations = 10  # 30
 
         # x^i: [position, velocity (1D)]
         # u^i: [acceleration]
@@ -72,14 +70,14 @@ class ManifoldConvergence(SteinGame):
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.print_error('cpp implementation not available')
 
     # use a uniform prior
     def initialSample(self, count=None):
-        ''' make [self.particles] samples of size theta from an initial belief'''
+        ''' make [self.config.particles] samples of size theta from an initial belief'''
         if (count is None):
-            count = self.particles
+            count = self.config.particles
         val = np.random.multivariate_normal(np.zeros(2), self.covariance_mtx,
                                             count)[:, :, np.newaxis]
         #val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
@@ -87,19 +85,19 @@ class ManifoldConvergence(SteinGame):
         dim_u = (self.T, self.N, self.m)
         return val.reshape(count, -1)
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         # target points, p1, p2
         ax.plot([-1], [1], 'o')
         ax.plot([1], [-1], 'o')
 
         # plot agent 0,1's position as x,y coordinate
-        xx = X[:, 0, 0]
-        yy = X[:, 1, 0]
+        xx = x[:, 0, 0]
+        yy = x[:, 1, 0]
         plt.plot(xx, yy, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
@@ -161,7 +159,7 @@ class ManifoldConvergence(SteinGame):
         ddf = 2 * self.Q1
         retval = np.exp(-f**2) * 2 * f * df
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_num = jacobianNumerical(
                 lambda xx: self.Jfi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -186,7 +184,7 @@ class ManifoldConvergence(SteinGame):
         retval = 2 * f * df.T * (-np.exp(-f**2) * 2 * f * df) + np.exp(
             -f**2) * df.T * 2 * df + np.exp(-f**2) * 2 * f * ddf
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_dxi_num = jacobianNumerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -210,7 +208,7 @@ class ManifoldConvergence(SteinGame):
         retval = 2 * f * df.T * (-np.exp(-f**2) * 2 * f *
                                  dfj) + np.exp(-f**2) * df.T * 2 * dfj
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_dxj_num = jacobianNumerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -282,11 +280,9 @@ class ManifoldConvergence(SteinGame):
 
 if __name__ == "__main__":
     #np.random.seed(0)
-    main = ManifoldConvergence()
+    main = ManifoldConvergence(SteinGameConfig())
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
-                                                  visualize=True,
-                                                  animate=False)
+    u_ref, full_x_ref, has_converged = main.solve()
     main.final()
     print(
         f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}, has_converged: {has_converged}'

@@ -4,31 +4,33 @@ like the system dynamics, constraint function, cost functions, and their derivat
 
 from abc import abstractmethod
 import logging
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
 
 from utilities.time_util import TimeUtil
-from residual_game import ResidualGame
+from residual_game import ResidualGame, ResidualGameConfig
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-)
 logger = logging.getLogger("ProfileSteinMerge")
 logger.setLevel(logging.INFO)
+
+
+# TODO adopt this
+class SteinGameConfig(ResidualGameConfig):
+    stein_iterations: int = 20
+    particles: int = 20
 
 
 class SteinGame(ResidualGame):
     """ Stein Variational Game Solver 
     Finds the particle-represented distribution of Nash Equilibria in a Differential Dynamic Game.
     """
+    USE_THREADS = True
 
     @abstractmethod
-    def __init__(self, *, particles: int = 20, iterations: int = 20):
-        super().__init__()
-        self.particles = particles
-        self.stein_iterations = iterations
+    def __init__(self, config: SteinGameConfig):
+        super().__init__(config)
         self.epsilon = 1.0  # step size
         self.alpha = 1.0
         # theta = u in this version
@@ -38,7 +40,7 @@ class SteinGame(ResidualGame):
 
         self.particle_history = []
 
-    def solve(self, save_gif=False, visualize=False, animate=False):
+    def solve(self):
         T = self.T
         N = self.N
         n = self.n
@@ -50,18 +52,20 @@ class SteinGame(ResidualGame):
         theta = self.initialSample()
         # dual variable for theta
         theta_dual = [
-            np.zeros(T * N * n + T * N * N) for i in range(self.particles)
+            np.zeros(T * N * n + T * N * N)
+            for i in range(self.config.particles)
         ]
         # one iteration
-        for iter in range(self.stein_iterations):
+        for iter in range(self.config.stein_iterations):
             self.particle_history.append(theta)
             self.theta_norm_median = np.median(
                 [np.linalg.norm(particle)
-                 for particle in theta])**2 / np.log(self.particles)
+                 for particle in theta])**2 / np.log(self.config.particles)
             # calculate kernel table
-            kernel_val_map = np.zeros((self.particles, self.particles))
+            kernel_val_map = np.zeros(
+                (self.config.particles, self.config.particles))
             self.stein_profiler.s('kernel map')
-            for i in range(self.particles):
+            for i in range(self.config.particles):
                 for j in range(i + 1):
                     kernel_val_map[i, j] = kernel_val_map[j, i] = self.kernel(
                         theta[i], theta[j])
@@ -73,30 +77,46 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 old_cost_vec = cost_vec
             cost_vec = []
-            self.stein_profiler.s('particle grad')
-            for i in range(self.particles):
-                #retval = self.d_cost_d_theta(theta[i])
-                #current_grad = retval[0]
-                #alt_grad = jacobianNumerical(self.cost, theta[i])
-                grad, posterior_residual, new_dual = self.d_theta(
-                    theta[i], theta_dual[i])
-                theta_dual[i] = new_dual
-                cost_vec.append(posterior_residual)
-                # NOTE
-                val = -self.alpha * grad  #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
-                posterior_log_grad.append(val.flatten())
-            self.stein_profiler.e('particle grad')
+            if (self.USE_THREADS):
+                self.stein_profiler.s('threaded particle grad')
+                with ThreadPoolExecutor() as executor:
+                    results = list(
+                        executor.map(
+                            lambda i: self.d_theta(theta[i], theta_dual[i]),
+                            range(self.config.particles)))
+                self.stein_profiler.e('threaded particle grad')
+                for i, result in enumerate(results):
+                    grad, posterior_residual, new_dual = result
+                    cost_vec.append(posterior_residual)
+                    theta_dual[i] = new_dual
+                    val = -self.alpha * grad  #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    posterior_log_grad.append(val.flatten())
+
+            else:
+                self.stein_profiler.s('particle grad')
+                for i in range(self.config.particles):
+                    #retval = self.d_cost_d_theta(theta[i])
+                    #current_grad = retval[0]
+                    #alt_grad = jacobianNumerical(self.cost, theta[i])
+                    grad, posterior_residual, new_dual = self.d_theta(
+                        theta[i], theta_dual[i])
+                    theta_dual[i] = new_dual
+                    cost_vec.append(posterior_residual)
+                    # NOTE
+                    val = -self.alpha * grad  #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    posterior_log_grad.append(val.flatten())
+                self.stein_profiler.e('particle grad')
 
             # find descent direction (for each particle)
             self.stein_profiler.s('dec dir')
             des_dir = []
-            for i in range(self.particles):
+            for i in range(self.config.particles):
                 val = np.zeros(self.dim_theta)
                 # NOTE
                 '''
-                for j in range(self.particles):
+                for j in range(self.config.particles):
                     val = val + self.kernel(theta[j], theta[i]) * posterior_log_grad[j] + self.d_kernel_d_theta_i(theta[j], theta[i])
-                phi = 1/self.particles * val
+                phi = 1/self.config.particles * val
                 '''
                 val = val + posterior_log_grad[i]
                 phi = val.flatten()
@@ -105,13 +125,13 @@ class SteinGame(ResidualGame):
 
             # update particle
             new_theta = []
-            for i in range(self.particles):
+            for i in range(self.config.particles):
                 new_theta.append(theta[i] + self.epsilon * des_dir[i])
             new_theta = np.array(new_theta)
 
             # resample really bad samples
             sort_idx = np.argsort(cost_vec)
-            bad_samples_idx = sort_idx[-int(0.1 * self.particles):]
+            bad_samples_idx = sort_idx[-int(0.1 * self.config.particles):]
             new_theta[bad_samples_idx] = self.initialSample(
                 count=len(bad_samples_idx))
             for i in bad_samples_idx:
@@ -122,16 +142,16 @@ class SteinGame(ResidualGame):
             if (iter > 0):
                 count = np.sum((np.array(cost_vec) -
                                 np.array(old_cost_vec)) < 0)
-                #logger.debug(f' cost decrease particle ratio : {count/self.particles}')
+                #logger.debug(f' cost decrease particle ratio : {count/self.config.particles}')
             cost_vec = np.array(cost_vec)
             mean_cost = np.mean(
-                cost_vec[sort_idx[:-int(0.1 * self.particles)]])
-            logger.debug(f'overall mean cost: ', mean_cost)
+                cost_vec[sort_idx[:-int(0.1 * self.config.particles)]])
+            logger.debug(f'overall mean cost: %f', mean_cost)
             min_cost = np.min(cost_vec)
-            logger.debug(f'min cost: ', min_cost)
+            logger.debug(f'min cost: %f', min_cost)
             theta = new_theta
             # DEBUG plot cost
-            #plt.hist(cost_vec[sort_idx[:-int(0.1*self.particles)]])
+            #plt.hist(cost_vec[sort_idx[:-int(0.1*self.config.particles)]])
             #plt.show()
 
         # Stage 2: Residual Game for particle refinement
@@ -150,7 +170,7 @@ class SteinGame(ResidualGame):
         good_cost_ref = np.array(cost_vec)[min_idx]
         self.stein_profiler.e()
         # check second order conditions
-        mask = self.getMaskForPDHessian(good_u_ref)
+        mask = self.get_mask_for_pd_hessian(good_u_ref)
 
         good_u_ref = good_u_ref[mask]
         good_cost_ref = good_cost_ref[mask]
@@ -180,7 +200,8 @@ class SteinGame(ResidualGame):
         # social cost, i.e. sum of cost from all agents
         good_agent_cost = []
         for i in range(len(good_u_ref)):
-            x_ref = self.rollout(self.x0, good_u_ref[i])
+            x_ref = self.rollout(self.x0,
+                                 good_u_ref[i].reshape(self.T, self.N, self.m))
             full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
             good_x_ref.append(full_x_ref)
             agent_cost = 0
@@ -236,13 +257,23 @@ class SteinGame(ResidualGame):
         return good_u_ref[0].reshape(self.T, self.N,
                                      self.m), good_x_ref[0], has_converged
 
-    def getMaskForPDHessian(self, u_ref_vec):
+    def get_mask_for_pd_hessian(self, u_ref_vec: np.ndarray) -> list[bool]:
+        """ Given a vector of flattened control reference, find the ones that has
+            a Positive Definite Hessian on Lagrangian / state, i.e. dLLi/dxdx > 0
+            Return as a boolean mask list
+        Args:
+            u_ref_vec: [n_particles, full_control_dim], vector of flattened control
+            full_control_dim = T * N * m, 
+        Return:
+            List of size [n_particles]
+        """
         mask = []
         lambda_ref = np.zeros((self.T, self.N, self.n))
         mu_ref = np.zeros((self.T, self.N, self.N))
         h_plus_mask = np.zeros((self.T, self.N, self.N), dtype=bool)
         for u_ref in u_ref_vec:
-            x_ref = self.rollout(self.x0, u_ref)
+            x_ref = self.rollout(self.x0,
+                                 u_ref.reshape(self.T, self.N, self.m))
             accept = True
             for i in range(self.N):
                 # x: T,N,n
@@ -346,7 +377,7 @@ class SteinGame(ResidualGame):
             new_x_ref = _x_ref; new_u_ref = _u_ref
         """
         try:
-            if (self.USE_CPP):
+            if (self.config.USE_CPP):
                 retval = self.cpp.step(x_ref, u_ref, lambda_ref, mu_ref)
             else:
                 retval = self.step(x_ref, u_ref, lambda_ref, mu_ref)
@@ -447,12 +478,12 @@ class SteinGame(ResidualGame):
                       np.linalg.norm(x_i))
 
     def initialSample(self, count=None):
-        ''' make [self.particles] samples of size theta from an initial belief'''
+        ''' make [self.config.particles] samples of size theta from an initial belief'''
         # TODO need to tune scale
         if (count is None):
             return np.random.multivariate_normal(np.zeros(self.dim_theta),
                                                  self.covariance_mtx,
-                                                 self.particles)
+                                                 self.config.particles)
         else:
             return np.random.multivariate_normal(np.zeros(self.dim_theta),
                                                  self.covariance_mtx, count)

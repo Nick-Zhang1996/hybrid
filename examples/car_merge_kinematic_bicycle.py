@@ -14,19 +14,17 @@ from scipy.ndimage import rotate
 from utilities.util import *
 from utilities.time_util import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from residual_game import ResidualGame
-from stein_game import SteinGame
+from residual_game import ResidualGame, ResidualGameConfig
+from stein_game import SteinGame, SteinGameConfig
 
 
 # example: Merging
 # uses kinematic bicycle model
 #class CarMergeKinematicBicycle(ResidualGame):
 class CarMergeKinematicBicycle(SteinGame):
-    USE_CPP = True
-    FORCE_PYTHON_SOLVER = False
 
-    def __init__(self, car_count: int, T: int):
-        super().__init__()
+    def __init__(self, config: SteinGameConfig, car_count: int, T: int):
+        super().__init__(config)
         # u_i = [throttle, steering]
         # x_i = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
         # collision constraint: [(xi-xj)/dx]**2 + [(yi-yj)/dy]**2 >= 1
@@ -53,9 +51,6 @@ class CarMergeKinematicBicycle(SteinGame):
         self.dt = dt = 0.2
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
-
-        self.tolerance = 5e-4
-        self.iterations = 20
 
         # dimension of x and u for single agent
         self.n = 4
@@ -136,19 +131,19 @@ class CarMergeKinematicBicycle(SteinGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.cpp = cpp_CarMergeKinematicBicycle(
                 self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
-                self.bc_b, self.tolerance, self.backtracking_max_iter,
+                self.bc_b, self.config.tolerance, self.backtracking_max_iter,
                 self.J_Qr, self.J_Q, self.J_R, self.h_Qh, self.target_y,
-                self.collision_radius, self.iterations, False)
+                self.collision_radius, self.config.iterations, False)
             self.cpp.set_x0(self.x0)
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         ax.vlines(x=-self.track_width,
                   ymin=self.visual_y_lim[0],
@@ -161,8 +156,8 @@ class CarMergeKinematicBicycle(SteinGame):
             ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
         for i in range(self.N):
-            xx = X[:, i, 0]
-            yy = X[:, i, 1]
+            xx = x[:, i, 0]
+            yy = x[:, i, 1]
             plt.plot(-yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
@@ -328,17 +323,17 @@ class CarMergeKinematicBicycle(SteinGame):
     def J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
-        x_k.shape (N*n) x_k_i = [x,y,vx,vy]
-        u_k_i.shape (m) u_k_i = [ax, ay]
+        x_k.shape (N*n) x_k_i
+        u_k_i.shape (m) u_k_i
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.J(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -346,11 +341,11 @@ class CarMergeKinematicBicycle(SteinGame):
 
     # dJi dxi
     def dJi_dxi(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi(x_k, u_k_i, i)
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -358,20 +353,20 @@ class CarMergeKinematicBicycle(SteinGame):
 
     # dJi dxj
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxj(x_k, u_k_i, i, j)
         val = 0
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_du(x_k, u_k_i, i)
         val = 2 * u_k_i.T @ self.J_R
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_du(x_k, u_k_i, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -379,10 +374,10 @@ class CarMergeKinematicBicycle(SteinGame):
 
     # dJ^i / dxi dxi
     def dJi_dxi_dxi(self, x_k, u, i):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dJi_dxi_dxi(x_k, u, i)
         val = 2 * self.J_Qr + 2 * self.J_Q
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -415,7 +410,7 @@ class CarMergeKinematicBicycle(SteinGame):
                       [0, 0, sin(x[3] + beta), x[2] * cos(x[3] + beta)],
                       [0, 0, 0, 0], [0, 0, sin(beta) / 1.0, 0]])
         val = np.eye(4) + A * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
@@ -427,79 +422,80 @@ class CarMergeKinematicBicycle(SteinGame):
                       [0, x[2] * cos(x[3] + beta) * dbeta_dst], [1, 0],
                       [0, x[2] / 1.0 * cos(beta) * dbeta_dst]])
         val = B * self.dt
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
     # collision definition is similar to Double Integrator, car is an "ellipsis"
     def h(self, x_i, x_j):
-        ''' car distance larger than 1.2 normalized '''
-        if (self.USE_CPP):
+        """ Collision constraint for x_i, anx x_j agent, h <= 0"""
+        # car distance larger than 1.2 normalized
+        if (self.config.USE_CPP):
             return self.cpp.h(x_i, x_j)
         val = -((x_i[0] - x_j[0]) / 1.0)**2 - (
             x_i[1] - x_j[1])**2 + self.collision_radius**2
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.h(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi(x_i, x_j)
         val = 2 * (x_i - x_j).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj(x_i, x_j)
         val = 2 * (x_j - x_i).T @ self.h_Qh
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxi(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj_dxi(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxi(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxi(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxi_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxi_dxj(x_i, x_j)
         val = -2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxi_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         return val
 
     def dh_dxj_dxj(self, x_i, x_j):
-        if (self.USE_CPP):
+        if (self.config.USE_CPP):
             return self.cpp.dh_dxj_dxj(x_i, x_j)
         val = 2 * self.h_Qh.T
-        if (self.CPP_DEBUG):
+        if (self.config.CPP_DEBUG):
             alt = self.cpp.dh_dxj_dxj(x_i, x_j)
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
@@ -517,11 +513,10 @@ class CarMergeKinematicBicycle(SteinGame):
 
 if __name__ == "__main__":
     #np.random.seed(0)
-    main = CarMergeKinematicBicycle(car_count=5, T=20)
+    _config = SteinGameConfig(USE_CPP=True)
+    main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
-                                                  visualize=True,
-                                                  animate=True)
+    u_ref, full_x_ref, has_converged = main.solve()
     main.final()
     print(
         f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')

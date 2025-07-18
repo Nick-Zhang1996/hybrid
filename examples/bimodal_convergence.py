@@ -5,17 +5,15 @@ import pickle as p
 from utilities.util import *
 from utilities.time_util import TimeUtil
 
-from residual_game import ResidualGame
-from stein_game import SteinGame
+from residual_game import ResidualGame, ResidualGameConfig
+from stein_game import SteinGame, SteinGameConfig
 
 
 # example for paper Stein Variational Game, Low Dimension Examples 1)
 class BimodalConvergence(SteinGame):
-    USE_CPP = False
-    DEBUG = False
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config: SteinGameConfig):
+        super().__init__(config)
         '''
         x_i_k: 1..T, T*N*n  NOTE starts from 1
         u_i_k: 0..T-1, T*N*m
@@ -28,10 +26,9 @@ class BimodalConvergence(SteinGame):
         self.dt = dt = 0.2
         self.dynamics_residual_weight = 1.0
 
-        self.particles = 100
+        self.config.particles = 100
 
-        self.tolerance = 1e-4  # 5e-4
-        self.stein_iterations = 10  # 30
+        self.config.stein_iterations = 10  # 30
 
         # x^i: [position, velocity (1D)]
         # u^i: [acceleration]
@@ -68,14 +65,14 @@ class BimodalConvergence(SteinGame):
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
-        if (self.USE_CPP or self.CPP_DEBUG):
+        if (self.config.USE_CPP or self.config.CPP_DEBUG):
             self.print_error('cpp implementation not available')
 
     # use a uniform prior
     def initialSample(self, count=None):
-        ''' make [self.particles] samples of size theta from an initial belief'''
+        ''' make [self.config.particles] samples of size theta from an initial belief'''
         if (count is None):
-            count = self.particles
+            count = self.config.particles
         val = np.random.multivariate_normal(np.zeros(2), self.covariance_mtx,
                                             count)[:, :, np.newaxis]
         #val = np.random.uniform(-self.covariance_mtx[0,0],self.covariance_mtx[0,0], count*2).reshape(-1,2)
@@ -83,24 +80,24 @@ class BimodalConvergence(SteinGame):
         dim_u = (self.T, self.N, self.m)
         return val.reshape(count, -1)
 
-    def _visualize(self, U, X=None):
-        if (X is None):
-            X = np.vstack(
+    def _visualize(self, u, x=None):
+        if (x is None):
+            x = np.vstack(
                 [self.x0[np.newaxis, :, :],
-                 self.rollout(self.x0, U)])
+                 self.rollout(self.x0, u)])
         fig, ax = plt.subplots()
         # target points, p1, p2
         ax.plot([-1], [1], 'o')
         ax.plot([1], [-1], 'o')
 
         # plot agent 0,1's position as x,y coordinate
-        xx = X[:, 0, 0]
-        yy = X[:, 1, 0]
+        xx = x[:, 0, 0]
+        yy = x[:, 1, 0]
         plt.plot(xx, yy, '*-')
         ax.set_aspect('equal', adjustable='box')
         return fig
 
-    def _animation(self, U, X=None, gif_prefix=''):
+    def _animation(self, u, x=None, gif_prefix=''):
         return None
 
     ''' --------  math functions and their derivatives ------ '''
@@ -169,7 +166,7 @@ class BimodalConvergence(SteinGame):
             dJ2_dx0 = np.exp(-f2) * df2_dx0
             retval = dJ1_dx0 + dJ2_dx0
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_num = jacobianNumerical(
                 lambda xx: self.Jfi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -205,7 +202,7 @@ class BimodalConvergence(SteinGame):
             retval = df1_dx0.T * np.exp(-f1)  @ -df1_dx0  + np.exp(-f1) * df1_dx0dx0 \
                     + df2_dx0.T * np.exp(-f2)  @ -df2_dx0  + np.exp(-f2) * df2_dx0dx0
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_dxi_num = jacobianNumerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -246,7 +243,7 @@ class BimodalConvergence(SteinGame):
             retval = df1_dx0.T * np.exp(-f1)  @ -df1_dx1  \
                     + df2_dx0.T * np.exp(-f2) @ -df2_dx1
 
-        if (self.DEBUG):
+        if (self.config.DEBUG):
             dJfi_dxi_dxj_num = jacobianNumerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
@@ -318,11 +315,9 @@ class BimodalConvergence(SteinGame):
 
 if __name__ == "__main__":
     #np.random.seed(0)
-    main = BimodalConvergence()
+    main = BimodalConvergence(SteinGameConfig())
     main.setup()
-    u_ref, full_x_ref, has_converged = main.solve(save_gif=False,
-                                                  visualize=True,
-                                                  animate=False)
+    u_ref, full_x_ref, has_converged = main.solve()
     main.final()
     print(
         f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}, has_converged: {has_converged}'
