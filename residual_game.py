@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 from itertools import chain
+import scipy.sparse.linalg
 
 from utilities.util import PrintObject
 from utilities.time_util import TimeUtil
@@ -39,33 +40,56 @@ class ResidualGameConfig(NamedTuple):
 
 
 class ResidualGame(PrintObject, ABC):
+    """ Residual Descent Differential Dynamic Game Solver (RD3G)
+    
+    Attributes:
+        config (ResidualGameConfig): Configuration nametuple to 
+            specify solver iterations, cpp binary, tolerance etc.
+        N (int): Number of agents
+        T (int): Horizon length
+        dt (float): Time step length
+        n (int): Dimension of state for a single agent
+        m (int): Dimension of control for a single agent
+        x0 (np.ndarray): [N, n] Initial State for all agents
+        guess (np.ndarray): [T,N,m] Initial guess for control traj
+    """
 
     @abstractmethod
     def __init__(self, config: ResidualGameConfig):
         ''' example of a constructor '''
-        # application specific parameters, to be overridden in subclass
-        # the numbers here are arbitrary
         self.config = config
-        # number of agents
-        self.N = 0
-        # horizon length, excluding x0
-        self.T = 0
-        # discretization time step length
-        self.dt = dt = 0.1
-
-        # dimension of x(state) and u(control) for single agent
-        self.n = 0
-        self.m = 0
-        # initial state, dim: N*n
-        self.x0 = np.zeros((self.N, self.n))
+        self.N = None
+        self.T = None
+        self.dt = 0.1
+        self.n = None
+        self.m = None
+        self.x0 = None
+        self.dim_theta = None
 
         # initialize default parameters
         self.init()
 
-        self.guess = np.zeros((self.T, self.N, self.m))
+        self.guess = None
+
+    def validate(self):
+        """ Check the dimension of initial state x0, guess for control """
+        assert self.x0.shape == (self.N, self.n), (
+            "Incorrect self.x0 dimension, "
+            f"should be {(self.N, self.n)}, but got {self.x0.shape}")
+        assert self.guess.shape == (self.T, self.N, self.m), (
+            "Incorrect self.guess dimension, "
+            f"should be {(self.T, self.N, self.m)}, but got {self.guess.shape}"
+        )
+        assert self.dim_theta == self.T * self.N * self.m
+        assert isinstance(self.n, int) and self.n > 0
+        assert isinstance(self.m, int) and self.m > 0
+        assert isinstance(self.T, int) and self.T > 0
+        assert isinstance(self.N, int) and self.N > 0
+        return
 
     def init(self):
-        ''' setup some dynamic solver parameters that changes between iterations, call this funtion to reset the solver '''
+        """ Setup solver parameters that changes between iterations, 
+        call this funtion to reset the solver """
         # solver tuning parameters
         # barrier function scaling schedule
         self.rho = 10.0 * 2
@@ -129,7 +153,7 @@ class ResidualGame(PrintObject, ABC):
             r0_norm = np.linalg.norm(r0)
             if (r0_norm < best_residual):
                 best_residual = r0_norm
-            logger.debug(
+            logger.info(
                 f' residual = {r0_norm}, current best = {best_residual}')
 
             if (has_converged):
@@ -516,7 +540,7 @@ class ResidualGame(PrintObject, ABC):
         self.violations = violations = np.sum(h_plus_mask) / 2
         expected_posterior_norm = np.linalg.norm(r0 + Dr @ dy)
 
-        logger.debug(
+        logger.info(
             f'r0_norm {r0_norm} expected full step {expected_posterior_norm} rt_norm {r_t_norm}, h>0 {violations}'
         )
 
@@ -721,6 +745,15 @@ class ResidualGame(PrintObject, ABC):
         return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
+        """dL / dx_i_k
+        Args:
+            x_k: [N, n]
+            u_k_i: [m]
+            x_k1_i: x_k+1_i: [n]
+            lambda_k:
+            mu_k: [N,N]
+            i: agent index
+        """
         if (self.config.USE_CPP):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,
                                      lamda_k, mu_k, i)
@@ -1116,9 +1149,8 @@ class ResidualGame(PrintObject, ABC):
                     self.h(x[T - 1, i], x[T - 1, j.item()])
                     for j in np.nonzero(h_plus_mask[T - 1, i])[0]
                 ])
-        except ValueError as e:
-            raise e
-            breakpoint()
+        except ValueError:
+            raise
 
         if (self.config.CPP_DEBUG):
             alt = self.cpp.r([xx for xx in x], [uu for uu in u],
@@ -1885,27 +1917,88 @@ class ResidualGame(PrintObject, ABC):
 
     # step cost function
     @abstractmethod
-    def J(self, x_k, u_k_i, i):
-        return 0
+    def J(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int) -> float:
+        """ Step cost function for agent i.
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+        Return:
+            cost for agent i at this step (k)
+        """
+        raise NotImplementedError
 
     @abstractmethod
-    def dJi_dxi(self, x_k, u_k_i, i):
-        return np.zeros((1, self.n))
+    def dJi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
+                i: int) -> np.ndarray:
+        """ Step cost gradient w.r.t. x_i
+        Args:
+            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
+            u_k_i: [m] control for agent i at this step (k), (a, omega)
+                a=dv_dt is acceleration
+                omega=dheading_dt is angular acceleration
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n] Partial derivative
+        """
+        return np.zeros((self.n))
 
     @abstractmethod
-    def dJi_dxj(self, x_k, u_k_i, i, j):
-        return np.zeros((1, self.n))
+    def dJi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                j: int) -> np.ndarray:
+        """ Step cost gradient w.r.t. x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n] Partial derivative
+        """
+        return np.zeros((self.n))
 
     @abstractmethod
-    def dJi_dxi_dxi(self, x_k, u_k_i, i):
+    def dJi_dxi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int):
+        """ Step cost second order derivative w.r.t. x_i
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
         return np.zeros((self.n, self.n))
 
     @abstractmethod
-    def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
+    def dJi_dxi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
+        """ Step cost second ordder derivative w.r.t. x_i, then x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
+            u_k_i: [m] control for agent i at this step (k), (a, omega)
+                a=dv_dt is acceleration
+                omega=dheading_dt is angular acceleration
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
         return np.zeros((self.n, self.n))
 
     @abstractmethod
-    def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
+    def dJi_dxj_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
+        """ Step cost second order derivative w.r.t. x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
         return np.zeros((self.n, self.n))
 
     @abstractmethod
@@ -1918,25 +2011,62 @@ class ResidualGame(PrintObject, ABC):
 
     # --- dynamics and related derivatives ---
     @abstractmethod
-    def f(self, x, u, i):
-        pass
+    def f(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """ Dynamics funciton, gives x(state) at next time step 
+        Args:
+            x: [n] states of agent i
+            u: [m] control of agent i
+            i: agent index 
+        Return:
+           States [n] at next time step
+
+        """
+        raise NotImplementedError
 
     @abstractmethod
-    def df_dx(self, x, u, i):
-        pass
+    def df_dx(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """ Dynamics derivative df/dx
+        Args:
+            x: [n] states of agent i
+            u: [m] control of agent i
+            i: agent index 
+        Return:
+            [n,n] State derivative
+        """
+        raise NotImplementedError
 
     @abstractmethod
-    def df_du(self, x, u, i):
-        pass
+    def df_du(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """
+        Derivative df/du
+        Args:
+            x: [n] states of agent i
+                x = (x, y, heading, v)
+            u: [m] control of agent i
+                u = (a, omega)
+            i: agent index 
+        Return:
+            [n,m] Derivative
+        """
+        raise NotImplementedError
 
-    def h(self, x_i, x_j):
+    def h(self, x_i: np.ndarray, x_j: np.ndarray) -> float:
+        """ Constraint function h <= 0"""
         return -1
 
-    def dh_dxi(self, x_i, x_j):
-        return np.zeros((1, self.n))
+    def dh_dxi(self, x_i: np.ndarray, x_j: np.ndarray) -> np.ndarray:
+        """ Derivative of constraint h, dh/dx_i
+        Return:
+            [n] Derivative
+        """
+        return np.zeros((self.n))
 
-    def dh_dxj(self, x_i, x_j):
-        return np.zeros((1, self.n))
+    def dh_dxj(self, x_i: np.ndarray, x_j: np.ndarray) -> np.ndarray:
+        """ Derivative of constraint h, dh/dx_j
+        Return:
+            [n] Derivative
+        """
+        return np.zeros((self.n))
 
     def dh_dxi_dxi(self, x_i, x_j):
         return np.zeros((self.n, self.n))

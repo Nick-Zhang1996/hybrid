@@ -20,10 +20,10 @@ from stein_game import SteinGame, SteinGameConfig
 
 # example: Merging
 # uses kinematic bicycle model
-#class CarMergeKinematicBicycle(ResidualGame):
-class CarMergeKinematicBicycle(SteinGame):
+class CarMergeKinematicBicycle(ResidualGame):
+    #class CarMergeKinematicBicycle(SteinGame):
 
-    def __init__(self, config: SteinGameConfig, car_count: int, T: int):
+    def __init__(self, config: ResidualGameConfig, car_count: int, T: int):
         super().__init__(config)
         # u_i = [throttle, steering]
         # x_i = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
@@ -513,7 +513,7 @@ class CarMergeKinematicBicycle(SteinGame):
 
 if __name__ == "__main__":
     #np.random.seed(0)
-    _config = SteinGameConfig(USE_CPP=True)
+    _config = SteinGameConfig(USE_CPP=False)
     main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve()

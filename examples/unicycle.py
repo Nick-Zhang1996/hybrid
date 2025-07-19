@@ -11,6 +11,9 @@ from residual_game import ResidualGame, ResidualGameConfig, ResidualGameConfig
 from utilities import symbolic_dynamics
 
 logger = logging.getLogger("Unicycle")
+logger.setLevel(logging.DEBUG)
+
+logging.basicConfig(level=logging.WARNING)
 
 
 def wrap(x: float):
@@ -65,8 +68,9 @@ class Unicycle(ResidualGame):
         self.J_R = np.eye(self.m) * 0.1
 
         # Initial states, [N, n]
-        self.x0 = np.hstack([xx, yy, heading_vec, vv])
+        self.x0 = np.vstack([xx, yy, heading_vec, vv]).T
         self.guess = np.zeros((self.T, self.N, self.m))
+        self.validate()
 
     def setup(self):
         if self.config.USE_CPP or self.config.CPP_DEBUG:
@@ -111,7 +115,7 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
         Return:
             cost for agent i at this step (k)
-            """
+        """
         # quadratic state error penalty
         dx = (x_k[i] - self.J_x_ref_fun(i))
         cost = dx.T @ self.J_Qr @ dx + x_k[i].T @ self.J_Q @ x_k[
@@ -127,7 +131,8 @@ class Unicycle(ResidualGame):
         cost += sum(collision_cost(i, j) for j in range(self.N) if j != i)
         return cost
 
-    def dJi_dxi(self, x_k, u_k_i, i):
+    def dJi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
+                i: int) -> np.ndarray:
         """ Step cost gradient w.r.t. x_i
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -137,7 +142,7 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
             j: agent id, starts from 0
         Return:
-            [1, n] Partial derivative
+            [n] Partial derivative
         """
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
@@ -147,15 +152,17 @@ class Unicycle(ResidualGame):
             dx = x_k[i, 0] - x_k[j, 0]
             dy = x_k[i, 1] - x_k[j, 1]
             cost = d**2 - dx**2 - dy**2
-            return np.array([[2 * dx, 2 * dy, 0, 0]]) if cost > 0 else 0
+            return np.array([2 * dx, 2 * dy, 0, 0]) if cost > 0 else 0
 
         for j in range(self.N):
             if i == j:
                 continue
             val += collision_cost_grad(i, j)
+        assert val.shape == (self.n, )
         return val
 
-    def dJi_dxj(self, x_k, u_k_i, i, j):
+    def dJi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                j: int) -> np.ndarray:
         """ Step cost gradient w.r.t. x_j
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -165,7 +172,7 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
             j: agent id, starts from 0
         Return:
-            [1, n] Partial derivative
+            [n] Partial derivative
         """
         val = np.zeros((1, self.n))
         d = 0.1
@@ -180,12 +187,14 @@ class Unicycle(ResidualGame):
             if i == j:
                 continue
             val += collision_cost_grad(i, j)
+        assert val.shape == (self.n, )
         return val
 
     def dJi_du(self, x_k, u_k_i, i):
         return 2 * u_k_i.T @ self.J_R
 
-    def dJi_dxi_dxi(self, x_k, u_k_i, i):
+    def dJi_dxi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
+                    i: int) -> np.ndarray:
         """ Step cost second order derivative w.r.t. x_i
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -195,7 +204,7 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
             j: agent id, starts from 0
         Return:
-            [1, n] Partial derivative
+            [n, n] Partial derivative
         """
         val = 2 * self.J_Qr + 2 * self.J_Q
         d = 0.1
@@ -210,9 +219,11 @@ class Unicycle(ResidualGame):
             if i == j:
                 continue
             val += collision_cost_hess(i, j)
+        assert val.shape == (self.n, self.n)
         return val
 
-    def dJi_dxi_dxj(self, x_k, u_k_i, i, j):
+    def dJi_dxi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
         """ Step cost second ordder derivative w.r.t. x_i, then x_j
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -222,11 +233,12 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
             j: agent id, starts from 0
         Return:
-            [1, n] Partial derivative
+            [n, n] Partial derivative
         """
         return np.zeros((self.n, self.n))
 
-    def dJi_dxj_dxj(self, x_k, u_k_i, i, j):
+    def dJi_dxj_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
         """ Step cost second order derivative w.r.t. x_j
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -236,7 +248,7 @@ class Unicycle(ResidualGame):
             i: agent id, starts from 0
             j: agent id, starts from 0
         Return:
-            [1, n] Partial derivative
+            [n, n] Partial derivative
         """
         val = 2 * self.J_Qr + 2 * self.J_Q
         d = 0.1
@@ -270,7 +282,9 @@ class Unicycle(ResidualGame):
         """
         # dxdt = (v*cos(heading),v*sin(heading), omega, a )
         dxdt = np.array([x[3] * cos(x[2]), x[3] * sin(x[2]), u[1], u[0]])
-        return x + dxdt * self.dt
+        val = x + dxdt * self.dt
+        assert val.shape == (self.n, )
+        return val
 
     def df_dx(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
         """ Dynamics derivative
@@ -281,14 +295,16 @@ class Unicycle(ResidualGame):
                 u = (a, omega)
             i: agent index 
         Return:
-            States (x) [n] at next time step
+            [n,n] Derivative
         """
         x0, x1, x2, x3 = x
         u0, u1 = u
         dfdx = np.array([[0, 0, -x3 * sin(x2), cos(x2)],
                          [0, 0, x3 * cos(x2), sin(x2)], [0, 0, 0, 0],
                          [0, 0, 0, 0]])
-        return np.eye(4) + dfdx * self.dt
+        val = np.eye(4) + dfdx * self.dt
+        assert val.shape == (self.n, self.n)
+        return val
 
     def df_du(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
         """
@@ -299,9 +315,10 @@ class Unicycle(ResidualGame):
                 u = (a, omega)
             i: agent index 
         Return:
-            States (x) [n] at next time step
+            [n,m] Derivative
         """
         dfdu = np.array([[0, 0], [0, 0], [0, 1], [1, 0]])
+        assert dfdu.shape == (self.n, self.m)
         return dfdu * self.dt
 
     def get_symbolic_dynamics(self):
@@ -322,10 +339,11 @@ class Unicycle(ResidualGame):
 
 
 if __name__ == "__main__":
-    _config = ResidualGameConfig()
+    _config = ResidualGameConfig(tolerance=1e-2, iterations=50)
     print(_config)
     main = Unicycle(_config, agent_count=3)
     #main.get_symbolic_dynamics()
     main.setup()
+    logger.info('testing')
     u_ref, full_x_ref, has_converged = main.solve()
     main.final()
