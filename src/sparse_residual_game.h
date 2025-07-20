@@ -1,7 +1,6 @@
 #pragma once
 // #define EIGEN_RUNTIME_NO_MALLOC
 // Eigen::internal::set_is_malloc_allowed(false);
-
 #include <Eigen/Core>
 #include <Eigen/LU>
 #include <Eigen/SparseCore>
@@ -40,6 +39,7 @@ using Scalar = double;
 using Eigen::MatrixBase;
 using std::cout;
 using std::endl;
+using std::max;
 using std::min;
 // NOTE has to be RowMajor
 using Matrix =

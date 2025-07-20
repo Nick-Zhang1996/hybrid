@@ -11,6 +11,7 @@ import matplotlib.patches as patches
 import matplotlib.cm as cm
 
 from residual_game import ResidualGame, ResidualGameConfig, ResidualGameConfig
+from src.build.unicycle import Unicycle as cpp_Unicycle
 from utilities import symbolic_dynamics
 from utilities.util import jacobianNumerical
 
@@ -20,6 +21,7 @@ logger.setLevel(logging.DEBUG)
 logging.basicConfig(level=logging.WARNING)
 
 _DEBUG = False
+_CPP_DEBUG = True
 """ File-level debug flag"""
 
 
@@ -68,6 +70,8 @@ class Unicycle(ResidualGame):
 
         self.J_x_ref_fun = lambda i: np.array(
             [xx_ref[i], yy_ref[i], heading_vec[i], vv[i]])
+        self.x_ref = np.vstack([self.J_x_ref_fun(i) for i in range(self.N)])
+        assert self.x_ref.shape == (self.N, self.n)
         """ Traget Reference state"""
         self.J_Qr = np.eye(self.n) * 1.0
         """ Reference cost """
@@ -87,8 +91,15 @@ class Unicycle(ResidualGame):
         self.validate()
 
     def setup(self):
-        if self.config.USE_CPP or self.config.CPP_DEBUG:
-            raise NotImplementedError
+        # subclass responsible for loading cpp/eigen module
+        # and setting x0
+        if (self.config.USE_CPP or self.config.CPP_DEBUG or _CPP_DEBUG):
+            self.cpp = cpp_Unicycle(
+                self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
+                self.bc_b, self.config.tolerance, self.backtracking_max_iter,
+                self.J_Qr, self.J_Q, self.J_R, self.J_Q_col, self.x_ref,
+                self.collision_diameter, self.config.iterations, False)
+            self.cpp.set_x0(self.x0)
 
     def _visualize(self, u: np.ndarray, x: np.ndarray | None = None):
         """ Visualize state trajectory given experiment type
@@ -140,11 +151,7 @@ class Unicycle(ResidualGame):
                    gif_prefix: str = ''):
         raise NotImplementedError
 
-    def J(self,
-          x_k: np.ndarray,
-          u_k_i: np.ndarray,
-          i: int,
-          no_collision=False) -> float:
+    def J(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int) -> float:
         """ Step cost function for agent i.
         Args:
             x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
@@ -159,11 +166,8 @@ class Unicycle(ResidualGame):
         dx = (x_k[i] - self.J_x_ref_fun(i))
         cost = dx.T @ self.J_Qr @ dx + x_k[i].T @ self.J_Q @ x_k[
             i] + u_k_i.T @ self.J_R @ u_k_i
-        if (no_collision):
-            return cost
 
         # collision cost, soft constraint as in reference paper
-
         def collision_cost(i, j):
             dx = x_k[i, 0] - x_k[j, 0]
             dy = x_k[i, 1] - x_k[j, 1]
@@ -171,6 +175,10 @@ class Unicycle(ResidualGame):
 
         cost += self.J_Q_col * sum(
             collision_cost(i, j) for j in range(self.N) if j != i)
+        if (_CPP_DEBUG):
+            alt = self.cpp.J(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - cost) > 1e-4):
+                breakpoint()
         return cost
 
     def dJi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
@@ -186,8 +194,8 @@ class Unicycle(ResidualGame):
         Return:
             [n] Partial derivative
         """
-        val = 2 * (x_k[i] -
-                   self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
+        dx = x_k[i] - self.J_x_ref_fun(i)
+        val = 2 * dx.T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
 
         def collision_cost_grad(i, j):
             """ Derivative w.r.t. x_i"""
@@ -210,6 +218,10 @@ class Unicycle(ResidualGame):
 
             num = jacobianNumerical(lambda x_i: _J(x_i, u_k_i, i), x_k[i])
             assert (np.linalg.norm(num - val) < 1e-4)
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
     def dJi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
@@ -232,7 +244,7 @@ class Unicycle(ResidualGame):
             dx = x_k[i, 0] - x_k[j, 0]
             dy = x_k[i, 1] - x_k[j, 1]
             cost = d**2 - dx**2 - dy**2
-            return np.array([[-2 * dx, -2 * dy, 0, 0]]) if cost > 0 else 0
+            return np.array([[2 * dx, 2 * dy, 0, 0]]) if cost > 0 else 0
 
         for j in range(self.N):
             if i == j:
@@ -248,10 +260,19 @@ class Unicycle(ResidualGame):
 
             num = jacobianNumerical(lambda x_j: _J(x_j, u_k_i, i, j), x_k[j])
             assert (np.linalg.norm(num - val) < 1e-4)
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
-    def dJi_du(self, x_k, u_k_i, i):
-        return 2 * u_k_i.T @ self.J_R
+    def dJi_du(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int):
+        val = 2 * u_k_i.T @ self.J_R
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_du(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
+        return val
 
     def dJi_dxi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
                     i: int) -> np.ndarray:
@@ -267,19 +288,22 @@ class Unicycle(ResidualGame):
             [n, n] Partial derivative
         """
         val = 2 * self.J_Qr + 2 * self.J_Q
-        d = 0.1
 
         def collision_cost_hess(i, j):
             dx = x_k[i, 0] - x_k[j, 0]
             dy = x_k[i, 1] - x_k[j, 1]
-            cost = d**2 - dx**2 - dy**2
-            return np.diag([[2, 2, 0, 0]]) if cost > 0 else 0
+            cost = self.collision_diameter**2 - dx**2 - dy**2
+            return np.diag([2, 2, 0, 0]) if cost > 0 else 0
 
         for j in range(self.N):
             if i == j:
                 continue
             val += collision_cost_hess(i, j)
         assert val.shape == (self.n, self.n)
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_dxi_dxi(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
     def dJi_dxi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
@@ -311,22 +335,30 @@ class Unicycle(ResidualGame):
             [n, n] Partial derivative
         """
         val = 2 * self.J_Qr + 2 * self.J_Q
-        d = 0.1
 
         def collision_cost_hess(i, j):
             dx = x_k[i, 0] - x_k[j, 0]
             dy = x_k[i, 1] - x_k[j, 1]
-            cost = d**2 - dx**2 - dy**2
-            return np.diag([[2, 2, 0, 0]]) if cost > 0 else 0
+            cost = self.collision_diameter**2 - dx**2 - dy**2
+            return np.diag([2, 2, 0, 0]) if cost > 0 else 0
 
         for j in range(self.N):
             if i == j:
                 continue
             val += collision_cost_hess(i, j)
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_dxj_dxj(x_k, u_k_i, i, j)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
     def dJi_dudu(self, x_k, u_k_i, i):
-        return 2 * self.J_R
+        val = 2 * self.J_R
+        if (_CPP_DEBUG):
+            alt = self.cpp.dJi_dudu(x_k, u_k_i, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
+        return val
 
     def f(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
         """ Dynamics funciton, gives x(state) at next time step 
@@ -344,6 +376,10 @@ class Unicycle(ResidualGame):
         dxdt = np.array([x[3] * cos(x[2]), x[3] * sin(x[2]), u[1], u[0]])
         val = x + dxdt * self.dt
         assert val.shape == (self.n, )
+        if (_CPP_DEBUG):
+            alt = self.cpp.f(x, u, i)
+            if (np.linalg.norm(alt.flatten() - val) > 1e-4):
+                breakpoint()
         return val
 
     def df_dx(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
@@ -367,6 +403,10 @@ class Unicycle(ResidualGame):
         if (self.config.DEBUG or _DEBUG):
             num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
+        if (_CPP_DEBUG):
+            alt = self.cpp.df_dx(x, u, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
     def df_du(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
@@ -386,6 +426,10 @@ class Unicycle(ResidualGame):
         if (self.config.DEBUG or _DEBUG):
             num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
+        if (_CPP_DEBUG):
+            alt = self.cpp.df_du(x, u, i)
+            if (np.linalg.norm(alt - val) > 1e-4):
+                breakpoint()
         return val
 
     def get_symbolic_dynamics(self):
@@ -423,7 +467,11 @@ class Unicycle(ResidualGame):
 
 if __name__ == "__main__":
     np.set_printoptions(formatter={'float': '{:7.3f}'.format})
-    _config = ResidualGameConfig(tolerance=1e-2, iterations=50, DEBUG=False)
+    _config = ResidualGameConfig(tolerance=1e-2,
+                                 iterations=50,
+                                 DEBUG=False,
+                                 USE_CPP=True,
+                                 CPP_DEBUG=False)
     print(_config)
     main = Unicycle(_config, agent_count=3)
     #main.get_symbolic_dynamics()

@@ -1,19 +1,23 @@
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 
-#include "car_merge_kinematic_bicycle.h"
+#include "unicycle.h"
 #include <eigen3/Eigen/LU>
 
 namespace py = pybind11;
 // using Scalar = float;
-using ClassName = CarMergeKinematicBicycle;
+using ClassName = Unicycle;
 
-PYBIND11_MODULE(car_merge_kinematic_bicycle, m) {
-  m.doc() = "pybind11 interface for c++/Eigen car_merge_kinematic_bicycle game";
-  py::class_<ClassName>(m, "CarMergeKinematicBicycle")
-      .def(py::init<int, int, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar,
-                    int, Matrix, Matrix, Matrix, Matrix, Matrix, Scalar, int,
-                    bool>())
+PYBIND11_MODULE(unicycle, m) {
+  m.doc() = "pybind11 interface for c++/Eigen unicycle game";
+  py::class_<ClassName>(m, "Unicycle")
+      .def(py::init<int /* N */, int /* T */, Scalar /* dt */, Scalar /* rho */,
+                    Scalar /* rho_b */, Scalar /* bc_a */, Scalar /* bc_b */,
+                    Scalar /* tolerance */, int /* backtrack_max_iter */,
+                    Matrix /* J_Qr */, Matrix /* J_Q */, Matrix /* J_R */,
+                    Scalar /* J_Q_col*/, Matrix /* x_ref */,
+                    Scalar /* col_diam */, int /* max_iter */,
+                    bool /* verbose */>())
       .def("set_x0", &ClassName::set_x0)
       .def("post_step_update", &ClassName::post_step_update)
 
@@ -38,9 +42,12 @@ PYBIND11_MODULE(car_merge_kinematic_bicycle, m) {
       .def("dJi_dudu", &ClassName::dJi_dudu)
       .def("dL_dx_ik", &ClassName::dL_dx_ik)
       .def("dLLi_dx", &ClassName::dLLi_dx)
+      .def("dLLi_dxi", &ClassName::dLLi_dxi)
       .def("dL_du", &ClassName::dL_du)
       .def("dLLi_du", &ClassName::dLLi_du)
+      .def("dLLi_dui", &ClassName::dLLi_dui)
       .def("dLLi_dx_dmu", &ClassName::dLLi_dx_dmu)
+      .def("dLLi_dxi_dmu", &ClassName::dLLi_dxi_dmu)
       .def("dBh_dxi", &ClassName::dBh_dxi)
       .def("dBh_dxj", &ClassName::dBh_dxj)
       .def("dBh_dxi_dxi", &ClassName::dBh_dxi_dxi)
@@ -70,8 +77,7 @@ PYBIND11_MODULE(car_merge_kinematic_bicycle, m) {
                &ClassName::dr_dlamda))
       .def("dr_dmu",
            static_cast<Matrix (ClassName::*)(
-               const std::vector<Matrix> &x,
-               const std::vector<Matrix> &u,
+               const std::vector<Matrix> &x, const std::vector<Matrix> &u,
                const std::vector<Matrix> &lamda, const std::vector<Matrix> &mu,
                const std::vector<Matrix> &h_plus_mask) const>(
                &ClassName::dr_dmu))

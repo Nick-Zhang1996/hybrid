@@ -1048,20 +1048,20 @@ class ResidualGame(PrintObject, ABC):
         dim_x = T * N * n
         dim_u = T * N * m
         dim_mu = T * N * N
-        dLL_dxi_dmu = np.zeros((T * n, dim_mu))
+        dLLi_dxi_dmu = np.zeros((T * n, dim_mu))
         for k in range(1, T + 1):
             for j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                 dLLi_dxki_dmuijk = self.dh_dxi(x[k - 1, i], x[k - 1, j])
-                dLL_dxi_dmu[(k - 1) * n:k * n,
-                            (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
+                dLLi_dxi_dmu[(k - 1) * n:k * n,
+                             (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
         if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dxi_dmu([xx for xx in x], [uu for uu in u],
                                         [hh for hh in h_plus_mask],
                                         [ll for ll in lamda],
                                         [mmm for mmm in mu], i)
-            if (np.linalg.norm(alt - dLL_dx_dmu) > 1e-4):
+            if (np.linalg.norm(alt - dLLi_dxi_dmu) > 1e-4):
                 breakpoint()
-        return dLL_dxi_dmu
+        return dLLi_dxi_dmu
 
     # NOTE obsolete, use dLLi_dxi_dmu now
     def dLLi_dx_dmu(self, x, u, h_plus_mask, lamda, mu, i):
@@ -1078,25 +1078,25 @@ class ResidualGame(PrintObject, ABC):
         dim_x = T * N * n
         dim_u = T * N * m
         dim_mu = T * N * N
-        dLL_dx_dmu = np.zeros((dim_x, dim_mu))
+        dLLi_dx_dmu = np.zeros((dim_x, dim_mu))
         for k in range(1, T + 1):
             for j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                 dLLi_dxki_dmuijk = self.dh_dxi(x[k - 1, i], x[k - 1, j])
                 dLLi_dxkj_dmuijk = self.dh_dxj(x[k - 1, i], x[k - 1, j])
-                dLL_dx_dmu[(k - 1) * N * n + i * n:(k - 1) * N * n +
-                           (i + 1) * n,
-                           (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
-                dLL_dx_dmu[(k - 1) * N * n + j * n:(k - 1) * N * n +
-                           (j + 1) * n,
-                           (k - 1) * N * N + i * N + j] = dLLi_dxkj_dmuijk
+                dLLi_dx_dmu[(k - 1) * N * n + i * n:(k - 1) * N * n +
+                            (i + 1) * n,
+                            (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
+                dLLi_dx_dmu[(k - 1) * N * n + j * n:(k - 1) * N * n +
+                            (j + 1) * n,
+                            (k - 1) * N * N + i * N + j] = dLLi_dxkj_dmuijk
         if (self.config.CPP_DEBUG):
             alt = self.cpp.dLLi_dx_dmu([xx for xx in x], [uu for uu in u],
                                        [hh for hh in h_plus_mask],
                                        [ll for ll in lamda],
                                        [mmm for mmm in mu], i)
-            if (np.linalg.norm(alt - dLL_dx_dmu) > 1e-4):
+            if (np.linalg.norm(alt - dLLi_dx_dmu) > 1e-4):
                 breakpoint()
-        return dLL_dx_dmu
+        return dLLi_dx_dmu
 
     '''
     def r_numerical(self, x, u, lamda, mu, h_plus_mask):
@@ -1424,7 +1424,7 @@ class ResidualGame(PrintObject, ABC):
                                        [hh for hh in h_plus_mask],
                                        [ll for ll in lamda], [mm
                                                               for mm in mu], i)
-            if (np.linalg.norm(alt - dLL_dxdx) > 1e-4):
+            if (np.linalg.norm(alt - dLL_dxi_dx) > 1e-4):
                 breakpoint()
         return dLL_dxi_dx
 
