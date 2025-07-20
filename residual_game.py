@@ -18,7 +18,7 @@ from matplotlib.patches import Rectangle
 from itertools import chain
 import scipy.sparse.linalg
 
-from utilities.util import PrintObject
+from utilities.util import PrintObject, jacobianNumerical
 from utilities.time_util import TimeUtil
 #from src.build.particle_game import ParticleGame
 # FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?
@@ -611,10 +611,17 @@ class ResidualGame(PrintObject, ABC):
                   x=None,
                   visualize=False,
                   save_gif=False,
+                  save_fig=False,
                   animate=False,
+                  fig_name='visualize',
                   gif_prefix='run'):
-        """ Visualize the control. populate X if not provided"""
-        if (visualize or save_gif):
+        """ Visualize the control. populate x if not provided. Abstrat method, subclass
+        are expected to implement this for the specific game 
+        Args: 
+            u: control, [T,N,m] np.ndarray, but will be reshaped
+            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
+        """
+        if (visualize or save_gif or save_fig):
             fig = self._visualize(u, x)
             if (save_gif):
                 fig.canvas.draw()
@@ -623,6 +630,10 @@ class ResidualGame(PrintObject, ABC):
                 self.frame_vec.append(frame)
             if (visualize):
                 plt.show()
+            if (save_fig):
+                filename = f'logs/{fig_name}.png'
+                plt.savefig(filename)
+                logger.info(f'saved figure to {filename}')
         if (animate):
             self._animation(u, x, gif_prefix=gif_prefix)
         return

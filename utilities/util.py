@@ -24,12 +24,15 @@ def ifprint(*objects):
 
 
 def jacobianNumerical(fun, x, dim=1):
-    '''
+    """
     find jacobian of fun at x
-    x: np.array  .shape = (n)
-    fun: lambda function, f:R^n -> R^dim,
-    return: Jacobian matrix of f'(x), shape = (1,n)
-    '''
+    Args:
+        x: np.array  .shape = (n)
+        fun: lambda function, f:R^n -> R^dim,
+        dim: dimension of output for fun
+    Return:
+        Jacobian matrix of f'(x), shape = (1,n)
+    """
     epsilon = 1e-6
     x = np.array(x)
     n = x.shape[0]
