@@ -37,7 +37,7 @@ class SteinMerge(CarMergeKinematicBicycle):
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
         self.target_y = [1] * (main_lane_n + merge_lane_n)
         """
-        super().__init__(car_count, 20)
+        super().__init__(config, car_count, 20)
         assert isinstance(self, SteinGame)
         self.guess = np.zeros((self.T, self.N, self.m))
         # multiple car merge, car_count: main_lane_n + merge_lane_n
