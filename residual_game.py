@@ -19,7 +19,7 @@ from matplotlib.patches import Rectangle
 from itertools import chain
 import scipy.sparse.linalg
 
-from .utilities.util import PrintObject, jacobianNumerical
+from .utilities.util import PrintObject, jacobian_numerical
 from .utilities.time_util import TimeUtil
 #from src.build.particle_game import ParticleGame
 # FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?
@@ -337,7 +337,7 @@ class ResidualGame(PrintObject, ABC):
 
         if (self.config.DEBUG):
             t0 = time()
-            Dr_alt = jacobianNumerical(r_y_fun, y0, dim=r0.shape[0])
+            Dr_alt = jacobian_numerical(r_y_fun, y0, dim=r0.shape[0])
             logger.debug(f't: Dr numerical {time()-t0}')
             logger.debug(np.linalg.norm(Dr - Dr_alt))
             assert (np.linalg.norm(Dr - Dr_alt) < 1e-4)
@@ -786,13 +786,13 @@ class ResidualGame(PrintObject, ABC):
         # NOTE the behavior of barrier function near boundary may need tuning
         if (self.config.DEBUG):
             # dJi_dx -- passed
-            num = jacobianNumerical(
+            num = jacobian_numerical(
                 lambda xx: self.J(xx.reshape(x_k.shape), u_k_i, i),
                 x_k.flatten()).reshape(1, self.N, self.n)[:, i]
             ana = self.dJi_dxi(x_k, u_k_i, i)
             assert (np.linalg.norm(num - ana) < 1e-4)
             # df_dx -- inconclusive
-            num = jacobianNumerical(lambda uu: self.J(x_k, uu, i), u_k_i)
+            num = jacobian_numerical(lambda uu: self.J(x_k, uu, i), u_k_i)
             ana = self.dJi_du(x_k, u_k_i, i)
             assert (np.linalg.norm(num - ana) < 1e-4)
             # dh_dxi -- inconclusive
@@ -800,10 +800,10 @@ class ResidualGame(PrintObject, ABC):
                 if i == j:
                     continue
                 ana = self.dh_dxi(x_k[i], x_k[j])
-                num = jacobianNumerical(lambda xx: self.h(xx, x_k[j]), x_k[i])
+                num = jacobian_numerical(lambda xx: self.h(xx, x_k[j]), x_k[i])
                 assert (np.linalg.norm(num - ana) < 1e-4)
 
-            num = jacobianNumerical(
+            num = jacobian_numerical(
                 lambda xx: self.L(xx.reshape(x_k.shape), u_k_i, x_k1_i,
                                   h_k_plus_mask, lamda_k, mu_k, i),
                 x_k.flatten())
@@ -884,7 +884,7 @@ class ResidualGame(PrintObject, ABC):
                                                         i], h_plus_mask[k - 1],
                                    lamda[k], mu[k - 1], i) - lamda[k - 1, i].T
             if (self.config.DEBUG):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xx: self.L(xx.reshape(N, n), u[k, i], x[
                         k, i], h_plus_mask[k - 1], lamda[k], mu[k - 1], i),
                     x[k - 1].flatten())
@@ -929,7 +929,7 @@ class ResidualGame(PrintObject, ABC):
                                                         i], h_plus_mask[k - 1],
                                    lamda[k], mu[k - 1], i) - lamda[k - 1, i].T
             if (self.config.DEBUG):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xx: self.L(xx.reshape(N, n), u[k, i], x[
                         k, i], h_plus_mask[k - 1], lamda[k], mu[k - 1], i),
                     x[k - 1].flatten())
@@ -1219,7 +1219,7 @@ class ResidualGame(PrintObject, ABC):
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxi(x_i, x_j)
         if (self.config.DEBUG):
-            val_num = jacobianNumerical(
+            val_num = jacobian_numerical(
                 lambda xx: self.Bh(xx.reshape(x_i.shape), x_j), x_i.flatten())
             assert (np.linalg.norm(val - val_num) < 1e-4)
         if (self.config.CPP_DEBUG):
@@ -1235,7 +1235,7 @@ class ResidualGame(PrintObject, ABC):
         #dB(h)/dx = -rho^-1 h^-1 dhdx
         val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxj(x_i, x_j)
         if (self.config.DEBUG):
-            val_num = jacobianNumerical(
+            val_num = jacobian_numerical(
                 lambda xx: self.Bh(x_i, xx.reshape(x_j.shape)), x_j.flatten())
             assert (np.linalg.norm(val - val_num) < 1e-4)
         if (self.config.CPP_DEBUG):
@@ -1252,7 +1252,7 @@ class ResidualGame(PrintObject, ABC):
         val = 1 / (self.rho * h) * (-self.dh_dxi_dxi(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxi)
         if (self.config.DEBUG):
-            val_num = jacobianNumerical(
+            val_num = jacobian_numerical(
                 lambda xx: self.dBh_dxi(xx.reshape(x_i.shape), x_j),
                 x_i.flatten(),
                 dim=self.n)
@@ -1283,7 +1283,7 @@ class ResidualGame(PrintObject, ABC):
         val = 1 / (self.rho * h) * (-self.dh_dxi_dxj(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxj)
         if (self.config.DEBUG):
-            val_num = jacobianNumerical(
+            val_num = jacobian_numerical(
                 lambda xx: self.dBh_dxi(x_i, xx.reshape(x_j.shape)),
                 x_j.flatten(),
                 dim=self.n)
@@ -1310,7 +1310,7 @@ class ResidualGame(PrintObject, ABC):
         val = 1 / (self.rho * h) * (-self.dh_dxj_dxj(x_i, x_j) +
                                     1 / h * dhdxj.T @ dhdxj)
         if (self.config.DEBUG):
-            val_num = jacobianNumerical(
+            val_num = jacobian_numerical(
                 lambda xx: self.dBh_dxj(x_i, xx.reshape(x_j.shape)),
                 x_j.flatten(),
                 dim=self.n)
@@ -1411,7 +1411,7 @@ class ResidualGame(PrintObject, ABC):
                             logger.debug(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
-            dLLi_dxi_dx_num = jacobianNumerical(lambda xx: self.dLLi_dxi(
+            dLLi_dxi_dx_num = jacobian_numerical(lambda xx: self.dLLi_dxi(
                 xx.reshape(x.shape), u, h_plus_mask, lamda, mu, i),
                                                 x.flatten(),
                                                 dim=T * n)
@@ -1547,7 +1547,7 @@ class ResidualGame(PrintObject, ABC):
                             logger.debug(f'i = {i} ii={ii},j={j},k={k}')
                             #breakpoint()
             '''
-            dLL_dxdx_num = jacobianNumerical(lambda xx: self.dLLi_dx(
+            dLL_dxdx_num = jacobian_numerical(lambda xx: self.dLLi_dx(
                 xx.reshape(x.shape), u, h_plus_mask, lamda, mu, i),
                                              x.flatten(),
                                              dim=dim_x)
@@ -1590,7 +1590,7 @@ class ResidualGame(PrintObject, ABC):
                          x[k - 1, i], u[k, i], i)
 
         if (self.config.DEBUG):
-            dxdu_num = jacobianNumerical(lambda uu: self.rollout(
+            dxdu_num = jacobian_numerical(lambda uu: self.rollout(
                 self.x0, uu.reshape((T, N, m)), u.flatten(), dim=dim_x))
             logger.debug(f'dxdu_num err {np.linalg.norm(dxdu_num - retval)}')
             if (np.linalg.norm(dxdu_num - retval) > 1e-4):
@@ -1694,7 +1694,7 @@ class ResidualGame(PrintObject, ABC):
                 index += len(indices)
 
         if (self.config.DEBUG):
-            drdx_num = jacobianNumerical(lambda xx: self.r(
+            drdx_num = jacobian_numerical(lambda xx: self.r(
                 xx.reshape(x.shape), u, lamda, mu, h_plus_mask),
                                          x.flatten(),
                                          dim=dim_r)
@@ -1775,7 +1775,7 @@ class ResidualGame(PrintObject, ABC):
                                                 i])  # skip  f(x,u)-x+,  h(x,x)
 
         if (self.config.DEBUG):
-            drdu_num = jacobianNumerical(lambda uu: self.r(
+            drdu_num = jacobian_numerical(lambda uu: self.r(
                 x, uu.reshape(u.shape), lamda, mu, h_plus_mask),
                                          u.flatten(),
                                          dim=dim_r)
@@ -1841,7 +1841,7 @@ class ResidualGame(PrintObject, ABC):
                 h_plus_mask[:, i])  # skip  dLL_dui, f(x,u)-x+,  h(x,x)
 
         if (self.config.DEBUG):
-            dr_dlamda_num = jacobianNumerical(lambda ll: self.r(
+            dr_dlamda_num = jacobian_numerical(lambda ll: self.r(
                 x, u, ll.reshape(lamda.shape), mu, h_plus_mask),
                                               lamda.flatten(),
                                               dim=dim_r)
@@ -1879,7 +1879,7 @@ class ResidualGame(PrintObject, ABC):
             dLL_dxi_dmu = self.dLLi_dxi_dmu(x, u, h_plus_mask, lamda, mu, i)
             dr_dmu[index:index + T * n, :] = dLL_dxi_dmu
             if (self.config.DEBUG):
-                dLL_dxi_dmu_num = jacobianNumerical(lambda mm: self.dLLi_dxi(
+                dLL_dxi_dmu_num = jacobian_numerical(lambda mm: self.dLLi_dxi(
                     x, u, h_plus_mask, lamda, mm.reshape(mu.shape), i),
                                                     mu.flatten(),
                                                     dim=self.T * self.n)
@@ -1888,7 +1888,7 @@ class ResidualGame(PrintObject, ABC):
             index += T * n + T * m + n * T + np.sum(h_plus_mask[:, i])
 
         if (self.config.DEBUG):
-            dr_dmu_num = jacobianNumerical(lambda mm: self.r(
+            dr_dmu_num = jacobian_numerical(lambda mm: self.r(
                 x, u, lamda, mm.reshape(mu.shape), h_plus_mask),
                                            mu.flatten(),
                                            dim=dim_r)

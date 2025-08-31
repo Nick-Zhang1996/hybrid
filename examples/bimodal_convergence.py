@@ -167,7 +167,7 @@ class BimodalConvergence(SteinGame):
             retval = dJ1_dx0 + dJ2_dx0
 
         if (self.config.DEBUG):
-            dJfi_dxi_num = jacobianNumerical(
+            dJfi_dxi_num = jacobian_numerical(
                 lambda xx: self.Jfi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=1)
@@ -203,7 +203,7 @@ class BimodalConvergence(SteinGame):
                     + df2_dx0.T * np.exp(-f2)  @ -df2_dx0  + np.exp(-f2) * df2_dx0dx0
 
         if (self.config.DEBUG):
-            dJfi_dxi_dxi_num = jacobianNumerical(
+            dJfi_dxi_dxi_num = jacobian_numerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=self.n)
@@ -244,7 +244,7 @@ class BimodalConvergence(SteinGame):
                     + df2_dx0.T * np.exp(-f2) @ -df2_dx1
 
         if (self.config.DEBUG):
-            dJfi_dxi_dxj_num = jacobianNumerical(
+            dJfi_dxi_dxj_num = jacobian_numerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=self.n)

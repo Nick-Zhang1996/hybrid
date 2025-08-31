@@ -316,6 +316,7 @@ class CarMergeKinematicBicycle(SteinGame):
 
     ''' --------  math functions and their derivatives ------ '''
 
+    @cpp_capable
     def J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
@@ -324,8 +325,6 @@ class CarMergeKinematicBicycle(SteinGame):
         i: agent id
         '''
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
-        if (self.config.USE_CPP):
-            return self.cpp.J(x_k, u_k_i, i)
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i

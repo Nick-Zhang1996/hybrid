@@ -13,7 +13,7 @@ import matplotlib.cm as cm
 from residual_game import ResidualGame, ResidualGameConfig, ResidualGameConfig
 from src.build.unicycle import Unicycle as cpp_Unicycle
 from ..utilities import symbolic_dynamics
-from ..utilities.util import jacobianNumerical
+from ..utilities.util import jacobian_numerical
 
 logger = logging.getLogger("Unicycle")
 logger.setLevel(logging.DEBUG)
@@ -216,7 +216,7 @@ class Unicycle(ResidualGame):
                 _x_k[i] = x_i
                 return self.J(_x_k, u_k_i, i)
 
-            num = jacobianNumerical(lambda x_i: _J(x_i, u_k_i, i), x_k[i])
+            num = jacobian_numerical(lambda x_i: _J(x_i, u_k_i, i), x_k[i])
             assert (np.linalg.norm(num - val) < 1e-4)
         if (_CPP_DEBUG):
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
@@ -258,7 +258,7 @@ class Unicycle(ResidualGame):
                 _x_k[j] = x_j
                 return self.J(_x_k, u_k_i, i)
 
-            num = jacobianNumerical(lambda x_j: _J(x_j, u_k_i, i, j), x_k[j])
+            num = jacobian_numerical(lambda x_j: _J(x_j, u_k_i, i, j), x_k[j])
             assert (np.linalg.norm(num - val) < 1e-4)
         if (_CPP_DEBUG):
             alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
@@ -401,7 +401,7 @@ class Unicycle(ResidualGame):
         val = np.eye(4) + dfdx * self.dt
         assert val.shape == (self.n, self.n)
         if (self.config.DEBUG or _DEBUG):
-            num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
+            num = jacobian_numerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         if (_CPP_DEBUG):
             alt = self.cpp.df_dx(x, u, i)
@@ -424,7 +424,7 @@ class Unicycle(ResidualGame):
         val = dfdu * self.dt
         assert val.shape == (self.n, self.m)
         if (self.config.DEBUG or _DEBUG):
-            num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
+            num = jacobian_numerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         if (_CPP_DEBUG):
             alt = self.cpp.df_du(x, u, i)

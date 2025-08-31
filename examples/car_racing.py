@@ -496,7 +496,7 @@ class CarRacing(ResidualGame):
                          ]])
         val = np.eye(4) + dfdx * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
+            num = jacobian_numerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-3)
         if (self.config.CPP_DEBUG):
             alt = self.cpp.df_dx(x, u, i)
@@ -509,7 +509,7 @@ class CarRacing(ResidualGame):
         dfdu = np.array([[0, 0], [0, 1], [0, 0], [1 / x1, 0]])
         val = dfdu * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
+            num = jacobian_numerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         if (self.config.CPP_DEBUG):
             alt = self.cpp.df_du(x, u, i)

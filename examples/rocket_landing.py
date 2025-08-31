@@ -284,11 +284,11 @@ class RocketLanding(ResidualGame):
                 breakpoint()
         if (self.config.DEBUG):
             if (i == 0):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xi: self.J(np.vstack([xi, x_k[1]]), u_k_i, i),
                     x_k[0])
             elif (i == 1):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xi: self.J(np.vstack([x_k[0], xi]), u_k_i, i),
                     x_k[1])
             assert (np.linalg.norm(num - val) < 1e-4)
@@ -311,11 +311,11 @@ class RocketLanding(ResidualGame):
                 breakpoint()
         if (self.config.DEBUG):
             if (i == 0 and j == 1):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xj: self.J(np.vstack([x_k[0], xj]), u_k_i, i),
                     x_k[1].flatten())
             elif (i == 1 and j == 0):
-                num = jacobianNumerical(
+                num = jacobian_numerical(
                     lambda xj: self.J(np.vstack([xj, x_k[1]]), u_k_i, i),
                     x_k[0].flatten())
             assert (np.linalg.norm(num - val) < 1e-4)
@@ -334,7 +334,7 @@ class RocketLanding(ResidualGame):
             if (np.linalg.norm(alt - val) > 1e-4):
                 breakpoint()
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda xi: self.J(x_k, u_k_i, i), u_k_i)
+            num = jacobian_numerical(lambda xi: self.J(x_k, u_k_i, i), u_k_i)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
@@ -400,7 +400,7 @@ class RocketLanding(ResidualGame):
 
         val = np.eye(self.n) + A * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
+            num = jacobian_numerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
@@ -419,7 +419,7 @@ class RocketLanding(ResidualGame):
             B[1, 0] = 1
         val = B * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
+            num = jacobian_numerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 

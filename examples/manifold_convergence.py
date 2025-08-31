@@ -160,7 +160,7 @@ class ManifoldConvergence(SteinGame):
         retval = np.exp(-f**2) * 2 * f * df
 
         if (self.config.DEBUG):
-            dJfi_dxi_num = jacobianNumerical(
+            dJfi_dxi_num = jacobian_numerical(
                 lambda xx: self.Jfi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=1)
@@ -185,7 +185,7 @@ class ManifoldConvergence(SteinGame):
             -f**2) * df.T * 2 * df + np.exp(-f**2) * 2 * f * ddf
 
         if (self.config.DEBUG):
-            dJfi_dxi_dxi_num = jacobianNumerical(
+            dJfi_dxi_dxi_num = jacobian_numerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=self.n)
@@ -209,7 +209,7 @@ class ManifoldConvergence(SteinGame):
                                  dfj) + np.exp(-f**2) * df.T * 2 * dfj
 
         if (self.config.DEBUG):
-            dJfi_dxi_dxj_num = jacobianNumerical(
+            dJfi_dxi_dxj_num = jacobian_numerical(
                 lambda xx: self.dJfi_dxi(xx.reshape(x_T.shape), i),
                 x_T.flatten(),
                 dim=self.n)

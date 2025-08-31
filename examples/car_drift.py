@@ -520,7 +520,7 @@ class CarDrift(ResidualGame):
 
         val = np.eye(self.n) + dfdx * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
+            num = jacobian_numerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
@@ -530,7 +530,7 @@ class CarDrift(ResidualGame):
         B[7, 1] = 1
         val = B * self.dt
         if (self.config.DEBUG):
-            num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
+            num = jacobian_numerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
             assert (np.linalg.norm(num - val) < 1e-4)
         return val
 

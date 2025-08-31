@@ -234,8 +234,8 @@ class Newton(Solver):
         h_pos = list(compress(self.hx, h_x0 > 0))
         h_neg = list(compress(self.hx, h_x0 <= 0))
         # Hessian, Jacobian for f^
-        H = hessianNumerical(lambda x: self.evaluateNoCount(x, h_neg), x0)
-        J = jacobianNumerical(lambda x: self.evaluateNoCount(x, h_neg), x0)
+        H = hessian_numerical(lambda x: self.evaluateNoCount(x, h_neg), x0)
+        J = jacobian_numerical(lambda x: self.evaluateNoCount(x, h_neg), x0)
 
         # If negative hessian, do gradient descent
         # TODO is this reasonable?
@@ -253,7 +253,7 @@ class Newton(Solver):
 
         if (m_l_hat > 0):
             l_hat_x0 = np.vstack([ll(x0) for ll in l_hat])
-            J_l_hat = jacobianNumerical(
+            J_l_hat = jacobian_numerical(
                 lambda x: np.array([l(x) for l in l_hat]), x0, dim=len(l_hat))
             # linear system for primal-dual problem: A @ [dx,lambda]^T = B
             A = np.block([[H, J_l_hat.T],
@@ -285,9 +285,9 @@ class Newton(Solver):
         # backtracking line search
         t = 1.0  # step size
         for i in range(5):
-            J_f = jacobianNumerical(lambda x: self.evaluateNoCount(x, h_neg),
+            J_f = jacobian_numerical(lambda x: self.evaluateNoCount(x, h_neg),
                                     x0 + t * dx)
-            J_l = jacobianNumerical(lambda x: np.array([l(x) for l in l_hat]),
+            J_l = jacobian_numerical(lambda x: np.array([l(x) for l in l_hat]),
                                     x0 + t * dx,
                                     dim=len(l_hat))
             l_x = np.array([l(x0 + t * dx) for l in l_hat]).reshape(m_l_hat, 1)
@@ -421,7 +421,7 @@ class DualAscent(Solver):
                       for (uu, ll) in zip(u, self.lx)]) + 0.5 * p * sum(
                           [ll(x)**2 if ll(x) > 0 else 0 for ll in self.lx])
         # Primal descent
-        J = jacobianNumerical(lambda x: Lx(x, self.u, self.v), self.x)  # 1*n
+        J = jacobian_numerical(lambda x: Lx(x, self.u, self.v), self.x)  # 1*n
         norm = np.linalg.norm(J)
         if (norm > self.primal_max_step_size):
             step = -J / norm * self.primal_max_step_size * self.primalLr(i)

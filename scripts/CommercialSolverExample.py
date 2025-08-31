@@ -35,7 +35,7 @@ class Example(object):
         obj = np.sum(np.array(res1+res2)**2)
         return obj
     def gradient(self, x):
-        jac = jacobianNumerical(self.objective,x,dim=r0.shape[0])
+        jac = jacobian_numerical(self.objective,x,dim=r0.shape[0])
         return jac
 
     def constraints(self, x):
@@ -47,7 +47,7 @@ class Example(object):
         return np.array([[1,0,-1,0],[0,1,0,-1]])
 
     def hessian(self, x, lagrange, obj_factor):
-        hes = obj_factor * hessianNumerical(self.objective, x)
+        hes = obj_factor * hessian_numerical(self.objective, x)
         # convert to lower triangular matrix, flattened
         hs = sps.coo_matrix(np.tril(np.ones((hes.shape[0], hes.shape[0]))))
         return hes[hs.row, hs.col]

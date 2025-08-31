@@ -1,9 +1,11 @@
+''' Common utilities for entire project'''
+# pylint: disable=invalid-name
 import os
 import inspect
-import numpy as np
 import functools
 
-global BASEDIR
+import numpy as np
+
 BASEDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def cpp_capable(py_function):
@@ -17,7 +19,7 @@ def cpp_capable(py_function):
     """
     @functools.wraps(py_function)
     def wrapper(self, *args, **kwargs):
-        if self.config.use_cpp:
+        if self.config.USE_CPP:
             # Get the function with the same name from the C++ object
             cpp_function = getattr(self.cpp, py_function.__name__)
             return cpp_function(*args, **kwargs)
@@ -26,8 +28,8 @@ def cpp_capable(py_function):
     return wrapper
 
 
-def printCurrentMemoryUsage(text=''):
-    # Open the /proc/self/status file
+def print_current_memory_usage(text=''):
+    ''' Use the /proc/self/status file '''
     with open("/proc/self/status", "r") as file:
         # Read the file line by line
         for line in file:
@@ -38,12 +40,7 @@ def printCurrentMemoryUsage(text=''):
                 break
 
 
-def ifprint(*objects):
-    if (PRINT):
-        print(*objects)
-
-
-def jacobianNumerical(fun, x, dim=1):
+def jacobian_numerical(fun, x, dim=1):
     """
     find jacobian of fun at x
     Args:
@@ -60,7 +57,7 @@ def jacobianNumerical(fun, x, dim=1):
     # A = df/dx
     A = np.zeros((dim, n), dtype=float)
     # empty function
-    if (dim == 0):
+    if dim == 0:
         return A
     # find A
     for i in range(n):
@@ -74,7 +71,7 @@ def jacobianNumerical(fun, x, dim=1):
         x_r[i] += epsilon
         x_post_r = fun(x_r)
 
-        if (dim == 1):
+        if dim == 1:
             A[:, i] += (x_post_r.item() - x_post_l.item()) / (2 * epsilon)
         else:
             A[:,
@@ -83,23 +80,20 @@ def jacobianNumerical(fun, x, dim=1):
     return A
 
 
-# find jacobian and hessian for f(x): n->scalar
-def hessianNumerical(fun, x):
+def hessian_numerical(fun, x):
     '''
     find hessian of fun at x
     x: np.array  .shape = (n)
     fun: lambda function, f:R^n -> R,
     return: Hessian matrix of f'(x), shape = (n,n)
     '''
-    epsilon = 1e-5
     x = np.array(x)
     n = x.shape[0]
-    H = np.zeros((n, n), dtype=float)
-    return jacobianNumerical(lambda val: jacobianNumerical(fun, val), x, dim=n)
+    return jacobian_numerical(lambda val: jacobian_numerical(fun, val), x, dim=n)
 
 
-# find the directional derivative
 def dirDer(fun, x0, dx):
+    ''' find the directional derivative '''
     step = dx / np.linalg.norm(dx) * 1e-6
     return (fun(x0 + step) - fun(x0)) / 1e-6
 
@@ -128,14 +122,14 @@ def jacobianNumericalSlow(fun, x):
     return A
 
 
+# pylint: disable=missing-function-docstring
 class PrintObject:
+    ''' Base class for printing, obselete'''
     silent = False
     debug = False
 
     def __init__(self):
-        #print_ok(self.prefix() + "in use")
-        #self.DEBUG = False
-        pass
+        self.DEBUG = False
 
     def print_debug_enable(self):
         self.DEBUG = True
@@ -157,21 +151,21 @@ class PrintObject:
         raise RuntimeError
 
     def print_ok(self, *message):
-        if (self.silent):
+        if self.silent:
             return
         # green
         print('\033[92m', self.prefix(), *message, '\033[0m')
 
     def print_debug(self, *message):
-        if (self.silent):
+        if self.silent:
             return
         # yellow
-        if (self.config.DEBUG):
+        if self.config.DEBUG:
             print('\033[93m', self.prefix(),
                   inspect.stack()[1][3], *message, '\033[0m')
 
     def print_warning(self, *message):
-        if (self.silent):
+        if self.silent:
             return
         # yellow
         #print('\033[93m',self.prefix(), *message, '\033[0m')
@@ -179,7 +173,7 @@ class PrintObject:
         print('\033[91m', self.prefix(), 'WARNING: ', *message, '\033[0m')
 
     def print_info(self, *message):
-        if (self.silent):
+        if self.silent:
             return
         # light blue
         print('\033[96m', self.prefix(), *message, '\033[0m')
