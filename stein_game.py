@@ -5,18 +5,21 @@ like the system dynamics, constraint function, cost functions, and their derivat
 from abc import abstractmethod
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+
 import numpy as np
 import scipy.sparse
 import scipy.sparse.linalg
 
-from utilities.time_util import TimeUtil
-from residual_game import ResidualGame, ResidualGameConfig
+from .utilities.time_util import TimeUtil
+from .residual_game import ResidualGame, ResidualGameConfig
 
 logger = logging.getLogger("ProfileSteinMerge")
 logger.setLevel(logging.INFO)
 
 
 # TODO adopt this
+@dataclass(frozen=True)
 class SteinGameConfig(ResidualGameConfig):
     stein_iterations: int = 20
     particles: int = 20
@@ -40,7 +43,11 @@ class SteinGame(ResidualGame):
 
         self.particle_history = []
 
-    def solve(self):
+    def solve(self,
+              u_ref=None,
+              save_gif=False,
+              visualize=False,
+              animate=False):
         T = self.T
         N = self.N
         n = self.n

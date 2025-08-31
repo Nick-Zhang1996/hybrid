@@ -1,5 +1,6 @@
 # Base class for residual game
 # for an example of a subclass, see UnstructuredDriving.py
+# pylint: disable=invalid-name
 
 import os
 from functools import lru_cache
@@ -9,7 +10,7 @@ from time import time
 from abc import ABC, abstractmethod
 from scipy import interpolate
 import scipy.sparse  # sparse matrix operations
-from typing import NamedTuple
+from dataclasses import dataclass
 
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -18,8 +19,8 @@ from matplotlib.patches import Rectangle
 from itertools import chain
 import scipy.sparse.linalg
 
-from utilities.util import PrintObject, jacobianNumerical
-from utilities.time_util import TimeUtil
+from .utilities.util import PrintObject, jacobianNumerical
+from .utilities.time_util import TimeUtil
 #from src.build.particle_game import ParticleGame
 # FIXME: Definitely need to do, TODO: will probably do, NOTE: maybe?
 # TODO for cpp, change gradient for barrier function to cap at 1e20 instead of 1e10
@@ -29,7 +30,8 @@ logger = logging.getLogger("ResidualGame")
 logger.setLevel(logging.INFO)
 
 
-class ResidualGameConfig(NamedTuple):
+@dataclass(frozen=True)
+class ResidualGameConfig():
     """ Configs for Residual Game """
     USE_CPP: bool = False
     CPP_DEBUG: bool = False
@@ -107,6 +109,7 @@ class ResidualGame(PrintObject, ABC):
         self.profiler = TimeUtil(False)
         #logger.debug_enable()
         self.residual_vec = []
+        self.cpp = None
 
     def setup(self):
         # subclass responsible for loading specific cpp/eigen module
@@ -340,18 +343,14 @@ class ResidualGame(PrintObject, ABC):
             assert (np.linalg.norm(Dr - Dr_alt) < 1e-4)
 
         # find newton direction, dense matrix
-        '''
-        t.s('lstsq')
-        dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
-        t.e('lstsq')
-        '''
+        # t.s('lstsq')
+        # dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
+        # t.e('lstsq')
         # find newton direction, Sparse lsqr
-        '''
-        t.s('sparse-lstsq')
-        sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
-        dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
-        t.e('sparse-lstsq')
-        '''
+        # t.s('sparse-lstsq')
+        # sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
+        # dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
+        # t.e('sparse-lstsq')
 
         # remove zero col/rows first, then use Sparse lsqr
         t.s('nonzero reduction')

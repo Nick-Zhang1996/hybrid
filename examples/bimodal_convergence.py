@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle as p
 
-from utilities.util import *
-from utilities.time_util import TimeUtil
+from ..utilities.util import *
+from ..utilities.time_util import TimeUtil
 
 from residual_game import ResidualGame, ResidualGameConfig
 from stein_game import SteinGame, SteinGameConfig

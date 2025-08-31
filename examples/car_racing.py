@@ -12,12 +12,12 @@ import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 from scipy.interpolate import splprep, splev, CubicSpline, interp1d
 
-from utilities.util import *
-from utilities.time_util import TimeUtil
+from ..utilities.util import *
+from ..utilities.time_util import TimeUtil
 from src.build.car_racing import CarRacing as cpp_CarRacing
 from residual_game import ResidualGame, ResidualGameConfig
 
-from utilities.symbolic_dynamics import SymbolicDynamics, MultiAgentSymbolicDynamics
+from ..utilities.symbolic_dynamics import SymbolicDynamics, MultiAgentSymbolicDynamics
 import sympy
 
 from track.NascarTrack import NascarTrack

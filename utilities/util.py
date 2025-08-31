@@ -1,9 +1,29 @@
 import os
 import inspect
 import numpy as np
+import functools
 
 global BASEDIR
-BASEDIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+BASEDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def cpp_capable(py_function):
+    """
+    A decorator that toggles between a Python and C++ implementation.
+
+    It assumes the class instance (`self`) has:
+    1. A `self.config.USE_CPP` boolean attribute.
+    2. A `self.cpp` object that contains the C++ functions with
+       names and arguments identical to the Python methods.
+    """
+    @functools.wraps(py_function)
+    def wrapper(self, *args, **kwargs):
+        if self.config.use_cpp:
+            # Get the function with the same name from the C++ object
+            cpp_function = getattr(self.cpp, py_function.__name__)
+            return cpp_function(*args, **kwargs)
+        else:
+            return py_function(self, *args, **kwargs)
+    return wrapper
 
 
 def printCurrentMemoryUsage(text=''):

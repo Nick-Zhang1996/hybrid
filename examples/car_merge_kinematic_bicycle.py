@@ -1,21 +1,17 @@
-import numpy as np
-from time import time
+import os
 from math import sin, cos, tan, atan, radians, degrees
-from PIL import Image
+
+import numpy as np
 from scipy import interpolate
-import scipy.sparse  # sparse matrix operations
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-
-from matplotlib.animation import FuncAnimation
-import matplotlib.image as mpimg
 from scipy.ndimage import rotate
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from matplotlib.animation import FuncAnimation
 
-from utilities.util import *
-from utilities.time_util import TimeUtil
-from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from residual_game import ResidualGame, ResidualGameConfig
-from stein_game import SteinGame, SteinGameConfig
+from ..utilities.util import cpp_capable, BASEDIR
+from ..src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
+from ..residual_game import ResidualGame, ResidualGameConfig
+from ..stein_game import SteinGame, SteinGameConfig
 
 
 # example: Merging
@@ -513,8 +509,9 @@ class CarMergeKinematicBicycle(SteinGame):
 
 if __name__ == "__main__":
     #np.random.seed(0)
-    _config = SteinGameConfig(USE_CPP=False)
-    main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
+    _config = SteinGameConfig(USE_CPP=False, iterations=3, particles=3)
+    #main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
+    main = CarMergeKinematicBicycle(_config, car_count=2, T=5)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve()
     main.final()

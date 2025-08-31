@@ -12,8 +12,8 @@ import matplotlib.cm as cm
 
 from residual_game import ResidualGame, ResidualGameConfig, ResidualGameConfig
 from src.build.unicycle import Unicycle as cpp_Unicycle
-from utilities import symbolic_dynamics
-from utilities.util import jacobianNumerical
+from ..utilities import symbolic_dynamics
+from ..utilities.util import jacobianNumerical
 
 logger = logging.getLogger("Unicycle")
 logger.setLevel(logging.DEBUG)

@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Rectangle
 
-from utilities.util import *
-from utilities.time_util import TimeUtil
+from .utilities.util import *
+from .utilities.time_util import TimeUtil
 from LQGameSolver import my_solve_lq_game
 from typing import NamedTuple
 

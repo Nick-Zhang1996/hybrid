@@ -7,14 +7,14 @@ from scipy.optimize import fsolve
 import matplotlib.image as mpimg
 from scipy.ndimage import rotate
 
-from utilities.util import *
-from utilities.time_util import TimeUtil
+from ..utilities.util import *
+from ..utilities.time_util import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from residual_game import ResidualGame, ResidualGameConfig
 from track.Skidpad import Skidpad
 from examples.one_car_drift import OneCarDrift
 
-from utilities.symbolic_dynamics import SymbolicDynamics, MultiAgentSymbolicDynamics
+from ..utilities.symbolic_dynamics import SymbolicDynamics, MultiAgentSymbolicDynamics
 import sympy
 
 
