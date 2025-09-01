@@ -19,9 +19,3 @@ To build and run the project, first clone the repository, then do the following 
 ## LQGame
 
 This repository also contains a car merging scenario under the kinematic bicycle dynamic model using the LQGame algorithm for optimization (see [this paper](https://arxiv.org/abs/1909.04694)). To run the merging scenario using LQGame, use `python cmkb_LQGame.py`. Settings such as car count and starting position can be changed in that file; most relevant settings are labeled. Most of the actual logic is contained in `LQGame.py`. The current implementation supports good car merging behavior for up to 4 cars. From 5+ there is no convergence at the moment. It's possible that higher car count will need a more favorable starting position in order to converge.
-
-Ideas to explore:
-* Implement different barrier function for crash detection. We see a dramatic response to crashes. Using a linear barrier function instead of a quadratic form may help dampen this.
-* Implement working backtracking line search. [This paper](https://ieeexplore.ieee.org/document/6907001) expands more on this concept. An implementation has been written, but is not fully correct.
-
-

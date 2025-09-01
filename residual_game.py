@@ -592,7 +592,7 @@ class ResidualGame(PrintObject, ABC):
         # vx+ = vx + ax*dt
         for i in range(self.N):
             for k in range(1, self.T + 1):
-                X[k, i] = self.f(X[k - 1, i], u[k - 1, i], i)
+                X[k, i] = self.f(X[k - 1, i], u[k - 1, i], i).flatten()
         return X[1:, :, :]
 
     @abstractmethod
@@ -751,7 +751,7 @@ class ResidualGame(PrintObject, ABC):
             np.log(-min(self.h(x_k[i], x_k[j.item()]), -1e-100))
             if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0]
         ])
-        dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i) - x_k1_i)
+        dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
@@ -847,7 +847,7 @@ class ResidualGame(PrintObject, ABC):
         # x0 related terms
         LLi_val += self.J(
             self.x0, u[0, i],
-            i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i) - x[0, i])
+            i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
         # x_T related terms
         LLi_val += self.Jfi(x[T - 1], i)
         h_plus = np.sum([
@@ -1142,12 +1142,12 @@ class ResidualGame(PrintObject, ABC):
                 # dynamics for f(x0,u0) = x1
                 r = np.hstack([
                     r, self.dynamics_residual_weight *
-                    self.f(self.x0[i], u[0, i], i) - x[0, i]
+                    self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
                 ])
                 for k in range(1, self.T):
                     r = np.hstack([
                         r, self.dynamics_residual_weight *
-                        self.f(x[k - 1, i], u[k, i], i) - x[k, i]
+                        self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                     ])  # dual for dynamics
                 for k in range(1, self.T):
                     r = np.hstack([r] + [
