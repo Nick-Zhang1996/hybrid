@@ -2,6 +2,7 @@ import os
 from math import sin, cos, tan, atan, radians, degrees
 
 import numpy as np
+import jax.numpy as jnp
 from scipy import interpolate
 from scipy.ndimage import rotate
 import matplotlib.pyplot as plt
@@ -127,7 +128,7 @@ class CarMergeKinematicBicycle(SteinGame):
     def setup(self):
         # subclass responsible for loading cpp/eigen module
         # and setting x0
-        if (self.config.USE_CPP or self.config.CPP_DEBUG):
+        if (self.config.USE_CPP):
             self.cpp = cpp_CarMergeKinematicBicycle(
                 self.N, self.T, self.dt, self.rho, self.rho_b, self.bc_a,
                 self.bc_b, self.config.tolerance, self.backtracking_max_iter,
@@ -328,10 +329,6 @@ class CarMergeKinematicBicycle(SteinGame):
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.J(x_k, u_k_i, i)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
@@ -339,39 +336,23 @@ class CarMergeKinematicBicycle(SteinGame):
         val = 2 * (x_k[i] -
                    self.J_x_ref_fun(i)).T @ self.J_Qr + 2 * x_k[i].T @ self.J_Q
         val = val.reshape(1,self.n)
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        val = np.zeros((1,self.n))
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dJi_dxj(x_k, u_k_i, i, j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
+        val = jnp.zeros((1,self.n))
         return val
 
     @cpp_capable
     def dJi_du(self, x_k, u_k_i, i):
         val = 2 * u_k_i.T @ self.J_R
         val = val.reshape(1,2)
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dJi_du(x_k, u_k_i, i)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     # dJ^i / dxi dxi
     @cpp_capable
     def dJi_dxi_dxi(self, x_k, u, i):
         val = 2 * self.J_Qr + 2 * self.J_Q
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dJi_dxi_dxi(x_k, u, i)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
@@ -400,7 +381,7 @@ class CarMergeKinematicBicycle(SteinGame):
         lf = 1.0
         lr = 1.0
         beta = atan(tan(u[1]) * lr / (lf + lr))
-        dx = np.array([
+        dx = jnp.array([
             x[2] * cos(x[3] + beta), x[2] * sin(x[3] + beta), u[0],
             x[2] / lr * sin(beta)
         ])
@@ -410,26 +391,20 @@ class CarMergeKinematicBicycle(SteinGame):
     @cpp_capable
     def df_dx(self, x, u, i):
         beta = atan(tan(u[1]) * 0.5)
-        A = np.array([[0, 0, cos(x[3] + beta), -x[2] * sin(x[3] + beta)],
+        A = jnp.array([[0, 0, cos(x[3] + beta), -x[2] * sin(x[3] + beta)],
                       [0, 0, sin(x[3] + beta), x[2] * cos(x[3] + beta)],
                       [0, 0, 0, 0], [0, 0, sin(beta) / 1.0, 0]])
-        val = np.eye(4) + A * self.dt
-        if (self.config.DEBUG):
-            num = jacobianNumerical(lambda xx: self.f(xx, u, i), x, dim=self.n)
-            assert (np.linalg.norm(num - val) < 1e-4)
+        val = jnp.eye(4) + A * self.dt
         return val
 
     @cpp_capable
     def df_du(self, x, u, i):
         beta = atan(tan(u[1]) * 0.5)
         dbeta_dst = 0.5 / (((tan(u[1]) * 0.5)**2 + 1) * cos(u[1])**2)
-        B = np.array([[0, -x[2] * sin(x[3] + beta) * dbeta_dst],
+        B = jnp.array([[0, -x[2] * sin(x[3] + beta) * dbeta_dst],
                       [0, x[2] * cos(x[3] + beta) * dbeta_dst], [1, 0],
                       [0, x[2] / 1.0 * cos(beta) * dbeta_dst]])
         val = B * self.dt
-        if (self.config.DEBUG):
-            num = jacobianNumerical(lambda uu: self.f(x, uu, i), u, dim=self.n)
-            assert (np.linalg.norm(num - val) < 1e-4)
         return val
 
     # collision definition is similar to Double Integrator, car is an "ellipsis"
@@ -444,20 +419,12 @@ class CarMergeKinematicBicycle(SteinGame):
         # car distance larger than 1.2 normalized
         val = -((x_i[0] - x_j[0]) / 1.0)**2 - (
             x_i[1] - x_j[1])**2 + self.collision_radius**2
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.h(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dh_dxi(self, x_i, x_j):
         val = 2 * (x_i - x_j).T @ self.h_Qh
         val = val.reshape(1,self.n)
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxi(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
@@ -466,46 +433,26 @@ class CarMergeKinematicBicycle(SteinGame):
             return self.cpp.dh_dxj(x_i, x_j)
         val = 2 * (x_j - x_i).T @ self.h_Qh
         val = val.reshape(1,self.n)
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxj(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dh_dxi_dxi(self, x_i, x_j):
         val = 2 * self.h_Qh.T
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxi_dxi(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dh_dxj_dxi(self, x_i, x_j):
         val = -2 * self.h_Qh.T
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxj_dxi(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dh_dxi_dxj(self, x_i, x_j):
         val = -2 * self.h_Qh.T
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxi_dxj(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     @cpp_capable
     def dh_dxj_dxj(self, x_i, x_j):
         val = 2 * self.h_Qh.T
-        if (self.config.CPP_DEBUG):
-            alt = self.cpp.dh_dxj_dxj(x_i, x_j)
-            if (np.linalg.norm(alt - val) > 1e-4):
-                breakpoint()
         return val
 
     def testAnimation(self):
