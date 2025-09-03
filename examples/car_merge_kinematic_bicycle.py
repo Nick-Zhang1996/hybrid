@@ -1,6 +1,8 @@
 import os
 from math import sin, cos, tan, atan, radians, degrees
 
+import jax.lax
+from jax.typing import ArrayLike
 import numpy as np
 import jax.numpy as jnp
 from scipy import interpolate
@@ -10,15 +12,15 @@ import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 
 from ..utilities.util import cpp_capable, BASEDIR
+# pytype disable-next=no-name-in-module
 from ..src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from ..residual_game import ResidualGame, ResidualGameConfig
+from ..residual_game import  ResidualGameConfig
 from ..stein_game import SteinGame, SteinGameConfig
 
 
-# example: Merging
-# uses kinematic bicycle model
 #class CarMergeKinematicBicycle(ResidualGame):
 class CarMergeKinematicBicycle(SteinGame):
+    ''' Kinematic Bicycle Merging Game'''
 
     def __init__(self, config: ResidualGameConfig, car_count: int, T: int):
         super().__init__(config)
@@ -30,12 +32,10 @@ class CarMergeKinematicBicycle(SteinGame):
         # state p of agent i at time k: X[k,i,p] or X.flatten()[k*N*m + i*m + p]
         # U (control) = concatenated control  dim: T*N*m
         # control p of agent i at time k: U[k,i,p] or U.flatten()[k*N*m + i*m + p]
-        '''
-        x_i_k: 1..T, T*N*n  NOTE starts from 1
-        u_i_k: 0..T-1, T*N*m
-        lamda_i_k: 0..T-1 T*N*n
-        mu_k_i_j: 1..T T*N*N NOTE starts from 1
-        '''
+        # x_i_k: 1..T, T*N*n  NOTE starts from 1
+        # u_i_k: 0..T-1, T*N*m
+        # lamda_i_k: 0..T-1 T*N*n
+        # mu_k_i_j: 1..T T*N*N NOTE starts from 1
         self.print_debug_enable()
 
         # Problem formulation
@@ -86,7 +86,6 @@ class CarMergeKinematicBicycle(SteinGame):
 
         # step cost parameters
         # NOTE this lambda fun needs to be implemented in c++
-        self.J_x_ref_fun = lambda i: np.array([0, self.target_y[i], 2.0, 0])
         self.J_Qr = np.diag([0, 0.1, 0.01, 0])
         self.J_Q = np.diag([0, 0, 0, 1.0])
         self.J_R = np.eye(self.m) * 0.3
@@ -115,7 +114,7 @@ class CarMergeKinematicBicycle(SteinGame):
             np.zeros(merge_lane_n)
         ]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
-        self.target_y = [1] * (main_lane_n + merge_lane_n)
+        self.target_y = [jnp.array([1])] * (main_lane_n + merge_lane_n)
 
         # DEBUG print Dr dimension
         T = self.T
@@ -314,6 +313,8 @@ class CarMergeKinematicBicycle(SteinGame):
         self.print_info(f'saved to {filename}')
         frame.save(filename)
         '''
+    def J_x_ref_fun(self, i):
+        return jnp.array([0, jax.lax.select_n(i,*self.target_y)[0], 2.0, 0])
 
     ''' --------  math functions and their derivatives ------ '''
 
@@ -321,7 +322,7 @@ class CarMergeKinematicBicycle(SteinGame):
     def J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
-        x_k.shape (N*n) x_k_i
+        x_k.shape (N,n) x_k_i
         u_k_i.shape (m) u_k_i
         i: agent id
         '''
@@ -369,24 +370,26 @@ class CarMergeKinematicBicycle(SteinGame):
         return 2 * self.J_R
 
     @cpp_capable
-    def f(self, x, u, i):
+    def f(self, x: ArrayLike, u: ArrayLike, i: int):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x: (n,) State for agent i
             u: (m,) Control for agent i
         Return:
-            (n,1) The next state, progressed by self.dt
+            (n,) The next state, progressed by self.dt
 
         this problem has homogeneous agents, so [i] is irrelevant'''
         lf = 1.0
         lr = 1.0
-        beta = atan(tan(u[1]) * lr / (lf + lr))
+        beta = jnp.atan(jnp.tan(u[1]) * lr / (lf + lr))
         dx = jnp.array([
-            x[2] * cos(x[3] + beta), x[2] * sin(x[3] + beta), u[0],
-            x[2] / lr * sin(beta)
+            x[2] * jnp.cos(x[3] + beta), x[2] * jnp.sin(x[3] + beta), u[0],
+            x[2] / lr * jnp.sin(beta)
         ])
         val = x + dx * self.dt
-        return val.reshape(self.n, 1)
+        # NOTE the cpp version return has dimension (n,1), while this is (n,)
+        return val
+
 
     @cpp_capable
     def df_dx(self, x, u, i):
