@@ -397,11 +397,11 @@ def test_jax_autodiff():
 
     # dr_dy y:x, u, lamda, mu
     # r needs dLLi_dxi, dLLi_du, which needs LLi
-    # LLi =jit(jacrev(py_main.jax_LLi))
-    # h_plus_mask = jax_retval_h_plus_mask
-    # py_retval_dLLi_dxi = py_main.LLi(x, u, h_plus_mask, lamda, mu, i)
-    # jax_retval_dLLi_dxi = LLi(x, u, h_plus_mask, lamda, mu, i)
-    # assert_allclose(py_retval_dLLi_dxi, jax_retval_dLLi_dxi)
+    LLi =jit(jacrev(py_main.jax_LLi))
+    h_plus_mask = jax_retval_h_plus_mask
+    py_retval_dLLi_dxi = py_main.LLi(x, u, h_plus_mask, lamda, mu, i)
+    jax_retval_dLLi_dxi = LLi(x, u, h_plus_mask, lamda, mu, i)
+    assert_allclose(py_retval_dLLi_dxi, jax_retval_dLLi_dxi)
 
 
     #r = jit(py_main.r)

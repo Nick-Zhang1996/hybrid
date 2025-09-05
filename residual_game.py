@@ -701,12 +701,6 @@ class ResidualGame(PrintObject, ABC):
             mu_k: (N,N) multiplier for positive h 
             i: agent index i
         '''
-        # DEBUG
-        jax.debug.print('x_k {} {}', x_k.shape, x_k)
-        jax.debug.print('u_k_i {} {}', u_k_i.shape, u_k_i)
-        jax.debug.print('mu_k {} {}', mu_k.shape, mu_k)
-
-
         # feasibility for h>0
         h_plus = np.sum([
             mu_k[i, j.item()] * (self.h(x_k[i], x_k[j.item()]))
@@ -860,10 +854,10 @@ class ResidualGame(PrintObject, ABC):
         '''
         T = self.T
         LLi_val = jnp.sum(
-            np.fromfunction(
+            jnp.fromfunction(
                 lambda k:self.jax_L(
                     x[k], u[k+1, i], x[k+1, i], h_plus_mask[k], lamda[k],mu[k], i),
-                shape=(T,),
+                shape=T,
                 dtype=int
             ),
         )

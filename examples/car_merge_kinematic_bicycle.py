@@ -91,6 +91,10 @@ class CarMergeKinematicBicycle(SteinGame):
         self.J_R = np.eye(self.m) * 0.3
         self.guess = np.zeros((self.T, self.N, self.m))
 
+        self.jax_J_Qr = jnp.array(self.J_Qr)
+        self.jax_J_Q = jnp.array(self.J_Q)
+        self.jax_J_R = jnp.array(self.J_R)
+
         # multiple car merge, car_count: main_lane_n + merge_lane_n
         main_lane_n = min(int(0.67 * car_count), car_count - 1)
         merge_lane_n = car_count - main_lane_n
@@ -114,8 +118,14 @@ class CarMergeKinematicBicycle(SteinGame):
             np.zeros(merge_lane_n)
         ]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
-        self.jax_target_y = [jnp.array([1])] * (main_lane_n + merge_lane_n)
+
         self.target_y = [1] * (main_lane_n + merge_lane_n)
+        # self.jax_target_y = [jnp.array([1])] * (main_lane_n + merge_lane_n)
+        x_ref = np.zeros((self.N, self.n))
+        x_ref[:,2] = 2.0 # target speed
+        x_ref[:,1] = np.array(self.target_y) # target y position
+        self.jax_target_x_ref =  jnp.array(x_ref)
+        ''' (N,n), reference state'''
 
         # DEBUG print Dr dimension
         T = self.T
@@ -312,7 +322,7 @@ class CarMergeKinematicBicycle(SteinGame):
         # self.print_info(f'saved to {filename}')
         # frame.save(filename)
     def jax_J_x_ref_fun(self, i):
-        return jnp.array([0, jax.lax.select_n(i,*self.jax_target_y)[0], 2.0, 0])
+        return self.jax_target_x_ref[i]
 
     def J_x_ref_fun(self, i):
         return np.array([0, self.target_y[i], 2.0, 0])
@@ -339,9 +349,12 @@ class CarMergeKinematicBicycle(SteinGame):
         u_k_i.shape (m) u_k_i
         i: agent id
         '''
-        val = (x_k[i] - self.jax_J_x_ref_fun(i)).T @ self.J_Qr @ (
-            x_k[i] - self.jax_J_x_ref_fun(i)
-        ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        # val = (x_k[i] - self.jax_J_x_ref_fun(i)).T @ self.J_Qr @ (
+        #     x_k[i] - self.jax_J_x_ref_fun(i)
+        # ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+
+        dx = x_k[i] - self.jax_target_x_ref[i]
+        val = dx.T @ self.jax_J_Qr @ dx + x_k[i].T @ self.jax_J_Q @ x_k[i] + u_k_i.T @ self.jax_J_R @ u_k_i
         return val
 
     @cpp_capable
