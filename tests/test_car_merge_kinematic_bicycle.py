@@ -222,19 +222,26 @@ def test_jax_autodiff():
 
     i = 1
     # Test values
-    x = np.random.uniform(-1,1, py_main.n)
-    u = np.random.uniform(-1,1, py_main.m)
-    x_i = np.random.uniform(-1, 1, py_main.n)
+    x = np.random.uniform(-1,1, (py_main.T, py_main.N, py_main.n))
+    u = np.random.uniform(-1,1,  (py_main.T, py_main.N, py_main.m))
     x_j = np.random.uniform(-1, 1, py_main.n)
     x_k = np.random.uniform(-1, 1, (py_main.N,py_main.n))
+    x_k_i = np.random.uniform(-1, 1, py_main.n)
     u_k_i = np.random.uniform(-1, 1, py_main.m)
     i = 0
     j = 1
+    k = 2
+    x_k1_i = np.random.uniform(-1, 1, py_main.n)
+    lamda = np.random.uniform(-1, 1, (py_main.T, py_main.N, py_main.n))
+    mu = np.random.uniform(-1, 1, (py_main.T, py_main.N, py_main.N))
+    lamda_k = lamda[k]
+    mu_k = mu[k]
+
 
     # Create jit version of functions
-    f = jit(py_main.f)
-    df_dx = jit(jacobian(py_main.f, argnums=0))
-    df_du = jit(jacobian(py_main.f, argnums=1))
+    f = jit(py_main.jax_f)
+    df_dx = jit(jacobian(py_main.jax_f, argnums=0))
+    df_du = jit(jacobian(py_main.jax_f, argnums=1))
     h = jit(py_main.h)
     dh_dxi = jit(jacobian(py_main.h, argnums=0))
     dh_dxj = jit(jacobian(py_main.h, argnums=1))
@@ -244,62 +251,87 @@ def test_jax_autodiff():
     dh_dxj_dxj = jit(jacfwd(jacrev(py_main.h, argnums=1), argnums=1))
 
 
-    J = jit(py_main.J)
+    J = jit(py_main.jax_J)
     def dJi_dxk(x_k, u_k_i, i):
-        return jacrev(py_main.J, argnums=0)(x_k, u_k_i, i)
+        return jacrev(py_main.jax_J, argnums=0)(x_k, u_k_i, i)
     def dJi_dxk_dxk(x_k, u_k_i, i):
-        return jacfwd(jacrev(py_main.J, argnums=0), argnums=0)(x_k, u_k_i, i)
+        return jacfwd(jacrev(py_main.jax_J, argnums=0), argnums=0)(x_k, u_k_i, i)
 
     dJi_dxi = jit(lambda x_k, u_k_i, i: dJi_dxk(x_k, u_k_i, i)[i])
     dJi_dxj = jit(lambda x_k, u_k_i, i, j: dJi_dxk(x_k, u_k_i, i)[j])
-    dJi_du = jit(jacrev(py_main.J, argnums=1))
-    dJi_dudu = jit(jacfwd(jacrev(py_main.J, argnums=1), argnums=1))
+    dJi_du = jit(jacrev(py_main.jax_J, argnums=1))
+    dJi_dudu = jit(jacfwd(jacrev(py_main.jax_J, argnums=1), argnums=1))
     dJi_dxi_dxi = jit(lambda x_k, u_k_i, i: dJi_dxk_dxk(x_k, u_k_i, i)[i,:,i,:])
     dJi_dxi_dxj = jit(lambda x_k, u_k_i, i, j: dJi_dxk_dxk(x_k, u_k_i, i)[i,:,j,:])
     dJi_dxj_dxi = jit(lambda x_k, u_k_i, i, j: dJi_dxk_dxk(x_k, u_k_i, i)[j,:,i,:])
     dJi_dxj_dxj = jit(lambda x_k, u_k_i, i, j: dJi_dxk_dxk(x_k, u_k_i, i)[j,:,j,:])
 
+    Bh = jit(py_main.Bh)
+    dBh_dxi = jit(jacrev(py_main.dBh_dxi, argnums=0))
+    dBh_dxj = jit(jacrev(py_main.dBh_dxi, argnums=1))
+    dBh_dxi_dxi = jit(jacfwd(jacrev(py_main.dBh_dxi, argnums=0), argnums=0))
+    dBh_dxi_dxj = jit(jacfwd(jacrev(py_main.dBh_dxi, argnums=0), argnums=1))
+    dBh_dxj_dxi = jit(jacfwd(jacrev(py_main.dBh_dxi, argnums=1), argnums=0))
+    dBh_dxj_dxj = jit(jacfwd(jacrev(py_main.dBh_dxi, argnums=1), argnums=1))
+
+
     # Evaluate cpp reference values
-    cpp_retval_f = cpp_main.f( x, u, i)
-    cpp_retval_df_dx = cpp_main.df_dx( x, u, i)
-    cpp_retval_df_du = cpp_main.df_du( x, u, i)
-    cpp_retval_h = cpp_main.h( x_i, x_j)
-    cpp_retval_dh_dxi = cpp_main.dh_dxi( x_i, x_j)
-    cpp_retval_dh_dxj = cpp_main.dh_dxj( x_i, x_j)
-    cpp_retval_dh_dxi_dxi = cpp_main.dh_dxi_dxi( x_i, x_j)
-    cpp_retval_dh_dxi_dxj = cpp_main.dh_dxi_dxj( x_i, x_j)
-    cpp_retval_dh_dxj_dxi = cpp_main.dh_dxj_dxi( x_i, x_j)
-    cpp_retval_dh_dxj_dxj = cpp_main.dh_dxj_dxj( x_i, x_j)
+    cpp_retval_f = cpp_main.f( x_k_i, u_k_i, i)
+    cpp_retval_df_dx = cpp_main.df_dx( x_k_i, u_k_i, i)
+    cpp_retval_df_du = cpp_main.df_du( x_k_i, u_k_i, i)
+    cpp_retval_h = cpp_main.h( x_k_i, x_j)
+    cpp_retval_dh_dxi = cpp_main.dh_dxi( x_k_i, x_j)
+    cpp_retval_dh_dxj = cpp_main.dh_dxj( x_k_i, x_j)
+    cpp_retval_dh_dxi_dxi = cpp_main.dh_dxi_dxi( x_k_i, x_j)
+    cpp_retval_dh_dxi_dxj = cpp_main.dh_dxi_dxj( x_k_i, x_j)
+    cpp_retval_dh_dxj_dxi = cpp_main.dh_dxj_dxi( x_k_i, x_j)
+    cpp_retval_dh_dxj_dxj = cpp_main.dh_dxj_dxj( x_k_i, x_j)
     cpp_retval_J = cpp_main.J(x_k, u_k_i, i)
     cpp_retval_dJi_dxi = cpp_main.dJi_dxi( x_k, u_k_i, i)
     cpp_retval_dJi_dxj = cpp_main.dJi_dxj( x_k, u_k_i, i, j)
     cpp_retval_dJi_du = cpp_main.dJi_du( x_k, u_k_i, i)
-    cpp_retval_dJi_dxi_dxi = cpp_main.dJi_dxi_dxi( x_k, u, i)
+    cpp_retval_dJi_dxi_dxi = cpp_main.dJi_dxi_dxi( x_k, u_k_i, i)
     cpp_retval_dJi_dxi_dxj = cpp_main.dJi_dxi_dxj( x_k, u_k_i, i, j)
-    cpp_retval_dJi_dxj_dxi = cpp_main.dJi_dxi_dxj( x_k, u_k_i, i, j).T
+    cpp_retval_dJi_dxj_dxi = cpp_main.dJi_dxi_dxj( x_k, u_k_i, i, j).T # pylint: disable=no-member
     cpp_retval_dJi_dxj_dxj = cpp_main.dJi_dxj_dxj( x_k, u_k_i, i, j)
     cpp_retval_dJi_dudu = cpp_main.dJi_dudu( x_k, u_k_i, i)
+    # cpp_retval_Bh = cpp_main.Bh( x_i, x_j)
+    # cpp_retval_dBh_dxi = cpp_main.dBh_dxi( x_i, x_j)
+    # cpp_retval_dBh_dxj = cpp_main.dBh_dxj( x_i, x_j)
+    # cpp_retval_dBh_dxi_dxi = cpp_main.dBh_dxi_dxi( x_i, x_j)
+    # cpp_retval_dBh_dxi_dxj = cpp_main.dBh_dxi_dxj( x_i, x_j)
+    # cpp_retval_dBh_dxj_dxi = cpp_main.dBh_dxi_dxj( x_i, x_j).T # pylint: disable=no-member
+    # cpp_retval_dBh_dxj_dxj = cpp_main.dBh_dxj_dxj( x_i, x_j)
 
     # Compile and evaluate jax values
-    jax_retval_f = f( x, u, i)
-    jax_retval_df_dx = df_dx( x, u, i)
-    jax_retval_df_du = df_du( x, u, i)
-    jax_retval_h = h( x_i, x_j)
-    jax_retval_dh_dxi = dh_dxi( x_i, x_j)
-    jax_retval_dh_dxj = dh_dxj( x_i, x_j)
-    jax_retval_dh_dxi_dxi = dh_dxi_dxi( x_i, x_j)
-    jax_retval_dh_dxi_dxj = dh_dxi_dxj( x_i, x_j)
-    jax_retval_dh_dxj_dxi = dh_dxj_dxi( x_i, x_j)
-    jax_retval_dh_dxj_dxj = dh_dxj_dxj( x_i, x_j)
+    jax_retval_f = f( x_k_i, u_k_i, i)
+    jax_retval_df_dx = df_dx( x_k_i, u_k_i, i)
+    jax_retval_df_du = df_du( x_k_i, u_k_i, i)
+    jax_retval_h = h( x_k_i, x_j)
+    jax_retval_dh_dxi = dh_dxi( x_k_i, x_j)
+    jax_retval_dh_dxj = dh_dxj( x_k_i, x_j)
+    jax_retval_dh_dxi_dxi = dh_dxi_dxi( x_k_i, x_j)
+    jax_retval_dh_dxi_dxj = dh_dxi_dxj( x_k_i, x_j)
+    jax_retval_dh_dxj_dxi = dh_dxj_dxi( x_k_i, x_j)
+    jax_retval_dh_dxj_dxj = dh_dxj_dxj( x_k_i, x_j)
     jax_retval_J = J(x_k, u_k_i, i)
     jax_retval_dJi_dxi = dJi_dxi( x_k, u_k_i, i)
     jax_retval_dJi_dxj = dJi_dxj( x_k, u_k_i, i, j)
-    jax_retval_dJi_dxi_dxi = dJi_dxi_dxi( x_k, u, i)
+    jax_retval_dJi_dxi_dxi = dJi_dxi_dxi( x_k, u_k_i, i)
     jax_retval_dJi_dxi_dxj = dJi_dxi_dxj( x_k, u_k_i, i, j)
     jax_retval_dJi_dxj_dxi = dJi_dxj_dxi( x_k, u_k_i, i, j)
     jax_retval_dJi_dxj_dxj = dJi_dxj_dxj( x_k, u_k_i, i, j)
     jax_retval_dJi_du = dJi_du( x_k, u_k_i, i)
     jax_retval_dJi_dudu = dJi_dudu( x_k, u_k_i, i)
+
+    jax_retval_Bh = Bh( x_k_i, x_j)
+    jax_retval_dBh_dxi = dBh_dxi( x_k_i, x_j)
+    jax_retval_dBh_dxj = dBh_dxj( x_k_i, x_j)
+    jax_retval_dBh_dxi_dxi = dBh_dxi_dxi( x_k_i, x_j)
+    jax_retval_dBh_dxi_dxj = dBh_dxi_dxj( x_k_i, x_j)
+    jax_retval_dBh_dxj_dxi = dBh_dxj_dxi( x_k_i, x_j)
+    jax_retval_dBh_dxj_dxj = dBh_dxj_dxj( x_k_i, x_j)
+
 
     assert_allclose(cpp_retval_f.reshape(py_main.n), jax_retval_f)
     assert_allclose(cpp_retval_df_dx, jax_retval_df_dx)
@@ -322,25 +354,63 @@ def test_jax_autodiff():
     assert_allclose(cpp_retval_dJi_dxj_dxi, jax_retval_dJi_dxj_dxi)
     assert_allclose(cpp_retval_dJi_dxj_dxj, jax_retval_dJi_dxj_dxj)
 
-    # Problem specific functions
+    get_h_plus_mask = jit(py_main.jax_get_h_plus_mask)
+    jax_retval_h_plus_mask = get_h_plus_mask(x)
+    #cpp_retval_h_plus_mask = cpp_main.get_h_plus_mask(x)
+    py_retval_h_plus_mask = py_main.get_h_plus_mask(x)
+    assert_allclose(py_retval_h_plus_mask, jax_retval_h_plus_mask)
 
-    # Composite funciotns
+    # Bh doesn't have cpp interface
+    # assert_allclose(cpp_retval_Bh, jax_retval_Bh)
+    # assert_allclose(cpp_retval_dBh_dxi[0], jax_retval_dBh_dxi)
+    # assert_allclose(cpp_retval_dBh_dxj[0], jax_retval_dBh_dxj)
+    # assert_allclose(cpp_retval_dBh_dxi_dxi, jax_retval_dBh_dxi_dxi)
+    # assert_allclose(cpp_retval_dBh_dxi_dxj, jax_retval_dBh_dxi_dxj)
+    # assert_allclose(cpp_retval_dBh_dxj_dxi, jax_retval_dBh_dxj_dxi)
+    # assert_allclose(cpp_retval_dBh_dxj_dxj, jax_retval_dBh_dxj_dxj)
+
     #jit(main.Bh)
     #jit(main.dBh_dxi)
     #jit(main.dBh_dxj)
     #jit(main.dBh_dxi_dxi)
     #jit(main.dBh_dxi_dxj)
     #jit(main.dBh_dxj_dxj)
-    
-    #jit(main.rollout)
-    #jit(main.dr_dy)
-    #jit(main.getCollisionResidual)
-    #jit(main.getHplusMask)
+
+    # new format put one function together
+    L = jit(py_main.jax_L)
+    h_k_plus_mask = jax_retval_h_plus_mask[2] # slice h_k, k=2
+    py_retval_L = py_main.L(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    jax_retval_L = L( x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    assert_allclose(py_retval_L, jax_retval_L)
+
+    dL_dx_ik = jit(lambda *args: jacrev(py_main.jax_L, argnums=0)(*args)[i])
+    py_retval_dL_dx_ik = py_main.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    jax_retval_dL_dx_ik = dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    assert_allclose(py_retval_dL_dx_ik[0], jax_retval_dL_dx_ik)
+
+    dL_dx_ik1 = jit(jacrev(py_main.jax_L, argnums=2))
+    py_retval_dL_dx_ik1 = py_main.dL_dx_ik1(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    jax_retval_dL_dx_ik1 = dL_dx_ik1(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i)
+    assert_allclose(py_retval_dL_dx_ik1, jax_retval_dL_dx_ik1)
+    #jit(main.dL_dx_jk)
+    #jit(main.dL_du)
+
+    # dr_dy y:x, u, lamda, mu
+    # r needs dLLi_dxi, dLLi_du, which needs LLi
+    # LLi =jit(jacrev(py_main.jax_LLi))
+    # h_plus_mask = jax_retval_h_plus_mask
+    # py_retval_dLLi_dxi = py_main.LLi(x, u, h_plus_mask, lamda, mu, i)
+    # jax_retval_dLLi_dxi = LLi(x, u, h_plus_mask, lamda, mu, i)
+    # assert_allclose(py_retval_dLLi_dxi, jax_retval_dLLi_dxi)
+
+
+    #r = jit(py_main.r)
+
     #jit(main.L)
     #jit(main.dL_dx_ik)
     #jit(main.dL_dx_ik1)
-    #jit(main.dL_dx_jk)
     #jit(main.dL_du)
+    
     #jit(main.LLi)
     #jit(main.dLLi_dxi)
     #jit(main.dLLi_dx)
@@ -348,6 +418,12 @@ def test_jax_autodiff():
     #jit(main.dLLi_du)
     #jit(main.dLLi_dxi_dmu)
     #jit(main.dLLi_dx_dmu)
+
+    #jit(main.rollout)
+    #jit(main.dr_dy)
+    #jit(main.getCollisionResidual)
+    #jit(main.getHplusMask)
+
     #jit(main.r)
     #jit(main.dLLi_dxi_dx)
     #jit(main.dLLi_dxdx)

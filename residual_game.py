@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from itertools import chain
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
@@ -149,7 +150,7 @@ class ResidualGame(PrintObject, ABC):
             logger.debug(f'sample {i} has_converged: {has_converged}')
 
             # check residual
-            h_plus_mask = self.getHplusMask(x_ref)
+            h_plus_mask = self.get_h_plus_mask(x_ref)
             r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
             r0_norm = np.linalg.norm(r0)
             if r0_norm < best_residual:
@@ -178,7 +179,7 @@ class ResidualGame(PrintObject, ABC):
         t_solve = time() - t0
         logger.info(f'Total solve time: {t_solve}s')
 
-        h_plus_mask = self.getHplusMask(x_ref)
+        h_plus_mask = self.get_h_plus_mask(x_ref)
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         r0_norm = np.linalg.norm(r0)
         logger.debug(f' residual = {r0_norm}')
@@ -309,7 +310,7 @@ class ResidualGame(PrintObject, ABC):
         m = self.m
         dim_x = T * N * n
         # r0 + Dr*dr = 0
-        h_plus_mask = self.getHplusMask(x_ref)
+        h_plus_mask = self.get_h_plus_mask(x_ref)
 
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         y0 = np.hstack([
@@ -649,17 +650,38 @@ class ResidualGame(PrintObject, ABC):
                         h_res += this_h
         return h_res
 
-    def getHplusMask(self, x):
+    def jax_get_h_plus_mask(self, x):
+        ''' Get a matrix mask of currently active constraints
+        Args:
+            x: (T, N, n) Agent states
+        Return:
+            h_plus_mask: (N, N) where val(i,j) = h(x_i, h_j) > 0
+        '''
         # h(i,i) should not be considered in either h_plus or h_minus
         # we check it in h_minux
-        # for x 1-T, NOTE index start from 1
+        # for x 1-T, NOTE index to retval start from 1
+        h_plus_mask = jnp.fromfunction(
+            lambda k, i, j: jnp.logical_and(self.h(x[k, i], x[k, j]) >= 0, i != j),
+            shape=(self.T, self.N, self.N),
+            dtype=int
+        )
+        return h_plus_mask
+
+
+    def get_h_plus_mask(self, x):
+        ''' Get a matrix mask of currently active constraints
+        Args:
+            x: (T, N, n) Agent states
+        Return:
+            retval: (N, N) where val(i,j) = h(x_i, h_j) > 0
+        '''
         h_plus_mask = np.zeros((self.T, self.N, self.N), dtype=bool)
-        for k in range(1, self.T + 1):
+        for k in range(0, self.T):
             for i in range(self.N):
                 for j in range(i + 1, self.N):
-                    h_plus_mask[k - 1, i,
-                                j] = h_plus_mask[k - 1, j, i] = self.h(
-                                    x[k - 1, i], x[k - 1, j]) >= 0
+                    h_plus_mask[k, i,
+                                j] = h_plus_mask[k, j, i] = self.h(
+                                    x[k, i], x[k, j]) >= 0
         if self.config.CPP_DEBUG:
             alt = self.cpp.getHplusMask([xx for xx in x])
             if np.linalg.norm(alt - h_plus_mask) > 1e-4:
@@ -669,6 +691,22 @@ class ResidualGame(PrintObject, ABC):
 
     # ----- derivatives and other generic math functions ----
     def L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
+        ''' Lagrangian for agent i
+        Args:
+            x_k: (N,n) state vector at step k
+            u_k_i: (n) control vector for agent i at step k
+            k_k1_i: (n) state vector for agent i at step k+1
+            h_k_plus_mask: (N,N) Boolean matrix, [i,j] True if h(x_i, x_j) > 0
+            lamda_k: (N,n) Multiplier for dynamics constraint
+            mu_k: (N,N) multiplier for positive h 
+            i: agent index i
+        '''
+        # DEBUG
+        jax.debug.print('x_k {} {}', x_k.shape, x_k)
+        jax.debug.print('u_k_i {} {}', u_k_i.shape, u_k_i)
+        jax.debug.print('mu_k {} {}', mu_k.shape, mu_k)
+
+
         # feasibility for h>0
         h_plus = np.sum([
             mu_k[i, j.item()] * (self.h(x_k[i], x_k[j.item()]))
@@ -689,6 +727,38 @@ class ResidualGame(PrintObject, ABC):
         ])
         dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
+
+    def jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
+        ''' Lagrangian for agent i
+        Args:
+            x_k: (N,n) state vector at step k
+            u_k_i: (n) control vector for agent i at step k
+            k_k1_i: (n) state vector for agent i at step k+1
+            h_k_plus_mask: (N,N) Boolean matrix, [i,j] True if h(x_i, x_j) > 0
+            lamda_k: (N,n) Multiplier for dynamics constraint
+            mu_k: (N,N) multiplier for positive h 
+            i: agent index i
+        '''
+        # TODO: refactor, use h_k instead of h_k_plus_mask to avoid calculating h many times
+        # feasibility for h>0
+        h_plus_comp = jnp.fromfunction(
+            lambda j: jnp.where(i!=j, mu_k[i,j] * self.h(x_k[i], x_k[j]), 0) ,
+            shape=self.N,
+            dtype=int
+        )
+        h_plus_comp = jnp.where(h_k_plus_mask[i], h_plus_comp, 0)
+        h_plus = jnp.sum(h_plus_comp)
+
+        # barrier for h < 0
+        h_minus_comp = jnp.fromfunction(
+            lambda j: jnp.where(i!=j, self.Bh(x_k[i], x_k[j]), 0) ,
+            shape=self.N,
+            dtype=int
+        )
+        h_minus_comp = jnp.where(~h_k_plus_mask[i], h_minus_comp, 0)
+        h_minus = jnp.sum(h_minus_comp)
+        dynamics = lamda_k[i].T @ (self.jax_f(x_k[i], u_k_i, i).flatten() - x_k1_i)
+        return self.jax_J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
         """dL / dx_i_k
@@ -776,8 +846,58 @@ class ResidualGame(PrintObject, ABC):
                           i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i, i)
         return val
 
-    # only used in debug, LLi's derivative is used more prevalently
+    def jax_LLi(self, x, u, h_plus_mask, lamda, mu, i):
+        ''' Lagrangian for agent i across all time steps 1-T
+        Args:
+            x: (T,N,n) State for all agents, all time step
+            u: (T,N,m) Control for all agents, all time step 
+            h_plus_mask: (T,N,N) Boolean matrix, [k,i,j] True if h(x_k_i, x_k_j) > 0
+            lamda: (T,N,n) Multiplier for dynamics constraint
+            mu: (T,N,N) multiplier for positive h 
+            i: agent index i
+        Return:
+            retval: scalar
+        '''
+        T = self.T
+        LLi_val = jnp.sum(
+            np.fromfunction(
+                lambda k:self.jax_L(
+                    x[k], u[k+1, i], x[k+1, i], h_plus_mask[k], lamda[k],mu[k], i),
+                shape=(T,),
+                dtype=int
+            ),
+        )
+        # x0 related terms
+        LLi_val += (self.jax_J(self.x0, u[0, i],i) 
+            + lamda[0, i].T @ (self.jax_f(self.x0[i], u[0, i], i).flatten() - x[0, i])
+        )
+        # x_T related terms
+        LLi_val += self.jax_Jfi(x[T - 1], i)
+        h_T_val = jnp.fromfunction(
+            lambda j: self.h(x[T-1,i], x[T-1,j]) * (i!=j),
+            shape=(self.N,),
+            dtype=int
+        )
+        h_plus_elements = jnp.where(
+            h_T_val >= 0,
+            mu[T-1] * h_T_val,
+            0
+        )
+        h_plus = jnp.sum(h_plus_elements)
+        h_T_val_minus_clipped = jnp.where( h_T_val < -1e-100, h_T_val, -1e-100 )
+        h_minus_elements = -1 / self.rho * jnp.where(
+            h_T_val < 0,
+            jnp.log(-h_T_val_minus_clipped),
+            0
+        )
+        h_minus = jnp.sum(h_minus_elements)
+        LLi_val += h_plus + h_minus
+        return LLi_val
+
     def LLi(self, x, u, h_plus_mask, lamda, mu, i):
+        ''' Lagrangian for agent i across all time steps
+        only used in debug, LLi's derivative is used more prevalently
+        '''
         T = self.T
         LLi_val = np.sum([
             self.L(x[k - 1], u[k, i], x[k, i], h_plus_mask[k - 1], lamda[k],
@@ -925,6 +1045,44 @@ class ResidualGame(PrintObject, ABC):
                 breakpoint()
         return dLLi_dxi_dmu
 
+    def jax_r(self, x, u, lamda, mu, h_plus_mask):
+        T = self.T
+        r = jnp.zeros(0)
+        for i in range(self.N):
+            dLL_dxi = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
+            dLL_dui = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
+            # this needs to be updated
+            # if self.config.DEBUG:
+            #     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),
+            #                               h_plus_mask,lamda,mu,i), u.flatten())
+            #     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
+            #     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),
+            #                                   u,h_plus_mask,lamda,mu,i), x.flatten())
+            #     assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
+            r = jnp.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
+            # dynamics for f(x0,u0) = x1
+            r = jnp.hstack([
+                r, self.dynamics_residual_weight *
+                self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+            ])
+            for k in range(1, self.T):
+                r = jnp.hstack([
+                    r, self.dynamics_residual_weight *
+                    self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                ])  # dual for dynamics
+            for k in range(1, self.T):
+                r = jnp.hstack([r] + [
+                    self.h(x[k - 1, i], x[k - 1, j.item()])
+                    for j in np.nonzero(h_plus_mask[k - 1, i])[0]
+                ])
+            # h(x_T_i, x_T_j)
+            r = jnp.hstack([r] + [
+                self.h(x[T - 1, i], x[T - 1, j.item()])
+                for j in np.nonzero(h_plus_mask[T - 1, i])[0]
+            ])
+
+        return r
+
     def r(self, x, u, lamda, mu, h_plus_mask):
         if self.config.USE_CPP:
             return self.cpp.r([xx for xx in x], [uu for uu in u],
@@ -974,7 +1132,8 @@ class ResidualGame(PrintObject, ABC):
         return r
 
     def Bh(self, x_i, x_j):
-        return -1 / self.rho * jnp.log(-min(self.h(x_i, x_j), -1e-100))
+        h_val = self.h(x_i, x_j)
+        return -1 / self.rho * jnp.log(-jnp.where(h_val < -1e-100, h_val, -1e-100))
 
     def dBh_dxi(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
@@ -1445,6 +1604,8 @@ class ResidualGame(PrintObject, ABC):
     # if User doesn't choose a terminal cost, the step cost J will be used
     def Jfi(self, x_T, i):
         return self.J(x_T, np.zeros(self.m), i)
+    def jax_Jfi(self, x_T, i):
+        return self.jax_J(x_T, jnp.zeros(self.m), i)
 
     def dJfi_dxi(self, x_T, i):
         return self.dJi_dxi(x_T, np.zeros(self.m), i)

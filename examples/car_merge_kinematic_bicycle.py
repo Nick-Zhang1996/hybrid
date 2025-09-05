@@ -12,7 +12,7 @@ import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 
 from ..utilities.util import cpp_capable, BASEDIR
-# pytype disable-next=no-name-in-module
+# pylint: disable-next=no-name-in-module
 from ..src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from ..residual_game import  ResidualGameConfig
 from ..stein_game import SteinGame, SteinGameConfig
@@ -45,7 +45,7 @@ class CarMergeKinematicBicycle(SteinGame):
         self.track_width = 2.2
         self.track_length = 20
         self.collision_radius = 2.0
-        self.dt = dt = 0.2
+        self.dt =  0.2
         # NOTE this is not implemented in cpp
         self.dynamics_residual_weight = 1.0
 
@@ -114,15 +114,15 @@ class CarMergeKinematicBicycle(SteinGame):
             np.zeros(merge_lane_n)
         ]).T
         self.x0 = np.vstack([x0_main_lane, x0_merge_lane])
-        self.target_y = [jnp.array([1])] * (main_lane_n + merge_lane_n)
+        self.jax_target_y = [jnp.array([1])] * (main_lane_n + merge_lane_n)
+        self.target_y = [1] * (main_lane_n + merge_lane_n)
 
         # DEBUG print Dr dimension
         T = self.T
         N = self.N
         m = self.m
         n = self.n
-        dim_y = T * N * n + T * N * m + T * N * n + T * N * N
-        #self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
+        self.cpp = None
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -287,36 +287,37 @@ class CarMergeKinematicBicycle(SteinGame):
         anim.save(gif_filename, writer='pillow')
         self.print_info(f'gif saved to {gif_filename}')
         plt.show()
-        '''
         # NOTE save initial, middle, final snapshots
-        update(0)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_initial.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
+        # update(0)
+        # fig.canvas.draw()
+        # frame = Image.frombytes('RGB',
+        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        # filename = f'./pics/merge_{self.N}car_initial.png'
+        # self.print_info(f'saved to {filename}')
+        # frame.save(filename)
 
-        update(self.T//2)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_middle.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
+        # update(self.T//2)
+        # fig.canvas.draw()
+        # frame = Image.frombytes('RGB',
+        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        # filename = f'./pics/merge_{self.N}car_middle.png'
+        # self.print_info(f'saved to {filename}')
+        # frame.save(filename)
 
-        update(self.T-1)
-        fig.canvas.draw()
-        frame = Image.frombytes('RGB',
-        fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        filename = f'./pics/merge_{self.N}car_final.png'
-        self.print_info(f'saved to {filename}')
-        frame.save(filename)
-        '''
+        # update(self.T-1)
+        # fig.canvas.draw()
+        # frame = Image.frombytes('RGB',
+        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
+        # filename = f'./pics/merge_{self.N}car_final.png'
+        # self.print_info(f'saved to {filename}')
+        # frame.save(filename)
+    def jax_J_x_ref_fun(self, i):
+        return jnp.array([0, jax.lax.select_n(i,*self.jax_target_y)[0], 2.0, 0])
+
     def J_x_ref_fun(self, i):
-        return jnp.array([0, jax.lax.select_n(i,*self.target_y)[0], 2.0, 0])
+        return np.array([0, self.target_y[i], 2.0, 0])
 
-    ''' --------  math functions and their derivatives ------ '''
+    # --------  math functions and their derivatives ------
 
     @cpp_capable
     def J(self, x_k, u_k_i, i):
@@ -329,6 +330,17 @@ class CarMergeKinematicBicycle(SteinGame):
         #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
+        ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
+        return val
+    def jax_J(self, x_k, u_k_i, i):
+        '''
+        step cost for an agent, given x,u
+        x_k.shape (N,n) x_k_i
+        u_k_i.shape (m) u_k_i
+        i: agent id
+        '''
+        val = (x_k[i] - self.jax_J_x_ref_fun(i)).T @ self.J_Qr @ (
+            x_k[i] - self.jax_J_x_ref_fun(i)
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
         return val
 
@@ -352,7 +364,7 @@ class CarMergeKinematicBicycle(SteinGame):
 
     # dJ^i / dxi dxi
     @cpp_capable
-    def dJi_dxi_dxi(self, x_k, u, i):
+    def dJi_dxi_dxi(self, x_k, u_k_i, i):
         val = 2 * self.J_Qr + 2 * self.J_Q
         return val
 
@@ -371,6 +383,26 @@ class CarMergeKinematicBicycle(SteinGame):
 
     @cpp_capable
     def f(self, x: ArrayLike, u: ArrayLike, i: int):
+        ''' Dynamics function x_{t+1} = f(x_t,u,i)
+        Args:
+            x: (n,) State for agent i
+            u: (m,) Control for agent i
+        Return:
+            (n,) The next state, progressed by self.dt
+
+        this problem has homogeneous agents, so [i] is irrelevant'''
+        lf = 1.0
+        lr = 1.0
+        beta = np.arctan(np.tan(u[1]) * lr / (lf + lr))
+        dx = np.array([
+            x[2] * np.cos(x[3] + beta), x[2] * np.sin(x[3] + beta), u[0],
+            x[2] / lr * np.sin(beta)
+        ])
+        val = x + dx * self.dt
+        # NOTE the cpp version return has dimension (n,1), while this is (n,)
+        return val
+
+    def jax_f(self, x: ArrayLike, u: ArrayLike, i: int):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x: (n,) State for agent i

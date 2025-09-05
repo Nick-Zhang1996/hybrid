@@ -398,7 +398,7 @@ class SteinGame(ResidualGame):
 
         new_dual = np.hstack([lambda_ref.flatten(), mu_ref.flatten()])
 
-        h_plus_mask = self.getHplusMask(new_x_ref)
+        h_plus_mask = self.get_h_plus_mask(new_x_ref)
         r0 = self.r(new_x_ref, new_u_ref, lambda_ref, mu_ref, h_plus_mask)
         grad = -(new_u_ref - u_ref).reshape(1, -1)
         return grad, np.linalg.norm(r0), new_dual
@@ -419,7 +419,7 @@ class SteinGame(ResidualGame):
         self.stein_profiler.e('init')
 
         self.stein_profiler.s('h_plus')
-        h_plus_mask = self.getHplusMask(x)
+        h_plus_mask = self.get_h_plus_mask(x)
         self.stein_profiler.e('h_plus')
 
         self.stein_profiler.s('residual')
