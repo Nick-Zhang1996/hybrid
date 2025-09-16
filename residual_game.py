@@ -667,7 +667,6 @@ class ResidualGame(PrintObject, ABC):
         )
         return h_plus_mask
 
-
     def get_h_plus_mask(self, x):
         ''' Get a matrix mask of currently active constraints
         Args:
@@ -736,7 +735,7 @@ class ResidualGame(PrintObject, ABC):
         # TODO: refactor, use h_k instead of h_k_plus_mask to avoid calculating h many times
         # feasibility for h>0
         h_plus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i!=j, mu_k[i,j] * self.h(x_k[i], x_k[j]), 0) ,
+            lambda j: jnp.where(i != j, mu_k[i, j] * self.h(x_k[i], x_k[j]), 0),
             shape=self.N,
             dtype=int
         )
@@ -745,7 +744,7 @@ class ResidualGame(PrintObject, ABC):
 
         # barrier for h < 0
         h_minus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i!=j, self.Bh(x_k[i], x_k[j]), 0) ,
+            lambda j: jnp.where(i != j, self.Bh(x_k[i], x_k[j]), 0),
             shape=self.N,
             dtype=int
         )
@@ -855,30 +854,31 @@ class ResidualGame(PrintObject, ABC):
         T = self.T
         LLi_val = jnp.sum(
             jnp.fromfunction(
-                lambda k:self.jax_L(
-                    x[k], u[k+1, i], x[k+1, i], h_plus_mask[k], lamda[k],mu[k], i),
-                shape=T,
+                lambda k: self.jax_L(
+                    x[k], u[k+1, i], x[k+1, i], h_plus_mask[k], lamda[k+1], mu[k], i),
+                shape=T-1,
                 dtype=int
             ),
         )
         # x0 related terms
-        LLi_val += (self.jax_J(self.x0, u[0, i],i) 
-            + lamda[0, i].T @ (self.jax_f(self.x0[i], u[0, i], i).flatten() - x[0, i])
-        )
+        lamda_0_i = jax.lax.dynamic_index_in_dim(lamda[0], i, keepdims=False)
+        LLi_val += (self.jax_J(self.x0, u[0, i], i)
+                    + lamda_0_i.T @ (self.jax_f(self.jax_x0[i], u[0, i], i).flatten() - x[0, i])
+                    )
         # x_T related terms
         LLi_val += self.jax_Jfi(x[T - 1], i)
         h_T_val = jnp.fromfunction(
-            lambda j: self.h(x[T-1,i], x[T-1,j]) * (i!=j),
+            lambda j: self.h(x[T-1, i], x[T-1, j]) * (i != j),
             shape=(self.N,),
             dtype=int
         )
         h_plus_elements = jnp.where(
             h_T_val >= 0,
-            mu[T-1] * h_T_val,
+            mu[T-1, i] * h_T_val,
             0
         )
         h_plus = jnp.sum(h_plus_elements)
-        h_T_val_minus_clipped = jnp.where( h_T_val < -1e-100, h_T_val, -1e-100 )
+        h_T_val_minus_clipped = jnp.where(h_T_val < -1e-100, h_T_val, -1e-100)
         h_minus_elements = -1 / self.rho * jnp.where(
             h_T_val < 0,
             jnp.log(-h_T_val_minus_clipped),
@@ -898,12 +898,19 @@ class ResidualGame(PrintObject, ABC):
                    mu[k - 1], i) for k in range(1, T)
         ],
             axis=0)
+
         # x0 related terms
         LLi_val += self.J(
             self.x0, u[0, i],
             i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
         # x_T related terms
         LLi_val += self.Jfi(x[T - 1], i)
+        h_plus_debug = [
+            mu[T - 1, i, j.item()] *
+            (self.h(x[T - 1, i], x[T - 1, j.item()]))
+            for j in np.nonzero(h_plus_mask[T - 1, i])[0]
+        ]
+
         h_plus = np.sum([
             mu[T - 1, i, j.item()] *
             (self.h(x[T - 1, i], x[T - 1, j.item()]))
@@ -1598,6 +1605,7 @@ class ResidualGame(PrintObject, ABC):
     # if User doesn't choose a terminal cost, the step cost J will be used
     def Jfi(self, x_T, i):
         return self.J(x_T, np.zeros(self.m), i)
+
     def jax_Jfi(self, x_T, i):
         return self.jax_J(x_T, jnp.zeros(self.m), i)
 
