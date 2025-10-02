@@ -361,14 +361,16 @@ def test_jax_autodiff():
     assert_allclose(cpp_retval_dJi_dxj_dxj, jax_retval_dJi_dxj_dxj)
 
     jax_x = jnp.array(x)
-    h_map_i = vmap(lambda k, i, j: py_main.h(
-        jax_x[k, i], jax_x[k, j]), in_axes=(None, 0, None), out_axes=0)
-    h_map_ij = vmap(h_map_i, in_axes=(None, None, 0), out_axes=0)
-    h_map_kij = vmap(h_map_ij, in_axes=(0, None, None), out_axes=0)
+    h_map_i = vmap(lambda x, k, i, j: py_main.h(
+        x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
+    h_map_ij = vmap(h_map_i, in_axes=(None, None, None, 0), out_axes=0)
+    h_map_kij = vmap(h_map_ij, in_axes=(None, 0, None, None), out_axes=0)
 
-    h_map_val = h_map_kij(jnp.arange(py_main.T),
-                          jnp.arange(py_main.N),
-                          jnp.arange(py_main.N))
+    h_map_fun = jit(lambda x: h_map_kij(x, jnp.arange(py_main.T),
+                                        jnp.arange(py_main.N),
+                                        jnp.arange(py_main.N)))
+
+    h_map_val = h_map_fun(jax_x)
     jax_retval_h_plus_mask = jnp.where(jnp.eye(py_main.N), False, h_map_val >= 0)
     py_retval_h_plus_mask = py_main.get_h_plus_mask(x)
     assert_allclose(py_retval_h_plus_mask, jax_retval_h_plus_mask)
@@ -408,8 +410,10 @@ def test_jax_autodiff():
     # jit(main.dL_dx_jk)
     # jit(main.dL_du)
 
-    # dr_dy y:x, u, lamda, mu
+    # dr_dy
+    # r: dLL_dxi, dLL_dui, f(x,u) - x+
     # r needs dLLi_dxi, dLLi_dui, which needs LLi
+    # y:x, u, lamda, mu
     LLi = jit(py_main.jax_LLi)
     h_plus_mask = jax_retval_h_plus_mask
     py_retval_LLi = py_main.LLi(x, u, h_plus_mask, lamda, mu, i)
@@ -432,36 +436,30 @@ def test_jax_autodiff():
     jax_retval_dLLi_dui = dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
     assert_allclose(py_retval_dLLi_dui, jax_retval_dLLi_dui)
 
-    # r = jit(py_main.r)
+    def jax_r(x, u, lamda, mu, h_plus_mask):
+        # NOTE we don't do active set here since jax doesn't work with variable size array
+        r = jnp.empty(0)
+        h_val = h_map_fun(x)
+        for i in range(py_main.N):
+            dLLi_dxi_val = dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
+            dLLi_dui_val = dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
+            r = jnp.hstack([r, dLLi_dxi_val.flatten(), dLLi_dui_val.flatten()])
+            # f(x0, u0) - x1
+            f0 = py_main.jax_f(py_main.jax_x0[i], u[0, i], i).flatten() - x[0, i]
+            r = jnp.hstack([r, f0])
+            for k in range(1, py_main.T):
+                fk = py_main.jax_f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                r = jnp.hstack([r, fk])
+            # h(x_i, x_j)
+            for k in range(1, py_main.T+1):
+                mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(py_main.N)[i] == 0)
+                r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
+        return r
 
-    # jit(main.L)
-    # jit(main.dL_dx_ik)
-    # jit(main.dL_dx_ik1)
-    # jit(main.dL_du)
-
-    # jit(main.LLi)
-    # jit(main.dLLi_dxi)
-    # jit(main.dLLi_dx)
-    # jit(main.dLLi_dui)
-    # jit(main.dLLi_du)
-    # jit(main.dLLi_dxi_dmu)
-    # jit(main.dLLi_dx_dmu)
-
-    # jit(main.rollout)
-    # jit(main.dr_dy)
-    # jit(main.getCollisionResidual)
-    # jit(main.getHplusMask)
-
-    # jit(main.r)
-    # jit(main.dLLi_dxi_dx)
-    # jit(main.dLLi_dxdx)
-    # jit(main.dLLi_dudx)
-    # jit(main.dx_du)
-    # jit(main.dF_dx)
-    # jit(main.dF0_dx)
-    # jit(main.dh_dx)
-    # jit(main.dr_dx)
-    # jit(main.dr_dx_old)
-    # jit(main.dr_du)
-    # jit(main.dr_dlamda)
-    # jit(main.dr_dmu)
+    r = jit(jax_r)
+    # NOTE the dimension is different because jax has static dimension and can't use active set
+    py_retval_r = py_main.r(x, u, lamda, mu, h_plus_mask)
+    py_pos = py_retval_r[np.abs(py_retval_r) > 0]
+    jax_retval_r = r(x, u, lamda, mu, h_plus_mask)  # 200x faster than pure python
+    jax_pos = jax_retval_r[np.abs(jax_retval_r) > 0]
+    assert_allclose(py_pos, jax_pos)
