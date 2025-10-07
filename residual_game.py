@@ -17,6 +17,7 @@ import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
 from PIL import Image
 import matplotlib.pyplot as plt
+from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 
 from .utilities.util import PrintObject, jacobian_numerical
 from .utilities.time_util import TimeUtil
@@ -1598,11 +1599,62 @@ class ResidualGame(PrintObject, ABC):
                 breakpoint()
         return dr_dmu
 
+    # --- JAX functions ---
+    # we have three versions for each function
+    # the original function for numpy e.g. LLi
+    # the jax function e.g. _jax_LLi
+    # the JIT compiled jax function e.g. jax_LLi
+    # we will phase out these redundent functions as we test correctness against the python impl
+    def prepare_jax_functions(self):
+        self.jax_J = jit(self._jax_J)
+        self.jax_r = jit(self._jax_r)
+        self.jax_dLLi_dx = jit(jacrev(self.jax_LLi, argnums=0))
+        self.jax_dLLi_du = jit(jacrev(self.jax_LLi, argnums=1))
+        self.jax_L = jit(self.jax_L)
+        self.jax_LLi = jit(self.jax_LLi)
+        self.jax_dL_dx_ik = jit(lambda *args: jacrev(self.jax_L, argnums=0)(*args)[args[-1]])
+        self.jax_dL_dx_ik1 = jit(jacrev(self.jax_L, argnums=2))
+        h_map_i = vmap(lambda x, k, i, j: self.h(
+            x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
+        h_map_ij = vmap(h_map_i, in_axes=(None, None, None, 0), out_axes=0)
+        h_map_kij = vmap(h_map_ij, in_axes=(None, 0, None, None), out_axes=0)
+
+        self.jax_h_map_fun = jit(lambda x: h_map_kij(x, jnp.arange(self.T),
+                                                     jnp.arange(self.N),
+                                                     jnp.arange(self.N)))
+
+    def _jax_r(self, x, u, lamda, mu, h_plus_mask):
+        # NOTE we don't do active set here since jax doesn't work with variable size array
+        r = jnp.empty(0)
+        h_val = self.jax_h_map_fun(x)
+        for i in range(self.N):
+            dLLi_dxi_val = self.jax_dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
+            dLLi_dui_val = self.jax_dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
+            r = jnp.hstack([r, dLLi_dxi_val.flatten(), dLLi_dui_val.flatten()])
+            # f(x0, u0) - x1
+            f0 = self.jax_f(self.jax_x0[i], u[0, i], i).flatten() - x[0, i]
+            r = jnp.hstack([r, f0])
+            for k in range(1, self.T):
+                fk = self.jax_f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                r = jnp.hstack([r, fk])
+            # h(x_i, x_j)
+            for k in range(1, self.T+1):
+                mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(self.N)[i] == 0)
+                r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
+        return r
+
+    def jax_dLLi_dxi(self, x, u, h_plus_mask, lamda, mu, i):
+        return self.jax_dLLi_dx(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
+
+    def jax_dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
+        return self.jax_dLLi_du(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
+
     # ---------- Defaults for  some Application specific functions -------
     # terminal(final) cost for agent i
     # x_T: terminal GAME state (N*n)
     # return : scalar
     # if User doesn't choose a terminal cost, the step cost J will be used
+
     def Jfi(self, x_T, i):
         return self.J(x_T, np.zeros(self.m), i)
 

@@ -344,7 +344,7 @@ class CarMergeKinematicBicycle(SteinGame):
         ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
         return val
 
-    def jax_J(self, x_k, u_k_i, i):
+    def _jax_J(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
         x_k.shape (N,n) x_k_i
