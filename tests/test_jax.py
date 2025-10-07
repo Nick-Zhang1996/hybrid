@@ -1,7 +1,9 @@
 ''' Test Jax '''
+from time import time
 import numpy as np
 import jax.numpy as jnp
-from jax import jit, jacfwd, jacrev, jacobian
+from jax import jit, jacfwd, jacrev, jacobian, vmap
+from concurrent.futures import ThreadPoolExecutor
 
 from ..examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from ..stein_game import SteinGameConfig
@@ -176,8 +178,73 @@ def test_jax_autodiff():
     assert_allclose(py_retval_dLLi_dui, jax_retval_dLLi_dui)
 
     # NOTE the dimension is different because jax has static dimension and can't use active set
+    t0 = time()
     py_retval_r = py_main.r(x, u, lamda, mu, h_plus_mask)
+    py_dt = time()-t0
     py_pos = py_retval_r[np.abs(py_retval_r) > 0]
+    t0 = time()
+    cpp_retval_r = cpp_main.r(x, u, lamda, mu, h_plus_mask)
+    cpp_dt = time()-t0
+    # cpp_pos = cpp_retval_r[np.abs(cpp_retval_r) > 0]
+    py_main.jax_r(x, u, lamda, mu, h_plus_mask)  # 200x faster than pure python
+    t0 = time()
     jax_retval_r = py_main.jax_r(x, u, lamda, mu, h_plus_mask)  # 200x faster than pure python
+    jax_dt = time()-t0
     jax_pos = jax_retval_r[np.abs(jax_retval_r) > 0]
     assert_allclose(py_pos, jax_pos)
+    print('runtime for r')
+    print(f'{py_dt=}')
+    print(f'{cpp_dt=}')
+    print(f'{jax_dt=}')
+
+    # Dr dy
+    py_retval_dr_dy = py_main.dr_dy(x, u, lamda, mu, h_plus_mask)
+    jax_retval_dr_dy = py_main.jax_dr_dy(x, u, lamda, mu, h_plus_mask)
+    # FIXME check supposedly empty row values
+    # assert_allclose(np.sum(py_retval_dr_dy), np.sum(jax_retval_dr_dy))
+
+    jax_step = jit(py_main._jax_step)
+    # TODO test if residual indeed decreased
+    stepped = jax_step(x, u, lamda, mu)
+    t0 = time()
+    py_stepped = py_main.step(x, u, lamda, mu)
+    py_dt = time()-t0
+    t0 = time()
+    jax_stepped = jax_step(x, u, lamda, mu)  # 2x faster than cpp, ~100x faster than py
+    jax_dt = time()-t0
+    t0 = time()
+    cpp_stepped = cpp_main.step(x, u, lamda, mu)
+    cpp_dt = time()-t0
+    print('runtime for step')
+    print(f'{py_dt=}')
+    print(f'{cpp_dt=}')
+    print(f'{jax_dt=}')
+
+    batch_size = 64
+    print(f'runtime for vmapped particle x{batch_size}')
+    batch_x = np.random.uniform(-1, 1, (batch_size, py_main.T, py_main.N, py_main.n))
+    batch_u = np.random.uniform(-1, 1,  (batch_size, py_main.T, py_main.N, py_main.m))
+    batch_lamda = np.random.uniform(-1, 1, (batch_size, py_main.T, py_main.N, py_main.n))
+    batch_mu = np.random.uniform(-1, 1, (batch_size, py_main.T, py_main.N, py_main.N))
+    jax_batch_step = jit(vmap(jax_step, in_axes=(0, 0, 0, 0), out_axes=0))
+    stepped = jax_batch_step(batch_x, batch_u, batch_lamda, batch_mu)
+    t0 = time()
+    for i in range(batch_size):
+        cpp_main.step(batch_x[i], batch_u[i], batch_lamda[i], batch_mu[i])
+    cpp_dt = time() - t0
+    t0 = time()
+    stepped = jax_batch_step(batch_x, batch_u, batch_lamda, batch_mu)  # ~4x faster
+    jax_dt = time() - t0
+
+    with ThreadPoolExecutor() as executor:
+        t0 = time()
+        results = list(
+            executor.map(
+                lambda i: cpp_main.step(batch_x[i], batch_u[i], batch_lamda[i], batch_mu[i]),
+                range(batch_size)))
+        cpp_threaded_dt = time() - t0
+    print(f'{cpp_dt=}')
+    print(f'{jax_dt=}')
+    print(f'{cpp_threaded_dt=}')
+
+    # assert_allclose(py_pos, cpp_pos)

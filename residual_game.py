@@ -440,7 +440,7 @@ class ResidualGame(PrintObject, ABC):
 
         # Backtracking line search
         t.s('line search')
-        apriori_h_res = self.getCollisionResidual(x_ref)  # NOTE optimize?
+        apriori_h_res = self.get_collision_residual(x_ref)  # NOTE optimize?
         # backtracking line search
         step = 1.0  # step size
         dy = dy.flatten()
@@ -452,7 +452,7 @@ class ResidualGame(PrintObject, ABC):
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
             # x_new = self.rollout(self.x0, u_new)
             # y_new[:dim_x] = x_new.flatten()
-            search_h_res = self.getCollisionResidual(x_new)
+            search_h_res = self.get_collision_residual(x_new)
             r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
             if (r_t_norm > (1 - self.bc_a * step) * r0_norm
@@ -641,7 +641,7 @@ class ResidualGame(PrintObject, ABC):
             t.e('stack')
         return Dr
 
-    def getCollisionResidual(self, x):
+    def get_collision_residual(self, x):
         h_res = 0
         for k in range(1, self.T + 1):
             for i in range(self.N):
@@ -1622,6 +1622,71 @@ class ResidualGame(PrintObject, ABC):
         self.jax_h_map_fun = jit(lambda x: h_map_kij(x, jnp.arange(self.T),
                                                      jnp.arange(self.N),
                                                      jnp.arange(self.N)))
+        self.jax_dr_dy = jit(self._jax_dr_dy)
+
+    def _jax_step(self, x_ref, u_ref, lambda_ref, mu_ref):
+        h_map_val = self.jax_h_map_fun(x_ref)
+        h_plus_mask = jnp.where(jnp.eye(self.N), False, h_map_val >= 0)
+
+        r0 = self.jax_r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        y0 = jnp.hstack([
+            x_ref.flatten(),
+            u_ref.flatten(),
+            lambda_ref.flatten(),
+            mu_ref.flatten()
+        ])
+        Dr = self.jax_dr_dy(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+
+        def split_y(y):
+            return (y[:T * N * n].reshape(T, N, n),
+                    y[T * N * n:T * N * n + T * N * m].reshape(T, N, m), y[
+                    T * N * n + T * N * m:T * N * n + T * N * m + N * T * n
+                    ].reshape(T, N, n), y[T * N * n + T * N * m + N * T * n:].reshape(
+                    T, N, N))
+
+        def r_y_fun(y):
+            return self.jax_r(*split_y(y), h_plus_mask)
+        # TODO output debug info
+        dy, resid, rank, s = jax.numpy.linalg.lstsq(Dr, y0)
+        flag_no_step = True
+        # line search
+        step = 1.0  # step size
+        dy = dy.flatten()
+        r0_norm = jnp.linalg.norm(r0)
+        apriori_h_res = jnp.sum(h_map_val)
+        for i in range(self.backtracking_max_iter):
+            y_new = y0 + step * dy
+            # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
+            # x_new, _, _, _ = split_y(y_new)
+            # x_new = self.rollout(self.x0, u_new)
+            # y_new[:dim_x] = x_new.flatten()
+            search_h_res = jnp.sum(h_map_val)
+            r_t = r_y_fun(y_new)
+            r_t_norm = jnp.linalg.norm(r_t)
+            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.bc_a * step) * r0_norm,
+                                          search_h_res > apriori_h_res)
+            step = jnp.where(flag_no_step, step*self.bc_b, 0)
+        x_ref, u_ref, lambda_ref, mu_ref = split_y(y_new)
+
+        return x_ref, u_ref, lambda_ref, mu_ref
+
+    def _jax_dr_dy(self, x, u, lamda, mu, h_plus_mask):
+        n = self.n
+        m = self.m
+        # dLLi/dxi, dLLi/dui, f(x,u)-x, h
+        full_r_dim = self.T*self.N*(n+m+n+self.N)
+        fun = jacrev(self.jax_r, argnums=[0, 1, 2, 3])
+        drdx, drdu, drdlamda, drdmu = fun(x, u, lamda, mu, h_plus_mask)
+        Dr = jnp.hstack([drdx.reshape(full_r_dim, -1),
+                         drdu.reshape(full_r_dim, -1),
+                         drdlamda.reshape(full_r_dim, -1),
+                         drdmu.reshape(full_r_dim, -1)])
+        return Dr
 
     def _jax_r(self, x, u, lamda, mu, h_plus_mask):
         # NOTE we don't do active set here since jax doesn't work with variable size array
