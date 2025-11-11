@@ -14,12 +14,12 @@ from matplotlib.animation import FuncAnimation
 from ..utilities.util import cpp_capable, BASEDIR
 # pylint: disable-next=no-name-in-module
 from ..src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from ..residual_game import ResidualGameConfig
+from ..residual_game import ResidualGameConfig, ResidualGame
 from ..stein_game import SteinGame, SteinGameConfig
 
 
-# class CarMergeKinematicBicycle(ResidualGame):
-class CarMergeKinematicBicycle(SteinGame):
+class CarMergeKinematicBicycle(ResidualGame):
+    # class CarMergeKinematicBicycle(SteinGame):
     ''' Kinematic Bicycle Merging Game'''
 
     def __init__(self, config: ResidualGameConfig, car_count: int, T: int):
@@ -518,9 +518,10 @@ class CarMergeKinematicBicycle(SteinGame):
 
 
 if __name__ == "__main__":
-    # np.random.seed(0)
-    _config = SteinGameConfig(USE_CPP=False, iterations=3, particles=3)
+    np.random.seed(0)
+    # _config = SteinGameConfig(USE_CPP=False, iterations=3, particles=3)
     # main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
+    _config = ResidualGameConfig(USE_CPP=True)
     main = CarMergeKinematicBicycle(_config, car_count=2, T=5)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve()
