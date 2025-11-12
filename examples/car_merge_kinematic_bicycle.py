@@ -20,8 +20,8 @@ from stein_game import SteinGame, SteinGameConfig
 
 # example: Merging
 # uses kinematic bicycle model
-#class CarMergeKinematicBicycle(ResidualGame):
-class CarMergeKinematicBicycle(SteinGame):
+class CarMergeKinematicBicycle(ResidualGame):
+    # class CarMergeKinematicBicycle(SteinGame):
 
     def __init__(self, config: ResidualGameConfig, car_count: int, T: int):
         super().__init__(config)
@@ -101,7 +101,7 @@ class CarMergeKinematicBicycle(SteinGame):
         x_pos_main_lane = np.linspace(
             0, (main_lane_n - 1) * 5.4,
             main_lane_n) + np.random.random(main_lane_n)
-        #x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
+        # x_pos_merge_lane = 2.5+np.linspace(0,(merge_lane_n-1)*5.4,merge_lane_n) + np.random.random(merge_lane_n)
         x_pos_merge_lane = (np.random.random() - 0.5) * 2 * 2.5 + np.linspace(
             0, (merge_lane_n - 1) * 5.4,
             merge_lane_n) + np.random.random(merge_lane_n)
@@ -126,7 +126,7 @@ class CarMergeKinematicBicycle(SteinGame):
         m = self.m
         n = self.n
         dim_y = T * N * n + T * N * m + T * N * n + T * N * N
-        #self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
+        # self.print_debug(f"dim_y = {dim_y}, Dr memory: {(dim_y**2)*8/1024}KB")
 
     def setup(self):
         # subclass responsible for loading cpp/eigen module
@@ -220,7 +220,7 @@ class CarMergeKinematicBicycle(SteinGame):
             # prepare smoothed animation
             for i, color in zip(range(self.N), color_vec):
                 # interpolate for smooth graphics
-                #tt = np.linspace(0,self.T*self.dt,50)
+                # tt = np.linspace(0,self.T*self.dt,50)
                 tt = np.linspace(0, self.dt * self.T, self.T + 1)
                 # for plt.Rectangle, we offset position so this corresponds to top left corner
                 # also flip x axis
@@ -327,7 +327,7 @@ class CarMergeKinematicBicycle(SteinGame):
         u_k_i.shape (m) u_k_i
         i: agent id
         '''
-        #return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
+        # return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         if (self.config.USE_CPP):
             return self.cpp.J(x_k, u_k_i, i)
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.J_Qr @ (
@@ -507,17 +507,17 @@ class CarMergeKinematicBicycle(SteinGame):
         x_ref = self.rollout(self.x0, u_ref)
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
         self._animation(u_ref, full_x_ref)
-        #self._visualize(u_ref,full_x_ref)
-        #plt.show()
+        # self._visualize(u_ref,full_x_ref)
+        # plt.show()
 
 
 if __name__ == "__main__":
-    #np.random.seed(0)
-    _config = SteinGameConfig(USE_CPP=False)
+    # np.random.seed(0)
+    _config = ResidualGameConfig(USE_CPP=False)
     main = CarMergeKinematicBicycle(_config, car_count=5, T=20)
     main.setup()
     u_ref, full_x_ref, has_converged = main.solve()
     main.final()
     print(
         f'u_ref mean {np.mean(u_ref.flatten())} std {np.std(u_ref.flatten())}')
-    #main.testAnimation()
+    # main.testAnimation()
