@@ -15,13 +15,11 @@ from utilities.util import *
 from utilities.time_util import TimeUtil
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from residual_game import ResidualGame, ResidualGameConfig
-from stein_game import SteinGame, SteinGameConfig
 
 
 # example: Merging
 # uses kinematic bicycle model
 class CarMergeKinematicBicycle(ResidualGame):
-    # class CarMergeKinematicBicycle(SteinGame):
 
     def __init__(self, config: ResidualGameConfig, car_count: int, T: int):
         super().__init__(config)
