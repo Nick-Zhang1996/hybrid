@@ -9,7 +9,8 @@ import numpy as np
 @dataclass(frozen=True)
 class BaseGameConfig():
     """ Base Class for game configuration"""
-    horizon: int = 0
+    T: int = 0
+    """ horizon """
     dt: float = 0
     N: int = 0
     n: int = 0

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rd3g"
+version = "0.1.0"
+description = "Research framework for differential dynamic game solvers"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Nick Zhang" }]
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "jax",
+]
+
+[tool.setuptools]
+packages = ["rd3g"]

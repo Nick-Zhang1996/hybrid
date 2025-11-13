@@ -8,16 +8,13 @@ from dataclasses import dataclass
 from itertools import chain
 
 import numpy as np
-import jax
-import jax.numpy as jnp
-from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
 import matplotlib.pyplot as plt
 
 from rd3g.utilities.util import jacobian_numerical
 from rd3g.utilities.time_util import TimeUtil
-from rd3g.core.base_solver import BaseSolver, BaseSolverConfig
+from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
 from rd3g.core.base_game import BaseGame
 
 logger = logging.getLogger('ResidualGame')
@@ -71,9 +68,9 @@ class RD3G(BaseSolver):
         self.m = self.game.config.m
         self.x0 = self.game.config.x0
 
-        self.dim_theta = None
+        self.dim_theta = self.T * self.N * self.m
 
-        self.guess = None
+        self.guess = np.zeros((self.T, self.N, self.m))
         self.violations = None
 
         self.rho = self.config.rho_0
@@ -81,21 +78,10 @@ class RD3G(BaseSolver):
         # logger.debug_enable()
         self.residual_vec = []
         if self.config.USE_CPP:
-            self.cpp = self.game.setup_rd3g_cpp()
+            self.cpp = self.game.setup_rd3g_cpp(config)
             if self.cpp is None:
                 logger.error('User specified USE_CPP, but cpp backend for this game is unavailable')
-
-        """ Jax """
-        x_ref = np.zeros((self.N, self.n))
-        x_ref[:, 2] = 2.0  # target speed
-        x_ref[:, 1] = np.array(self.config.target_y)  # target y position
-        self.jax_target_x_ref = jnp.array(x_ref)
-        ''' (N,n), reference state'''
-
-        self.jax_x0 = jnp.array(self.config.x0)
-        self.jax_J_Qr = jnp.array(self.config.J_Qr)
-        self.jax_J_Q = jnp.array(self.config.J_Q)
-        self.jax_J_R = jnp.array(self.config.J_R)
+        self.validate()
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -153,16 +139,15 @@ class RD3G(BaseSolver):
             f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}'
         )
 
-        if u_ref is None:
-            u_ref = self.guess
+        u_ref = self.guess
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         x_ref = self.game.rollout(self.x0, u_ref)
         lambda_ref = np.zeros((T, N, self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T, N, N))
-        t0 = time()
         t = self.profiler
         has_converged = False
+        t0 = time()
         for i in range(self.config.iterations):
             logger.info(f'------ iter {i+1} ------')
             t.s()
@@ -231,9 +216,16 @@ class RD3G(BaseSolver):
             #     H = self.dJfi_dxi_dxi(x_ref[k], i)
             #     logger.info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
             has_converged = pde and has_converged
-        # r0 = self.r(x_ref,u_ref,lambda_ref,mu_ref,h_plus_mask)
+        r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
 
-        return u_ref, full_x_ref, has_converged
+        sol = Solution(elapsed_time=t_solve,
+                       u=u_ref,
+                       x=full_x_ref,
+                       residual=r0,
+                       has_converged=has_converged,
+                       is_optimal=has_converged)
+
+        return sol
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
         t = self.profiler
@@ -456,7 +448,7 @@ class RD3G(BaseSolver):
             drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
             t.e('drdmu')
             t.s('stack')
-            Dr = jnp.hstack([drdx, drdu, drdlamda, drdmu])
+            Dr = np.hstack([drdx, drdu, drdlamda, drdmu])
             t.e('stack')
         return Dr
 
@@ -469,23 +461,6 @@ class RD3G(BaseSolver):
                     if this_h > 0:
                         h_res += this_h
         return h_res
-
-    def jax_get_h_plus_mask(self, x):
-        ''' Get a matrix mask of currently active constraints
-        Args:
-            x: (T, N, n) Agent states
-        Return:
-            h_plus_mask: (N, N) where val(i,j) = h(x_i, h_j) > 0
-        '''
-        # h(i,i) should not be considered in either h_plus or h_minus
-        # we check it in h_minux
-        # for x 1-T, NOTE index to retval start from 1
-        h_plus_mask = jnp.fromfunction(
-            lambda k, i, j: jnp.logical_and(self.game.h(x[k, i], x[k, j]) >= 0, i != j),
-            shape=(self.T, self.N, self.N),
-            dtype=int
-        )
-        return h_plus_mask
 
     def get_h_plus_mask(self, x):
         ''' Get a matrix mask of currently active constraints
@@ -540,38 +515,6 @@ class RD3G(BaseSolver):
         ])
         dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
-
-    def _jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
-        ''' Lagrangian for agent i
-        Args:
-            x_k: (N,n) state vector at step k
-            u_k_i: (n) control vector for agent i at step k
-            k_k1_i: (n) state vector for agent i at step k+1
-            h_k_plus_mask: (N,N) Boolean matrix, [i,j] True if h(x_i, x_j) > 0
-            lamda_k: (N,n) Multiplier for dynamics constraint
-            mu_k: (N,N) multiplier for positive h 
-            i: agent index i
-        '''
-        # TODO: refactor, use h_k instead of h_k_plus_mask to avoid calculating h many times
-        # feasibility for h>0
-        h_plus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i != j, mu_k[i, j] * self.game.h(x_k[i], x_k[j]), 0),
-            shape=self.N,
-            dtype=int
-        )
-        h_plus_comp = jnp.where(h_k_plus_mask[i], h_plus_comp, 0)
-        h_plus = jnp.sum(h_plus_comp)
-
-        # barrier for h < 0
-        h_minus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i != j, self.Bh(x_k[i], x_k[j]), 0),
-            shape=self.N,
-            dtype=int
-        )
-        h_minus_comp = jnp.where(~h_k_plus_mask[i], h_minus_comp, 0)
-        h_minus = jnp.sum(h_minus_comp)
-        dynamics = lamda_k[i].T @ (self.jax_f(x_k[i], u_k_i, i).flatten() - x_k1_i)
-        return self.jax_J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def dL_dx_ik(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
         """dL / dx_i_k
@@ -657,55 +600,6 @@ class RD3G(BaseSolver):
         val = self.game.dJi_du(x_k, u_k_i,
                                i) + lamda_k[i].T @ self.game.df_du(x_k[i], u_k_i, i)
         return val
-
-    def jax_LLi(self, x, u, h_plus_mask, lamda, mu, i):
-        ''' Lagrangian for agent i across all time steps 1-T
-        Args:
-            x: (T,N,n) State for all agents, all time step
-            u: (T,N,m) Control for all agents, all time step 
-            h_plus_mask: (T,N,N) Boolean matrix, [k,i,j] True if h(x_k_i, x_k_j) > 0
-            lamda: (T,N,n) Multiplier for dynamics constraint
-            mu: (T,N,N) multiplier for positive h 
-            i: agent index i
-        Return:
-            retval: scalar
-        '''
-        T = self.T
-        LLi_val = jnp.sum(
-            jnp.fromfunction(
-                lambda k: self.jax_L(
-                    x[k], u[k+1, i], x[k+1, i], h_plus_mask[k], lamda[k+1], mu[k], i),
-                shape=T-1,
-                dtype=int
-            ),
-        )
-        # x0 related terms
-        lamda_0_i = jax.lax.dynamic_index_in_dim(lamda[0], i, keepdims=False)
-        LLi_val += (self.jax_J(self.x0, u[0, i], i)
-                    + lamda_0_i.T @ (self.jax_f(self.jax_x0[i], u[0, i], i).flatten() - x[0, i])
-                    )
-        # x_T related terms
-        LLi_val += self.jax_Jfi(x[T - 1], i)
-        h_T_val = jnp.fromfunction(
-            lambda j: self.game.h(x[T-1, i], x[T-1, j]) * (i != j),
-            shape=(self.N,),
-            dtype=int
-        )
-        h_plus_elements = jnp.where(
-            h_T_val >= 0,
-            mu[T-1, i] * h_T_val,
-            0
-        )
-        h_plus = jnp.sum(h_plus_elements)
-        h_T_val_minus_clipped = jnp.where(h_T_val < -1e-100, h_T_val, -1e-100)
-        h_minus_elements = -1 / self.rho * jnp.where(
-            h_T_val < 0,
-            jnp.log(-h_T_val_minus_clipped),
-            0
-        )
-        h_minus = jnp.sum(h_minus_elements)
-        LLi_val += h_plus + h_minus
-        return LLi_val
 
     def LLi(self, x, u, h_plus_mask, lamda, mu, i):
         ''' Lagrangian for agent i across all time steps
@@ -860,44 +754,6 @@ class RD3G(BaseSolver):
                 breakpoint()
         return dLLi_dxi_dmu
 
-    def jax_r(self, x, u, lamda, mu, h_plus_mask):
-        T = self.T
-        r = jnp.zeros(0)
-        for i in range(self.N):
-            dLL_dxi = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
-            dLL_dui = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
-            # this needs to be updated
-            # if self.config.DEBUG:
-            #     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),
-            #                               h_plus_mask,lamda,mu,i), u.flatten())
-            #     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
-            #     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),
-            #                                   u,h_plus_mask,lamda,mu,i), x.flatten())
-            #     assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
-            r = jnp.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
-            # dynamics for f(x0,u0) = x1
-            r = jnp.hstack([
-                r, self.config.dynamics_residual_weight *
-                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
-            ])
-            for k in range(1, self.T):
-                r = jnp.hstack([
-                    r, self.config.dynamics_residual_weight *
-                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
-                ])  # dual for dynamics
-            for k in range(1, self.T):
-                r = jnp.hstack([r] + [
-                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
-                    for j in np.nonzero(h_plus_mask[k - 1, i])[0]
-                ])
-            # h(x_T_i, x_T_j)
-            r = jnp.hstack([r] + [
-                self.game.h(x[T - 1, i], x[T - 1, j.item()])
-                for j in np.nonzero(h_plus_mask[T - 1, i])[0]
-            ])
-
-        return r
-
     def r(self, x, u, lamda, mu, h_plus_mask):
         if self.config.USE_CPP:
             return self.cpp.r([xx for xx in x], [uu for uu in u],
@@ -948,7 +804,7 @@ class RD3G(BaseSolver):
 
     def Bh(self, x_i, x_j):
         h_val = self.game.h(x_i, x_j)
-        return -1 / self.rho * jnp.log(-jnp.where(h_val < -1e-100, h_val, -1e-100))
+        return -1 / self.rho * np.log(-np.where(h_val < -1e-100, h_val, -1e-100))
 
     def dBh_dxi(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
@@ -957,7 +813,7 @@ class RD3G(BaseSolver):
         if self.config.DEBUG:
             val_num = jacobian_numerical(
                 lambda xx: self.Bh(xx.reshape(x_i.shape), x_j), x_i.flatten())
-            assert jnp.linalg.norm(val - val_num) < 1e-4
+            assert np.linalg.norm(val - val_num) < 1e-4
         return val
 
     def dBh_dxj(self, x_i, x_j):
@@ -1411,121 +1267,3 @@ class RD3G(BaseSolver):
             if np.linalg.norm(alt - dr_dmu) > 1e-4:
                 breakpoint()
         return dr_dmu
-
-    # --- JAX functions ---
-    # we have three versions for each function
-    # the original function for numpy e.g. LLi
-    # the jax function e.g. _jax_LLi
-    # the JIT compiled jax function e.g. jax_LLi
-    # we will phase out these redundent functions as we test correctness against the python impl
-    def prepare_jax_functions(self):
-        self.jax_J = jit(self._jax_J)
-        self.jax_r = jit(self._jax_r)
-        self.jax_dLLi_dx = jit(jacrev(self.jax_LLi, argnums=0))
-        self.jax_dLLi_du = jit(jacrev(self.jax_LLi, argnums=1))
-        self.jax_L = jit(self._jax_L)
-        self.jax_LLi = jit(self.jax_LLi)
-        self.jax_dL_dx_ik = jit(lambda *args: jacrev(self.jax_L, argnums=0)(*args)[args[-1]])
-        self.jax_dL_dx_ik1 = jit(jacrev(self.jax_L, argnums=2))
-        h_map_i = vmap(lambda x, k, i, j: self.game.h(
-            x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
-        h_map_ij = vmap(h_map_i, in_axes=(None, None, None, 0), out_axes=0)
-        h_map_kij = vmap(h_map_ij, in_axes=(None, 0, None, None), out_axes=0)
-
-        self.jax_h_map_fun = jit(lambda x: h_map_kij(x, jnp.arange(self.T),
-                                                     jnp.arange(self.N),
-                                                     jnp.arange(self.N)))
-        self.jax_dr_dy = jit(self._jax_dr_dy)
-
-    def _jax_step(self, x_ref, u_ref, lambda_ref, mu_ref):
-        h_map_val = self.jax_h_map_fun(x_ref)
-        h_plus_mask = jnp.where(jnp.eye(self.N), False, h_map_val >= 0)
-
-        r0 = self.jax_r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        y0 = jnp.hstack([
-            x_ref.flatten(),
-            u_ref.flatten(),
-            lambda_ref.flatten(),
-            mu_ref.flatten()
-        ])
-        Dr = self.jax_dr_dy(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-
-        def split_y(y):
-            return (y[:T * N * n].reshape(T, N, n),
-                    y[T * N * n:T * N * n + T * N * m].reshape(T, N, m), y[
-                    T * N * n + T * N * m:T * N * n + T * N * m + N * T * n
-                    ].reshape(T, N, n), y[T * N * n + T * N * m + N * T * n:].reshape(
-                    T, N, N))
-
-        def r_y_fun(y):
-            return self.jax_r(*split_y(y), h_plus_mask)
-        # TODO output debug info
-        dy, resid, rank, s = jax.numpy.linalg.lstsq(Dr, y0)
-        flag_no_step = True
-        # line search
-        step = 1.0  # step size
-        dy = dy.flatten()
-        r0_norm = jnp.linalg.norm(r0)
-        apriori_h_res = jnp.sum(h_map_val)
-        for i in range(self.config.backtracking_max_iter):
-            y_new = y0 + step * dy
-            # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
-            # x_new, _, _, _ = split_y(y_new)
-            # x_new = self.game.rollout(self.x0, u_new)
-            # y_new[:dim_x] = x_new.flatten()
-            search_h_res = jnp.sum(h_map_val)
-            r_t = r_y_fun(y_new)
-            r_t_norm = jnp.linalg.norm(r_t)
-            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.config.bc_a * step) * r0_norm,
-                                          search_h_res > apriori_h_res)
-            step = jnp.where(flag_no_step, step*self.config.bc_b, 0)
-        x_ref, u_ref, lambda_ref, mu_ref = split_y(y_new)
-
-        return x_ref, u_ref, lambda_ref, mu_ref
-
-    def _jax_dr_dy(self, x, u, lamda, mu, h_plus_mask):
-        n = self.n
-        m = self.m
-        # dLLi/dxi, dLLi/dui, f(x,u)-x, h
-        full_r_dim = self.T*self.N*(n+m+n+self.N)
-        fun = jacrev(self.jax_r, argnums=[0, 1, 2, 3])
-        drdx, drdu, drdlamda, drdmu = fun(x, u, lamda, mu, h_plus_mask)
-        Dr = jnp.hstack([drdx.reshape(full_r_dim, -1),
-                         drdu.reshape(full_r_dim, -1),
-                         drdlamda.reshape(full_r_dim, -1),
-                         drdmu.reshape(full_r_dim, -1)])
-        return Dr
-
-    def _jax_r(self, x, u, lamda, mu, h_plus_mask):
-        # NOTE we don't do active set here since jax doesn't work with variable size array
-        r = jnp.empty(0)
-        h_val = self.jax_h_map_fun(x)
-        for i in range(self.N):
-            dLLi_dxi_val = self.jax_dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
-            dLLi_dui_val = self.jax_dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
-            r = jnp.hstack([r, dLLi_dxi_val.flatten(), dLLi_dui_val.flatten()])
-            # f(x0, u0) - x1
-            f0 = self.jax_f(self.jax_x0[i], u[0, i], i).flatten() - x[0, i]
-            r = jnp.hstack([r, f0])
-            for k in range(1, self.T):
-                fk = self.jax_f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
-                r = jnp.hstack([r, fk])
-            # h(x_i, x_j)
-            for k in range(1, self.T+1):
-                mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(self.N)[i] == 0)
-                r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
-        return r
-
-    def jax_dLLi_dxi(self, x, u, h_plus_mask, lamda, mu, i):
-        return self.jax_dLLi_dx(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
-
-    def jax_dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
-        return self.jax_dLLi_du(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
-
-    def jax_J_x_ref_fun(self, i):
-        return self.jax_target_x_ref[i]

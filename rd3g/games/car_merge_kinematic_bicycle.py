@@ -26,7 +26,7 @@ logger.setLevel(logging.INFO)
 @dataclass(frozen=True)
 class CarMergeKinematicBicycleConfig(BaseGameConfig):
     """ Base Class for game configuration"""
-    horizon: int = 0
+    T: int = 0
     dt: float = 0.2
     N: int = 3
     n: int = 4
@@ -42,6 +42,7 @@ class CarMergeKinematicBicycleConfig(BaseGameConfig):
     """ Cost matrix for penalizing non-zero state """
     J_R: Any = None
     """ Cost matrix for control effort """
+    USE_CPP: bool = True
 
 
 class CarMergeKinematicBicycle(BaseGame):
@@ -82,16 +83,15 @@ class CarMergeKinematicBicycle(BaseGame):
             ]
 
         # collision definition
+        # this is not a parameter so not in config
         self.h_Qh = np.diag([-1.0, -1, 0, 0])
-
-        self.guess = np.zeros((self.T, self.N, self.m))
 
     def setup_rd3g_cpp(self, solver_config):
         cpp = cpp_CarMergeKinematicBicycle(
             self.config.N,
             self.config.T,
             self.config.dt,
-            solver_config.rho,
+            solver_config.rho_0,
             solver_config.rho_b,
             solver_config.bc_a,
             solver_config.bc_b,
@@ -100,12 +100,13 @@ class CarMergeKinematicBicycle(BaseGame):
             self.config.J_Qr,
             self.config.J_Q,
             self.config.J_R,
-            self.config.h_Qh,
+            self.h_Qh,
             self.config.target_y,
             self.config.collision_radius,
             solver_config.iterations,
             False)
         cpp.set_x0(self.config.x0)
+        self.cpp = cpp
         return cpp
 
     def visualize(self, x0, u, x=None, show=True, save=False):
@@ -141,8 +142,8 @@ class CarMergeKinematicBicycle(BaseGame):
     def animate(self, x0, u, x=None, show=False, save=False):
         if (not show) and (not save):
             return
-        if X is None:
-            X = np.vstack(
+        if x is None:
+            x = np.vstack(
                 [self.config.x0[np.newaxis, :, :],
                  self.rollout(self.config.x0, u)])
         fig, ax = plt.subplots()
@@ -151,7 +152,7 @@ class CarMergeKinematicBicycle(BaseGame):
             car_scale = self.car_scale
             # draw car sprite
             car_pose_vec = []
-            for states in X:
+            for states in x:
                 car_pose_vec.append(
                     [[-states[i][1], states[i][0], states[i][3] + np.pi / 2]
                      for i in range(self.config.N)])
@@ -201,9 +202,9 @@ class CarMergeKinematicBicycle(BaseGame):
                 tt = np.linspace(0, self.config.dt * self.config.T, self.config.T + 1)
                 # for plt.Rectangle, we offset position so this corresponds to top left corner
                 # also flip x axis
-                xx = X[:, i, 0] - 1.0
-                yy = -(X[:, i, 1]) - 0.5
-                angle = X[:, i, 3]
+                xx = x[:, i, 0] - 1.0
+                yy = -(x[:, i, 1]) - 0.5
+                angle = x[:, i, 3]
                 xx_fun = interpolate.interp1d(tt, xx)
                 yy_fun = interpolate.interp1d(tt, yy)
                 angle_fun = interpolate.interp1d(tt, angle)
@@ -262,7 +263,7 @@ class CarMergeKinematicBicycle(BaseGame):
         ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=self.T, blit=True)
+        anim = FuncAnimation(fig, update, frames=self.T, blit=False)
 
         gif_filename = resolve_logname(suffix='gif')
         if save:
@@ -479,6 +480,7 @@ class CarMergeKinematicBicycle(BaseGame):
 def create_random_game(car_count=3, horizon=20):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
     default = CarMergeKinematicBicycleConfig()
+    T = horizon
     N: int = car_count
     n: int = 4
     m: int = 2
@@ -515,7 +517,7 @@ def create_random_game(car_count=3, horizon=20):
     target_y = [1] * (main_lane_n + merge_lane_n)
 
     config = CarMergeKinematicBicycleConfig(
-        horizon=horizon,
+        T=T,
         dt=default.dt,
         N=N,
         n=n,

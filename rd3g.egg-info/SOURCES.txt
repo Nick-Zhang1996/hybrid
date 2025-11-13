@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+rd3g/__init__.py
+rd3g.egg-info/PKG-INFO
+rd3g.egg-info/SOURCES.txt
+rd3g.egg-info/dependency_links.txt
+rd3g.egg-info/requires.txt
+rd3g.egg-info/top_level.txt
+tests/test_cpp_solver.py
+tests/test_jax.py
