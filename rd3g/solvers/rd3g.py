@@ -1,5 +1,4 @@
-"""Base class for residual game for an example of a subclass, see
-UnstructuredDriving.py."""
+""" Residual Descent Differential Dynamic Game Solver (RD3G)"""
 # pylint: disable=invalid-name, forgotten-debug-statement
 
 import logging

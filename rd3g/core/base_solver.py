@@ -7,10 +7,6 @@ from typing import Any
 @dataclass(frozen=True)
 class BaseSolverConfig():
     """Configs for Residual Game."""
-    USE_CPP: bool = False
-    CPP_DEBUG: bool = False
-    DEBUG: bool = False
-    FORCE_PYTHON_SOLVER: bool = False
     tolerance: float = 5e-4
     iterations: int = 30
 

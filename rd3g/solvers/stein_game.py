@@ -12,7 +12,7 @@ import scipy.sparse
 import scipy.sparse.linalg
 
 from .utilities.time_util import TimeUtil
-from .residual_game import RD3G, RD3GConfig
+from .rd3g import RD3G, RD3GConfig
 
 logger = logging.getLogger("ProfileSteinMerge")
 logger.setLevel(logging.INFO)

@@ -1,3 +1,4 @@
+""" Defines additional functions a game needs to provide for RD3G (without autograd) to work"""
 from abc import abstractmethod
 
 import numpy as np
@@ -17,9 +18,6 @@ class BaseResidualGame(BaseGame):
 
     def Jfi(self, x_T, i):
         return self.J(x_T, np.zeros(self.m), i)
-
-    def jax_Jfi(self, x_T, i):
-        return self.jax_J(x_T, jnp.zeros(self.m), i)
 
     def dJfi_dxi(self, x_T, i):
         return self.dJi_dxi(x_T, np.zeros(self.m), i)
