@@ -2,32 +2,30 @@
 UnstructuredDriving.py."""
 # pylint: disable=invalid-name, forgotten-debug-statement
 
-import os
-from functools import lru_cache
 import logging
 from time import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import chain
 
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
-from PIL import Image
 import matplotlib.pyplot as plt
-from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 
-from .utilities.util import PrintObject, jacobian_numerical
-from .utilities.time_util import TimeUtil
+from rd3g.utilities.util import jacobian_numerical
+from rd3g.utilities.time_util import TimeUtil
+from rd3g.core.base_solver import BaseSolver, BaseSolverConfig
+from rd3g.core.base_game import BaseGame
 
 logger = logging.getLogger('ResidualGame')
 logger.setLevel(logging.INFO)
 
 
 @dataclass(frozen=True)
-class ResidualGameConfig():
+class RD3GConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     USE_CPP: bool = False
     CPP_DEBUG: bool = False
@@ -35,9 +33,19 @@ class ResidualGameConfig():
     FORCE_PYTHON_SOLVER: bool = False
     tolerance: float = 5e-4
     iterations: int = 30
+    # backtracking line search param
+    bc_a: float = 0.1  # alpha
+    bc_b: float = 0.5  # beta
+    backtracking_max_iter: int = 20
+    # NOTE this is not implemented in cpp
+    dynamics_residual_weight: float = 1.0
+    # barrier function scaling schedule
+    rho_0: float = 20.0
+    # scaling rate for rho, rho+ = rho * rho_b
+    rho_b: float = 1.0
 
 
-class ResidualGame(PrintObject, ABC):
+class RD3G(BaseSolver):
     """Residual Descent Differential Dynamic Game Solver (RD3G)
 
     Attributes:
@@ -53,24 +61,41 @@ class ResidualGame(PrintObject, ABC):
 
     """
 
-    @abstractmethod
-    def __init__(self, config: ResidualGameConfig):
-        """example of a constructor."""
-        PrintObject.__init__(self)
-        self.config = config
-        self.N = None
-        self.T = None
-        self.dt = 0.1
-        self.n = None
-        self.m = None
-        self.x0 = None
-        self.dim_theta = None
+    def __init__(self, config: RD3GConfig, game: BaseGame):
+        BaseSolver.__init__(self, config, game)
 
-        # initialize default parameters
-        self.init()
+        self.N = self.game.config.N
+        self.T = self.game.config.T
+        self.dt = self.game.config.dt
+        self.n = self.game.config.n
+        self.m = self.game.config.m
+        self.x0 = self.game.config.x0
+
+        self.dim_theta = None
 
         self.guess = None
         self.violations = None
+
+        self.rho = self.config.rho_0
+        self.profiler = TimeUtil(False)
+        # logger.debug_enable()
+        self.residual_vec = []
+        if self.config.USE_CPP:
+            self.cpp = self.game.setup_rd3g_cpp()
+            if self.cpp is None:
+                logger.error('User specified USE_CPP, but cpp backend for this game is unavailable')
+
+        """ Jax """
+        x_ref = np.zeros((self.N, self.n))
+        x_ref[:, 2] = 2.0  # target speed
+        x_ref[:, 1] = np.array(self.config.target_y)  # target y position
+        self.jax_target_x_ref = jnp.array(x_ref)
+        ''' (N,n), reference state'''
+
+        self.jax_x0 = jnp.array(self.config.x0)
+        self.jax_J_Qr = jnp.array(self.config.J_Qr)
+        self.jax_J_Q = jnp.array(self.config.J_Q)
+        self.jax_J_R = jnp.array(self.config.J_R)
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -91,83 +116,9 @@ class ResidualGame(PrintObject, ABC):
     def init(self):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
-        # solver tuning parameters
-        # barrier function scaling schedule
-        self.rho = 10.0 * 2
-        self.rho_b = 1.0  # 2.0
-        # backtracking line search param
-        self.bc_a = 0.1  # alpha
-        self.bc_b = 0.5  # beta
-        self.backtracking_max_iter = 20
+        raise NotImplementedError
 
-        # NOTE this is not implemented in cpp
-        self.dynamics_residual_weight = 1.0
-
-        # solver variables
-        self.frame_vec = []
-        self.profiler = TimeUtil(False)
-        # logger.debug_enable()
-        self.residual_vec = []
-        self.cpp = None
-
-    def setup(self):
-        # subclass responsible for loading specific cpp/eigen module
-        # and setting x0
-        logger.info(
-            ' ---------------------------------------------------------------------------- '
-        )
-        logger.info(
-            ' subclass did not define custom setup function, cpp module likely unavailable '
-        )
-        logger.info(
-            ' ---------------------------------------------------------------------------- '
-        )
-        # example usage:
-        # if self.config.USE_CPP:
-        #     self.cpp = ParticleGame(...)
-        #     self.cpp.set_x0(self.x0)
-
-    def naive_particle_solve(self,
-                             save_gif=False,
-                             visualize=False,
-                             animate=False):
-        del save_gif
-        del visualize
-        del animate
-        best_residual = 1e99
-        samples = 10
-        for i in range(samples):
-            # u_ref = np.random.uniform(-1.5,1.5, (self.T,self.N,self.m))
-            u_dim = self.T * self.N * self.m
-            u_ref = np.random.multivariate_normal(np.zeros(u_dim),
-                                                  np.diag([0.5] * u_dim),
-                                                  1).reshape(
-                                                      self.T, self.N, self.m)
-            retval = self.cpp.solve(u_ref)
-            x_ref, u_ref, lambda_ref, mu_ref = [
-                np.array(val) for val in retval[:-1]
-            ]
-            has_converged = retval[-1]
-            logger.debug(f'sample {i} has_converged: {has_converged}')
-
-            # check residual
-            h_plus_mask = self.get_h_plus_mask(x_ref)
-            r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-            r0_norm = np.linalg.norm(r0)
-            if r0_norm < best_residual:
-                best_residual = r0_norm
-            logger.info(
-                f' residual = {r0_norm}, current best = {best_residual}')
-
-            if has_converged:
-                logger.debug(f'found a solution at sample {i}')
-                break
-
-        full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
-        return u_ref, full_x_ref, has_converged
-
-    def cpp_solve(self, save_gif=False, visualize=False, animate=False):
-        del save_gif
+    def cpp_solve(self):
         logger.debug('solve using cpp.solve()')
         u_ref = self.guess
         t0 = time()
@@ -184,17 +135,9 @@ class ResidualGame(PrintObject, ABC):
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         r0_norm = np.linalg.norm(r0)
         logger.debug(f' residual = {r0_norm}')
-        self.visualize(u_ref,
-                       visualize=visualize,
-                       animate=animate,
-                       gif_prefix='before')
         return
 
-    def solve(self,
-              u_ref=None,
-              save_gif=False,
-              visualize=False,
-              animate=False):
+    def solve(self):
         """main entry point for solver, will call cpp version if available,
         will fallback to python if cpp does not provide a solution, I forgot
         why I did the fallback."""
@@ -213,14 +156,10 @@ class ResidualGame(PrintObject, ABC):
         if u_ref is None:
             u_ref = self.guess
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
-        x_ref = self.rollout(self.x0, u_ref)
+        x_ref = self.game.rollout(self.x0, u_ref)
         lambda_ref = np.zeros((T, N, self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T, N, N))
-        self.visualize(u_ref,
-                       visualize=visualize,
-                       animate=animate,
-                       gif_prefix='before')
         t0 = time()
         t = self.profiler
         has_converged = False
@@ -261,7 +200,7 @@ class ResidualGame(PrintObject, ABC):
                     has_converged = True
                     break
             # NOTE may not be necessary
-            x_ref = self.rollout(self.x0, u_ref)
+            x_ref = self.game.rollout(self.x0, u_ref)
             t.e()
             logger.debug(f'------ {N} agents, iter {i} ------')
 
@@ -270,12 +209,6 @@ class ResidualGame(PrintObject, ABC):
         if i == self.config.iterations - 1:
             logger.warning(' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
-        self.visualize(u_ref,
-                       full_x_ref,
-                       visualize,
-                       save_gif,
-                       animate,
-                       gif_prefix='after')
 
         # check second order conditions
         h_plus_mask = np.zeros((self.T, self.N, self.N), dtype=bool)
@@ -446,7 +379,7 @@ class ResidualGame(PrintObject, ABC):
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
         flag_no_step = True
-        for i in range(self.backtracking_max_iter):
+        for i in range(self.config.backtracking_max_iter):
             y_new = y0 + step * dy
             x_new, _, _, _ = split_y(y_new)
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
@@ -455,9 +388,9 @@ class ResidualGame(PrintObject, ABC):
             search_h_res = self.get_collision_residual(x_new)
             r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1 - self.bc_a * step) * r0_norm
+            if (r_t_norm > (1 - self.config.bc_a * step) * r0_norm
                     or search_h_res > apriori_h_res):
-                step *= self.bc_b
+                step *= self.config.bc_b
             else:
                 flag_no_step = False
                 break
@@ -477,7 +410,7 @@ class ResidualGame(PrintObject, ABC):
         if flag_no_step:
             raise StopIteration('iteration not making progress')
 
-        self.rho *= self.rho_b
+        self.rho *= self.config.rho_b
 
         if self.config.USE_CPP:
             # normally we won't reach here because we'd use  the cpp.step(),
@@ -486,129 +419,15 @@ class ResidualGame(PrintObject, ABC):
 
         return split_y(y_new)
 
-    def rollout(self, x0: np.ndarray, u: np.ndarray):
-        """ Rollout control to get state trajectory (cached)
-        Args:
-            x0: (N,m)
-            u: (T,N,m), u0..u_T-1, will be reshaped
-        Return:
-            X: (T,N,n) x1..xT
-        """
-        # use cached version
-        # x0_tuple = tuple(x0.flatten())
-        # u_tuple = tuple(u.flatten())
-        # return self._rollout_cached(x0_tuple, u_tuple)
-        return self._rollout(x0, u)
-
-    @lru_cache(maxsize=128)
-    def _rollout_cached(self, x0: tuple, u: tuple):
-        x0_np = np.array(x0)
-        u_np = np.array(u).reshape((self.T, self.N, self.m))
-        return self._rollout(x0_np, u_np)
-
-    def _rollout(self, x0: np.ndarray, u: np.ndarray) -> np.ndarray:
-        """ Rollout control to get state trajectory
-        Args:
-            x0: (N,m)
-            u: (T,N,m), u0..u_T-1, will be reshaped
-        Return:
-            X: (T,N,n) x1..xT
-        """
-        assert u.shape == (self.T, self.N, self.m)
-        # u = u.reshape(self.T, self.N, self.m)
-        X = np.zeros((self.T + 1, self.N, self.n))
-        X[0, :, :] = x0.reshape(self.N, self.n)
-        # x+ = x + vx*dt + 0.5*ax*dt*dt
-        # vx+ = vx + ax*dt
-        for i in range(self.N):
-            for k in range(1, self.T + 1):
-                X[k, i] = self.f(X[k - 1, i], u[k - 1, i], i).flatten()
-        return X[1:, :, :]
-
-    @abstractmethod
-    def _visualize(self, u: np.ndarray, x: np.ndarray | None):
-        """Visualize the control.
-
-        populate x if not provided. Abstrat method, subclass
-        are expected to implement this for the specific game
-        Args:
-            u: control, [T,N,m] np.ndarray, but will be reshaped
-            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
-
-        """
-        raise NotImplementedError
-
-    def visualize(self,
-                  u,
-                  x=None,
-                  visualize=False,
-                  save_gif=False,
-                  save_fig=False,
-                  animate=False,
-                  fig_name='visualize',
-                  gif_prefix='run'):
-        """Visualize the control.
-
-        populate x if not provided. Abstrat method, subclass
-        are expected to implement this for the specific game
-        Args:
-            u: control, [T,N,m] np.ndarray, but will be reshaped
-            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
-
-        """
-        if (visualize or save_gif or save_fig):
-            fig = self._visualize(u, x)
-            if save_gif:
-                fig.canvas.draw()
-                frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
-                                        fig.canvas.tostring_rgb())
-                self.frame_vec.append(frame)
-            if visualize:
-                plt.show()
-            if save_fig:
-                filename = f'logs/{fig_name}.png'
-                plt.savefig(filename)
-                logger.info(f'saved figure to {filename}')
-        if animate:
-            self._animation(u, x, gif_prefix=gif_prefix)
-        return
-
-    @abstractmethod
-    def _animation(self, U, X=None, gif_prefix=''):
-        """build a gif animation."""
-        raise NotImplementedError
-
     def final(self):
         self.profiler.summary()
         if self.config.USE_CPP:
             self.cpp.summary()
-        if len(self.frame_vec) > 0:
-            gif_filename = self.resolveLogname()
-            self.frame_vec[0].save(fp=gif_filename,
-                                   format='GIF',
-                                   append_images=self.frame_vec,
-                                   save_all=True,
-                                   duration=200,
-                                   loop=0)
-            logger.info(f'GIf saved to {gif_filename}')
         plt.plot(self.residual_vec, '*-')
         plt.yscale('log')
         plt.xlabel('Iteration')
         plt.ylabel('Residual (exp)')
         plt.show()
-
-    def resolveLogname(self, logPrefix='run'):
-        # setup log file
-        # log file will record state of the vehicle for later analysis
-        logSuffix = '.gif'
-        no = 1
-        logFolder = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), 'gifs/'))
-        while os.path.isfile(logFolder + logPrefix + str(no) + logSuffix):
-            no += 1
-
-        logFilename = logFolder + logPrefix + str(no) + logSuffix
-        return logFilename
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         t = self.profiler
@@ -646,7 +465,7 @@ class ResidualGame(PrintObject, ABC):
         for k in range(1, self.T + 1):
             for i in range(self.N):
                 for j in range(i + 1, self.N):
-                    this_h = self.h(x[k - 1, i], x[k - 1, j])
+                    this_h = self.game.h(x[k - 1, i], x[k - 1, j])
                     if this_h > 0:
                         h_res += this_h
         return h_res
@@ -662,7 +481,7 @@ class ResidualGame(PrintObject, ABC):
         # we check it in h_minux
         # for x 1-T, NOTE index to retval start from 1
         h_plus_mask = jnp.fromfunction(
-            lambda k, i, j: jnp.logical_and(self.h(x[k, i], x[k, j]) >= 0, i != j),
+            lambda k, i, j: jnp.logical_and(self.game.h(x[k, i], x[k, j]) >= 0, i != j),
             shape=(self.T, self.N, self.N),
             dtype=int
         )
@@ -680,7 +499,7 @@ class ResidualGame(PrintObject, ABC):
             for i in range(self.N):
                 for j in range(i + 1, self.N):
                     h_plus_mask[k, i,
-                                j] = h_plus_mask[k, j, i] = self.h(
+                                j] = h_plus_mask[k, j, i] = self.game.h(
                                     x[k, i], x[k, j]) >= 0
         if self.config.CPP_DEBUG:
             alt = self.cpp.getHplusMask([xx for xx in x])
@@ -703,26 +522,26 @@ class ResidualGame(PrintObject, ABC):
         '''
         # feasibility for h>0
         h_plus = np.sum([
-            mu_k[i, j.item()] * (self.h(x_k[i], x_k[j.item()]))
+            mu_k[i, j.item()] * (self.game.h(x_k[i], x_k[j.item()]))
             for j in np.nonzero(h_k_plus_mask[i])[0]
         ],
             axis=0)
         if self.config.CPP_DEBUG:
             for j in np.nonzero(h_k_plus_mask[i])[0]:
-                val = self.h(x_k[i], x_k[j.item()])
+                val = self.game.h(x_k[i], x_k[j.item()])
                 val_cpp = self.cpp.h(x_k[i], x_k[j.item()])
                 if np.linalg.norm(val - val_cpp) > 1e-4:
                     breakpoint()
 
         # barrier for h < 0
         h_minus = -1 / self.rho * np.sum([
-            np.log(-min(self.h(x_k[i], x_k[j.item()]), -1e-100))
+            np.log(-min(self.game.h(x_k[i], x_k[j.item()]), -1e-100))
             if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0]
         ])
-        dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
-        return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
+        dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
+        return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
-    def jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
+    def _jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
         ''' Lagrangian for agent i
         Args:
             x_k: (N,n) state vector at step k
@@ -736,7 +555,7 @@ class ResidualGame(PrintObject, ABC):
         # TODO: refactor, use h_k instead of h_k_plus_mask to avoid calculating h many times
         # feasibility for h>0
         h_plus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i != j, mu_k[i, j] * self.h(x_k[i], x_k[j]), 0),
+            lambda j: jnp.where(i != j, mu_k[i, j] * self.game.h(x_k[i], x_k[j]), 0),
             shape=self.N,
             dtype=int
         )
@@ -768,16 +587,16 @@ class ResidualGame(PrintObject, ABC):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,
                                      lamda_k, mu_k, i)
 
-        val = self.dJi_dxi(x_k, u_k_i,
-                           i) + lamda_k[i].T @ self.df_dx(x_k[i], u_k_i, i)
+        val = self.game.dJi_dxi(x_k, u_k_i,
+                                i) + lamda_k[i].T @ self.game.df_dx(x_k[i], u_k_i, i)
         val += np.sum([
-            mu_k[i, j.item()] * (self.dh_dxi(x_k[i], x_k[j.item()]))
+            mu_k[i, j.item()] * (self.game.dh_dxi(x_k[i], x_k[j.item()]))
             for j in np.nonzero(h_k_plus_mask[i])[0]
         ],
             axis=0)
         val += -1.0 / self.rho * np.sum([
-            min(1 / self.h(x_k[i], x_k[j.item()]), 1e20) *
-            self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i)
+            min(1 / self.game.h(x_k[i], x_k[j.item()]), 1e20) *
+            self.game.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i)
             for j in np.nonzero(~h_k_plus_mask[i])[0]
         ],
             axis=0)
@@ -786,22 +605,22 @@ class ResidualGame(PrintObject, ABC):
         if self.config.DEBUG:
             # dJi_dx -- passed
             num = jacobian_numerical(
-                lambda xx: self.J(xx.reshape(x_k.shape), u_k_i, i),
+                lambda xx: self.game.J(xx.reshape(x_k.shape), u_k_i, i),
                 x_k.flatten())
             num = num.reshape((1, self.N, self.n))[:, i]
-            ana = self.dJi_dxi(x_k, u_k_i, i)
+            ana = self.game.dJi_dxi(x_k, u_k_i, i)
             assert np.linalg.norm(num - ana) < 1e-4
             # df_dx -- inconclusive
-            num = jacobian_numerical(lambda uu: self.J(x_k, uu, i), u_k_i)
-            ana = self.dJi_du(x_k, u_k_i, i)
+            num = jacobian_numerical(lambda uu: self.game.J(x_k, uu, i), u_k_i)
+            ana = self.game.dJi_du(x_k, u_k_i, i)
             assert np.linalg.norm(num - ana) < 1e-4
             # dh_dxi -- inconclusive
             for j in np.nonzero(h_k_plus_mask[i])[0]:
                 if i == j:
                     continue
-                ana = self.dh_dxi(x_k[i], x_k[j])
+                ana = self.game.dh_dxi(x_k[i], x_k[j])
                 # pylint: disable-next=cell-var-from-loop
-                num = jacobian_numerical(lambda xx: self.h(xx, x_k[j]), x_k[i])
+                num = jacobian_numerical(lambda xx: self.game.h(xx, x_k[j]), x_k[i])
                 assert np.linalg.norm(num - ana) < 1e-4
 
             num = jacobian_numerical(
@@ -813,7 +632,7 @@ class ResidualGame(PrintObject, ABC):
 
         if self.config.CPP_DEBUG:
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
-            if np.linalg.norm(self.dJi_dxi(x_k, u_k_i, i) - alt) > 1e-4:
+            if np.linalg.norm(self.game.dJi_dxi(x_k, u_k_i, i) - alt) > 1e-4:
                 breakpoint()
             alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k,
                                     mu_k, i)
@@ -831,13 +650,12 @@ class ResidualGame(PrintObject, ABC):
         return -lamda_k[i].T
 
     # NOTE deprecated, usually dJi_du is called directly
-
     def dL_du(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
         del x_k1_i
         del h_k_plus_mask
         del mu_k
-        val = self.dJi_du(x_k, u_k_i,
-                          i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i, i)
+        val = self.game.dJi_du(x_k, u_k_i,
+                               i) + lamda_k[i].T @ self.game.df_du(x_k[i], u_k_i, i)
         return val
 
     def jax_LLi(self, x, u, h_plus_mask, lamda, mu, i):
@@ -869,7 +687,7 @@ class ResidualGame(PrintObject, ABC):
         # x_T related terms
         LLi_val += self.jax_Jfi(x[T - 1], i)
         h_T_val = jnp.fromfunction(
-            lambda j: self.h(x[T-1, i], x[T-1, j]) * (i != j),
+            lambda j: self.game.h(x[T-1, i], x[T-1, j]) * (i != j),
             shape=(self.N,),
             dtype=int
         )
@@ -901,25 +719,20 @@ class ResidualGame(PrintObject, ABC):
             axis=0)
 
         # x0 related terms
-        LLi_val += self.J(
+        LLi_val += self.game.J(
             self.x0, u[0, i],
-            i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
+            i) + lamda[0, i].T @ (self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
         # x_T related terms
-        LLi_val += self.Jfi(x[T - 1], i)
-        h_plus_debug = [
-            mu[T - 1, i, j.item()] *
-            (self.h(x[T - 1, i], x[T - 1, j.item()]))
-            for j in np.nonzero(h_plus_mask[T - 1, i])[0]
-        ]
+        LLi_val += self.game.Jfi(x[T - 1], i)
 
         h_plus = np.sum([
             mu[T - 1, i, j.item()] *
-            (self.h(x[T - 1, i], x[T - 1, j.item()]))
+            (self.game.h(x[T - 1, i], x[T - 1, j.item()]))
             for j in np.nonzero(h_plus_mask[T - 1, i])[0]
         ],
             axis=0)
         h_minus = -1 / self.rho * np.sum([
-            np.log(-min(self.h(x[T - 1, i], x[T - 1, j.item()]), -1e-100)) *
+            np.log(-min(self.game.h(x[T - 1, i], x[T - 1, j.item()]), -1e-100)) *
             (j.item() != i) for j in np.nonzero(~h_plus_mask[T - 1, i])[0]
         ],
             axis=0)
@@ -959,7 +772,7 @@ class ResidualGame(PrintObject, ABC):
         sub = submtx_k(T)
         h_pos_term = np.sum(
             [
-                mu[T-1, i, j.item()] * (self.dh_dxi(x[T-1, i], x[T-1, j.item()]))
+                mu[T-1, i, j.item()] * (self.game.dh_dxi(x[T-1, i], x[T-1, j.item()]))
                 for j in np.nonzero(h_plus_mask[T-1, i])[0]
             ],
             axis=0
@@ -967,7 +780,7 @@ class ResidualGame(PrintObject, ABC):
 
         h_neg_term = - 1/self.rho*np.sum(
             [
-                min(1/self.h(x[T-1, i], x[T-1, j.item()]), 1e20)*self.dh_dxi(
+                min(1/self.game.h(x[T-1, i], x[T-1, j.item()]), 1e20)*self.game.dh_dxi(
                     x[T-1, i], x[T-1, j.item()]) * (j.item() != i)
                 for j in np.nonzero(~h_plus_mask[T-1, i])[0]
             ],
@@ -975,7 +788,7 @@ class ResidualGame(PrintObject, ABC):
         )
 
         sub[:] = -lamda[T-1, i].T + \
-            self.dJfi_dxi(x[T-1], i) + h_pos_term + h_neg_term
+            self.game.dJfi_dxi(x[T-1], i) + h_pos_term + h_neg_term
 
         val = der.reshape(1, -1)
         if self.config.CPP_DEBUG:
@@ -1002,15 +815,15 @@ class ResidualGame(PrintObject, ABC):
             return der[k * m:(k + 1) * m]
         # dLLi_dui_0
         sub = submtx_k(0)
-        sub[:] = self.dJi_du(self.x0, u[0, i], i) + lamda[0, i].T @ self.df_du(
+        sub[:] = self.game.dJi_du(self.x0, u[0, i], i) + lamda[0, i].T @ self.game.df_du(
             self.x0[i], u[0, i], i)
         # dLLi_dui_k
         for k in range(1, T):
             sub = submtx_k(k)
             # dL_du
-            sub[:] = self.dJi_du(
+            sub[:] = self.game.dJi_du(
                 x[k - 1], u[k, i],
-                i) + lamda[k, i].T @ self.df_du(x[k - 1, i], u[k, i], i)
+                i) + lamda[k, i].T @ self.game.df_du(x[k - 1, i], u[k, i], i)
         val = der.reshape(1, -1)
         if self.config.CPP_DEBUG:
             alt = self.cpp.dLLi_dui([xx for xx in x], [uu for uu in u],
@@ -1035,7 +848,7 @@ class ResidualGame(PrintObject, ABC):
         dLLi_dxi_dmu = np.zeros((T * n, dim_mu))
         for k in range(1, T + 1):
             for j in np.nonzero(h_plus_mask[k - 1, i])[0]:
-                dLLi_dxki_dmuijk = self.dh_dxi(x[k - 1, i], x[k - 1, j])
+                dLLi_dxki_dmuijk = self.game.dh_dxi(x[k - 1, i], x[k - 1, j])
                 dLLi_dxi_dmu[(k - 1) * n:k * n,
                              (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
         if self.config.CPP_DEBUG:
@@ -1064,22 +877,22 @@ class ResidualGame(PrintObject, ABC):
             r = jnp.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
             # dynamics for f(x0,u0) = x1
             r = jnp.hstack([
-                r, self.dynamics_residual_weight *
-                self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+                r, self.config.dynamics_residual_weight *
+                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = jnp.hstack([
-                    r, self.dynamics_residual_weight *
-                    self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                    r, self.config.dynamics_residual_weight *
+                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
                 r = jnp.hstack([r] + [
-                    self.h(x[k - 1, i], x[k - 1, j.item()])
+                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
                     for j in np.nonzero(h_plus_mask[k - 1, i])[0]
                 ])
             # h(x_T_i, x_T_j)
             r = jnp.hstack([r] + [
-                self.h(x[T - 1, i], x[T - 1, j.item()])
+                self.game.h(x[T - 1, i], x[T - 1, j.item()])
                 for j in np.nonzero(h_plus_mask[T - 1, i])[0]
             ])
 
@@ -1106,22 +919,22 @@ class ResidualGame(PrintObject, ABC):
             r = np.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
             # dynamics for f(x0,u0) = x1
             r = np.hstack([
-                r, self.dynamics_residual_weight *
-                self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+                r, self.config.dynamics_residual_weight *
+                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = np.hstack([
-                    r, self.dynamics_residual_weight *
-                    self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                    r, self.config.dynamics_residual_weight *
+                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
                 r = np.hstack([r] + [
-                    self.h(x[k - 1, i], x[k - 1, j.item()])
+                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
                     for j in np.nonzero(h_plus_mask[k - 1, i])[0]
                 ])
             # h(x_T_i, x_T_j)
             r = np.hstack([r] + [
-                self.h(x[T - 1, i], x[T - 1, j.item()])
+                self.game.h(x[T - 1, i], x[T - 1, j.item()])
                 for j in np.nonzero(h_plus_mask[T - 1, i])[0]
             ])
 
@@ -1134,13 +947,13 @@ class ResidualGame(PrintObject, ABC):
         return r
 
     def Bh(self, x_i, x_j):
-        h_val = self.h(x_i, x_j)
+        h_val = self.game.h(x_i, x_j)
         return -1 / self.rho * jnp.log(-jnp.where(h_val < -1e-100, h_val, -1e-100))
 
     def dBh_dxi(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
         # dB(h)/dx = -rho^-1 h^-1 dhdx
-        val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxi(x_i, x_j)
+        val = -1 / (self.rho * self.game.h(x_i, x_j)) * self.game.dh_dxi(x_i, x_j)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
                 lambda xx: self.Bh(xx.reshape(x_i.shape), x_j), x_i.flatten())
@@ -1150,7 +963,7 @@ class ResidualGame(PrintObject, ABC):
     def dBh_dxj(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
         # dB(h)/dx = -rho^-1 h^-1 dhdx
-        val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxj(x_i, x_j)
+        val = -1 / (self.rho * self.game.h(x_i, x_j)) * self.game.dh_dxj(x_i, x_j)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
                 lambda xx: self.Bh(x_i, xx.reshape(x_j.shape)), x_j.flatten())
@@ -1158,9 +971,9 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dBh_dxi_dxi(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxi_dxi(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxi = self.game.dh_dxi(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxi_dxi(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxi)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -1171,10 +984,10 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dBh_dxi_dxj(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
-        dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxi_dxj(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxi = self.game.dh_dxi(x_i, x_j).reshape(1, self.n)
+        dhdxj = self.game.dh_dxj(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxi_dxj(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxj)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -1185,9 +998,9 @@ class ResidualGame(PrintObject, ABC):
         return val
 
     def dBh_dxj_dxj(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxj_dxj(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxj = self.game.dh_dxj(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxj_dxj(x_i, x_j) +
                                     1 / h * dhdxj.T @ dhdxj)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -1216,10 +1029,10 @@ class ResidualGame(PrintObject, ABC):
         for k in range(1, T):
             # dLLi_dxki_dxki
             mtx = submtx(k, i)
-            val1 = self.dJi_dxi_dxi(x[k - 1], u[k, i], i)
+            val1 = self.game.dJi_dxi_dxi(x[k - 1], u[k, i], i)
             val2 = np.sum([
                 mu[k - 1, i, j.item()] *
-                (self.dh_dxi_dxi(x[k - 1, i], x[k - 1, j.item()]))
+                (self.game.dh_dxi_dxi(x[k - 1, i], x[k - 1, j.item()]))
                 for j in np.nonzero(h_plus_mask[k - 1, i])[0]
             ],
                 axis=0)
@@ -1241,13 +1054,13 @@ class ResidualGame(PrintObject, ABC):
         )
         h_pos_terms = np.sum(
             [
-                mu[T-1, i, j.item()] * (self.dh_dxi_dxi(x[T-1, i], x[T-1, j.item()]))
+                mu[T-1, i, j.item()] * (self.game.dh_dxi_dxi(x[T-1, i], x[T-1, j.item()]))
                 for j in np.nonzero(h_plus_mask[T-1, i])[0]
             ],
             axis=0
         )
 
-        mtx[:, :] = self.dJfi_dxi_dxi(x[T-1], i) + h_neg_terms + h_pos_terms
+        mtx[:, :] = self.game.dJfi_dxi_dxi(x[T-1], i) + h_neg_terms + h_pos_terms
 
         # dLLi_dxi_dxj
         for k in range(1, T):
@@ -1256,17 +1069,17 @@ class ResidualGame(PrintObject, ABC):
                     continue
                 if j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                     # dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(
+                    val = self.game.dJi_dxi_dxj(
                         x[k - 1], u[k, i], i,
-                        j) + mu[k - 1, i, j] * self.dh_dxi_dxj(
+                        j) + mu[k - 1, i, j] * self.game.dh_dxi_dxj(
                             x[k - 1, i], x[k - 1, j])
                     mtx = submtx(k, j)
                     mtx[:, :] = val
                 else:
                     # dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(x[k - 1], u[k, i], i,
-                                           j) + self.dBh_dxi_dxj(
-                                               x[k - 1, i], x[k - 1, j])
+                    val = self.game.dJi_dxi_dxj(x[k - 1], u[k, i], i,
+                                                j) + self.dBh_dxi_dxj(
+                        x[k - 1, i], x[k - 1, j])
                     mtx = submtx(k, j)
                     mtx[:, :] = val
         k = T
@@ -1275,14 +1088,14 @@ class ResidualGame(PrintObject, ABC):
                 continue
             if j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                 # dLLi_dxki_dxkj
-                val = self.dJfi_dxi_dxj(x[k - 1], i,
-                                        j) + mu[k - 1, i, j] * self.dh_dxi_dxj(
-                                            x[k - 1, i], x[k - 1, j])
+                val = self.game.dJfi_dxi_dxj(x[k - 1], i,
+                                             j) + mu[k - 1, i, j] * self.game.dh_dxi_dxj(
+                    x[k - 1, i], x[k - 1, j])
                 mtx = submtx(k, j)
                 mtx[:, :] = val
             else:
                 # dLLi_dxki_dxkj
-                val = self.dJfi_dxi_dxj(x[k - 1], i, j) + self.dBh_dxi_dxj(
+                val = self.game.dJfi_dxi_dxj(x[k - 1], i, j) + self.dBh_dxi_dxj(
                     x[k - 1, i], x[k - 1, j])
                 mtx = submtx(k, j)
                 mtx[:, :] = val
@@ -1316,16 +1129,16 @@ class ResidualGame(PrintObject, ABC):
         for i in range(N):
             k = 0
             dxdu[k * N * n + i * n:k * N * n + (i + 1) * n,
-                 k * N * m + i * m:k * N * m + (i + 1) * m] = self.df_du(
+                 k * N * m + i * m:k * N * m + (i + 1) * m] = self.game.df_du(
                      self.x0[i], u[0, i], i)
             for k in range(1, T):
                 dxdu[k * N * n + i * n:k * N * n + (i + 1) * n,
-                     k * N * m + i * m:k * N * m + (i + 1) * m] = self.df_du(
+                     k * N * m + i * m:k * N * m + (i + 1) * m] = self.game.df_du(
                          x[k - 1, i], u[k, i], i)
 
         if self.config.DEBUG:
             dxdu_num = jacobian_numerical(
-                fun=lambda uu: self.rollout(self.x0, uu.reshape((T, N, m))),
+                fun=lambda uu: self.game.rollout(self.x0, uu.reshape((T, N, m))),
                 x=u.flatten(),
                 dim=dim_x)
             logger.debug(f'dxdu_num err {np.linalg.norm(dxdu_num - dxdu)}')
@@ -1343,7 +1156,7 @@ class ResidualGame(PrintObject, ABC):
         dim_x = T * N * n
         dFdx = np.zeros((n, dim_x))
         dFdx[:, (k - 1) * N * n + i * n:(k - 1) * N * n +
-             (i + 1) * n] = self.df_dx(x[k - 1, i], u[k, i], i)
+             (i + 1) * n] = self.game.df_dx(x[k - 1, i], u[k, i], i)
         dFdx[:, k * N * n + i * n:k * N * n + (i + 1) * n] = -np.eye(n)
         if self.config.CPP_DEBUG:
             alt = self.cpp.dF_dx([xx for xx in x], [uu for uu in u], i, k)
@@ -1379,9 +1192,9 @@ class ResidualGame(PrintObject, ABC):
         dim_x = T * N * n
         dhdx = np.zeros((1, dim_x))
         dhdx[:, (k - 1) * N * n + i * n:(k - 1) * N * n +
-             (i + 1) * n] = self.dh_dxi(x[k - 1, i], x[k - 1, j])
+             (i + 1) * n] = self.game.dh_dxi(x[k - 1, i], x[k - 1, j])
         dhdx[:, (k - 1) * N * n + j * n:(k - 1) * N * n +
-             (j + 1) * n] = self.dh_dxj(x[k - 1, i], x[k - 1, j])
+             (j + 1) * n] = self.game.dh_dxj(x[k - 1, i], x[k - 1, j])
         if self.config.CPP_DEBUG:
             alt = self.cpp.dh_dx([xx for xx in x], k, i, j)
             if np.linalg.norm(alt - dhdx) > 1e-4:
@@ -1410,18 +1223,18 @@ class ResidualGame(PrintObject, ABC):
             # dynamics for f(x0,u0) = x1
             drdx[index:index + T * n, :] = dLL_dxi_dx
             index += T * n + T * m
-            drdx[index:index + n, :] = self.dynamics_residual_weight * dF0dx
+            drdx[index:index + n, :] = self.config.dynamics_residual_weight * dF0dx
             for k in range(1, self.T):
                 dFdx = self.dF_dx(x, u, i, k)
                 drdx[index + k * n:index +
-                     (k + 1) * n, :] = self.dynamics_residual_weight * dFdx
+                     (k + 1) * n, :] = self.config.dynamics_residual_weight * dFdx
             index += n * T
             for k in range(1, self.T + 1):
                 indices = np.nonzero(h_plus_mask[k - 1, i])[0]
                 if len(indices) == 0:
                     continue
                 dhdx = np.vstack(
-                    [self.dh_dx(x, k, i, j.item()) for j in indices])
+                    [self.game.dh_dx(x, k, i, j.item()) for j in indices])
                 drdx[index:index + dhdx.shape[0], :] = dhdx
                 index += len(indices)
 
@@ -1458,19 +1271,19 @@ class ResidualGame(PrintObject, ABC):
         for i in range(self.N):
             index += T * n
             for k in range(self.T):
-                dLL_duik_duik = self.dJi_dudu(x[k - 1], u[k, i], i)
+                dLL_duik_duik = self.game.dJi_dudu(x[k - 1], u[k, i], i)
                 drdu[index + k * m:index + (k + 1) * m,
                      k * N * m + i * m:k * N * m + (i + 1) * m] = dLL_duik_duik
             index += T * m
             k = 0
             drdu[index + k * n:index + (k + 1) * n,
                  k * N * m + i * m:k * N * m +
-                 (i + 1) * m] = self.dynamics_residual_weight * self.df_du(
+                 (i + 1) * m] = self.config.dynamics_residual_weight * self.game.df_du(
                      self.x0[i], u[k, i], i)
             for k in range(1, self.T):
                 drdu[index + k * n:index + (k + 1) * n,
                      k * N * m + i * m:k * N * m +
-                     (i + 1) * m] = self.dynamics_residual_weight * self.df_du(
+                     (i + 1) * m] = self.config.dynamics_residual_weight * self.game.df_du(
                          x[k - 1, i], u[k, i], i)
             index += n * T + np.sum(h_plus_mask[:,
                                                 i])  # skip  f(x,u)-x+,  h(x,x)
@@ -1519,7 +1332,7 @@ class ResidualGame(PrintObject, ABC):
                 # dLLi_dxki_dlamda_ki
                 dr_dlamda[index + (k - 1) * n:index + k * n,
                           k * N * n + i * n:k * N * n +
-                          (i + 1) * n] = self.df_dx(x[k - 1, i], u[k, i], i).T
+                          (i + 1) * n] = self.game.df_dx(x[k - 1, i], u[k, i], i).T
                 # dLLi_dxki_dlamda_k-1,i
                 dr_dlamda[index + (k - 1) * n:index + k * n, (k - 1) * N * n +
                           i * n:(k - 1) * N * n + (i + 1) * n] = -np.eye(n)
@@ -1529,12 +1342,12 @@ class ResidualGame(PrintObject, ABC):
             index += T * n  # skip dLL_dxi, index now points at dLLi_dui
             k = 0
             dr_dlamda[index + k * m:index + (k + 1) * m,
-                      k * N * n + i * n:k * N * n + (i + 1) * n] = self.df_du(
+                      k * N * n + i * n:k * N * n + (i + 1) * n] = self.game.df_du(
                           self.x0[i], u[k, i], i).T
             for k in range(1, T):
                 dr_dlamda[index + k * m:index + (k + 1) * m,
                           k * N * n + i * n:k * N * n +
-                          (i + 1) * n] = self.df_du(x[k - 1, i], u[k, i], i).T
+                          (i + 1) * n] = self.game.df_du(x[k - 1, i], u[k, i], i).T
 
             index += T * m + n * T + np.sum(
                 h_plus_mask[:, i])  # skip  dLL_dui, f(x,u)-x+,  h(x,x)
@@ -1610,11 +1423,11 @@ class ResidualGame(PrintObject, ABC):
         self.jax_r = jit(self._jax_r)
         self.jax_dLLi_dx = jit(jacrev(self.jax_LLi, argnums=0))
         self.jax_dLLi_du = jit(jacrev(self.jax_LLi, argnums=1))
-        self.jax_L = jit(self.jax_L)
+        self.jax_L = jit(self._jax_L)
         self.jax_LLi = jit(self.jax_LLi)
         self.jax_dL_dx_ik = jit(lambda *args: jacrev(self.jax_L, argnums=0)(*args)[args[-1]])
         self.jax_dL_dx_ik1 = jit(jacrev(self.jax_L, argnums=2))
-        h_map_i = vmap(lambda x, k, i, j: self.h(
+        h_map_i = vmap(lambda x, k, i, j: self.game.h(
             x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
         h_map_ij = vmap(h_map_i, in_axes=(None, None, None, 0), out_axes=0)
         h_map_kij = vmap(h_map_ij, in_axes=(None, 0, None, None), out_axes=0)
@@ -1659,18 +1472,18 @@ class ResidualGame(PrintObject, ABC):
         dy = dy.flatten()
         r0_norm = jnp.linalg.norm(r0)
         apriori_h_res = jnp.sum(h_map_val)
-        for i in range(self.backtracking_max_iter):
+        for i in range(self.config.backtracking_max_iter):
             y_new = y0 + step * dy
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
             # x_new, _, _, _ = split_y(y_new)
-            # x_new = self.rollout(self.x0, u_new)
+            # x_new = self.game.rollout(self.x0, u_new)
             # y_new[:dim_x] = x_new.flatten()
             search_h_res = jnp.sum(h_map_val)
             r_t = r_y_fun(y_new)
             r_t_norm = jnp.linalg.norm(r_t)
-            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.bc_a * step) * r0_norm,
+            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.config.bc_a * step) * r0_norm,
                                           search_h_res > apriori_h_res)
-            step = jnp.where(flag_no_step, step*self.bc_b, 0)
+            step = jnp.where(flag_no_step, step*self.config.bc_b, 0)
         x_ref, u_ref, lambda_ref, mu_ref = split_y(y_new)
 
         return x_ref, u_ref, lambda_ref, mu_ref
@@ -1714,216 +1527,5 @@ class ResidualGame(PrintObject, ABC):
     def jax_dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
         return self.jax_dLLi_du(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
 
-    # ---------- Defaults for  some Application specific functions -------
-    # terminal(final) cost for agent i
-    # x_T: terminal GAME state (N*n)
-    # return : scalar
-    # if User doesn't choose a terminal cost, the step cost J will be used
-
-    def Jfi(self, x_T, i):
-        return self.J(x_T, np.zeros(self.m), i)
-
-    def jax_Jfi(self, x_T, i):
-        return self.jax_J(x_T, jnp.zeros(self.m), i)
-
-    def dJfi_dxi(self, x_T, i):
-        return self.dJi_dxi(x_T, np.zeros(self.m), i)
-
-    def dJfi_dxj(self, x_T, i, j):
-        return self.dJi_dxj(x_T, np.zeros(self.m), i, j)
-
-    def dJfi_dxi_dxi(self, x_T, i):
-        return self.dJi_dxi_dxi(x_T, np.zeros(self.m), i)
-
-    def dJfi_dxi_dxj(self, x_T, i, j):
-        return self.dJi_dxi_dxj(x_T, np.zeros(self.m), i, j)
-
-    def dJfi_dxj_dxj(self, x_T, i, j):
-        return self.dJi_dxj_dxj(x_T, np.zeros(self.m), i, j)
-
-    # step cost function
-    @abstractmethod
-    def J(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int) -> float:
-        """Step cost function for agent i.
-
-        Args:
-            x_k: [N, n] *all* agent state at this step (k)
-            u_k_i: [m] control for agent i at this step (k)
-            i: agent id, starts from 0
-        Return:
-            cost for agent i at this step (k)
-
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def dJi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
-                i: int) -> np.ndarray:
-        """ Step cost gradient w.r.t. x_i
-        Args:
-            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
-            u_k_i: [m] control for agent i at this step (k), (a, omega)
-                a=dv_dt is acceleration
-                omega=dheading_dt is angular acceleration
-            i: agent id, starts from 0
-            j: agent id, starts from 0
-        Return:
-            [n] Partial derivative
-        """
-        return np.zeros((self.n))
-
-    @abstractmethod
-    def dJi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
-                j: int) -> np.ndarray:
-        """ Step cost gradient w.r.t. x_j
-        Args:
-            x_k: [N, n] *all* agent state at this step (k)
-            u_k_i: [m] control for agent i at this step (k)
-            i: agent id, starts from 0
-            j: agent id, starts from 0
-        Return:
-            [n] Partial derivative
-        """
-        return np.zeros((self.n))
-
-    @abstractmethod
-    def dJi_dxi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int):
-        """ Step cost second order derivative w.r.t. x_i
-        Args:
-            x_k: [N, n] *all* agent state at this step (k)
-            u_k_i: [m] control for agent i at this step (k)
-            i: agent id, starts from 0
-            j: agent id, starts from 0
-        Return:
-            [n, n] Partial derivative
-        """
-        return np.zeros((self.n, self.n))
-
-    @abstractmethod
-    def dJi_dxi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
-                    j: int) -> np.ndarray:
-        """ Step cost second ordder derivative w.r.t. x_i, then x_j
-        Args:
-            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
-            u_k_i: [m] control for agent i at this step (k), (a, omega)
-                a=dv_dt is acceleration
-                omega=dheading_dt is angular acceleration
-            i: agent id, starts from 0
-            j: agent id, starts from 0
-        Return:
-            [n, n] Partial derivative
-        """
-        return np.zeros((self.n, self.n))
-
-    @abstractmethod
-    def dJi_dxj_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
-                    j: int) -> np.ndarray:
-        """ Step cost second order derivative w.r.t. x_j
-        Args:
-            x_k: [N, n] *all* agent state at this step (k)
-            u_k_i: [m] control for agent i at this step (k)
-            i: agent id, starts from 0
-            j: agent id, starts from 0
-        Return:
-            [n, n] Partial derivative
-        """
-        return np.zeros((self.n, self.n))
-
-    @abstractmethod
-    def dJi_du(self, x_k, u_k_i, i):
-        return np.zeros((1, self.m))
-
-    @abstractmethod
-    def dJi_dudu(self, x_k, u_k_i, i):
-        return np.zeros((self.m, self.m))
-
-    # --- dynamics and related derivatives ---
-    @abstractmethod
-    def f(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
-        """ Dynamics funciton, gives x(state) at next time step 
-        Args:
-            x: [n] states of agent i
-            u: [m] control of agent i
-            i: agent index 
-        Return:
-           States [n] at next time step
-
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def df_dx(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
-        """ Dynamics derivative df/dx
-        Args:
-            x: [n] states of agent i
-            u: [m] control of agent i
-            i: agent index 
-        Return:
-            [n,n] State derivative
-        """
-        del x
-        del u
-        del i
-        raise NotImplementedError
-
-    @abstractmethod
-    def df_du(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
-        """
-        Derivative df/du
-        Args:
-            x: [n] states of agent i
-                x = (x, y, heading, v)
-            u: [m] control of agent i
-                u = (a, omega)
-            i: agent index 
-        Return:
-            [n,m] Derivative
-        """
-        del x
-        del u
-        del i
-        raise NotImplementedError
-
-    def h(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> float:
-        """ Constraint function h <= 0"""
-        del x_i
-        del x_j
-        return -1
-
-    def dh_dxi(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> jnp.ndarray:
-        """ Derivative of constraint h, dh/dx_i
-        Return:
-            [n] Derivative
-        """
-        del x_i
-        del x_j
-        return jnp.zeros((self.n))
-
-    def dh_dxj(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> jnp.ndarray:
-        """ Derivative of constraint h, dh/dx_j
-        Return:
-            [n] Derivative
-        """
-        del x_i
-        del x_j
-        return jnp.zeros((self.n))
-
-    def dh_dxi_dxi(self, x_i, x_j):
-        del x_i
-        del x_j
-        return jnp.zeros((self.n, self.n))
-
-    def dh_dxj_dxi(self, x_i, x_j):
-        del x_i
-        del x_j
-        return jnp.zeros((self.n, self.n))
-
-    def dh_dxi_dxj(self, x_i, x_j):
-        del x_i
-        del x_j
-        return np.zeros((self.n, self.n))
-
-    def dh_dxj_dxj(self, x_i, x_j):
-        del x_i
-        del x_j
-        return np.zeros((self.n, self.n))
+    def jax_J_x_ref_fun(self, i):
+        return self.jax_target_x_ref[i]
