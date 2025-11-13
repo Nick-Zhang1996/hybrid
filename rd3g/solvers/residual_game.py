@@ -4,7 +4,6 @@ UnstructuredDriving.py."""
 
 import logging
 from time import time
-from abc import abstractmethod
 from dataclasses import dataclass
 from itertools import chain
 
@@ -466,7 +465,7 @@ class RD3G(BaseSolver):
         for k in range(1, self.T + 1):
             for i in range(self.N):
                 for j in range(i + 1, self.N):
-                    this_h = self.h(x[k - 1, i], x[k - 1, j])
+                    this_h = self.game.h(x[k - 1, i], x[k - 1, j])
                     if this_h > 0:
                         h_res += this_h
         return h_res
@@ -482,7 +481,7 @@ class RD3G(BaseSolver):
         # we check it in h_minux
         # for x 1-T, NOTE index to retval start from 1
         h_plus_mask = jnp.fromfunction(
-            lambda k, i, j: jnp.logical_and(self.h(x[k, i], x[k, j]) >= 0, i != j),
+            lambda k, i, j: jnp.logical_and(self.game.h(x[k, i], x[k, j]) >= 0, i != j),
             shape=(self.T, self.N, self.N),
             dtype=int
         )
@@ -500,7 +499,7 @@ class RD3G(BaseSolver):
             for i in range(self.N):
                 for j in range(i + 1, self.N):
                     h_plus_mask[k, i,
-                                j] = h_plus_mask[k, j, i] = self.h(
+                                j] = h_plus_mask[k, j, i] = self.game.h(
                                     x[k, i], x[k, j]) >= 0
         if self.config.CPP_DEBUG:
             alt = self.cpp.getHplusMask([xx for xx in x])
@@ -523,24 +522,24 @@ class RD3G(BaseSolver):
         '''
         # feasibility for h>0
         h_plus = np.sum([
-            mu_k[i, j.item()] * (self.h(x_k[i], x_k[j.item()]))
+            mu_k[i, j.item()] * (self.game.h(x_k[i], x_k[j.item()]))
             for j in np.nonzero(h_k_plus_mask[i])[0]
         ],
             axis=0)
         if self.config.CPP_DEBUG:
             for j in np.nonzero(h_k_plus_mask[i])[0]:
-                val = self.h(x_k[i], x_k[j.item()])
+                val = self.game.h(x_k[i], x_k[j.item()])
                 val_cpp = self.cpp.h(x_k[i], x_k[j.item()])
                 if np.linalg.norm(val - val_cpp) > 1e-4:
                     breakpoint()
 
         # barrier for h < 0
         h_minus = -1 / self.rho * np.sum([
-            np.log(-min(self.h(x_k[i], x_k[j.item()]), -1e-100))
+            np.log(-min(self.game.h(x_k[i], x_k[j.item()]), -1e-100))
             if j.item() != i else 0 for j in np.nonzero(~h_k_plus_mask[i])[0]
         ])
-        dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
-        return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
+        dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
+        return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
     def _jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
         ''' Lagrangian for agent i
@@ -556,7 +555,7 @@ class RD3G(BaseSolver):
         # TODO: refactor, use h_k instead of h_k_plus_mask to avoid calculating h many times
         # feasibility for h>0
         h_plus_comp = jnp.fromfunction(
-            lambda j: jnp.where(i != j, mu_k[i, j] * self.h(x_k[i], x_k[j]), 0),
+            lambda j: jnp.where(i != j, mu_k[i, j] * self.game.h(x_k[i], x_k[j]), 0),
             shape=self.N,
             dtype=int
         )
@@ -588,16 +587,16 @@ class RD3G(BaseSolver):
             return self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask,
                                      lamda_k, mu_k, i)
 
-        val = self.dJi_dxi(x_k, u_k_i,
-                           i) + lamda_k[i].T @ self.df_dx(x_k[i], u_k_i, i)
+        val = self.game.dJi_dxi(x_k, u_k_i,
+                                i) + lamda_k[i].T @ self.game.df_dx(x_k[i], u_k_i, i)
         val += np.sum([
-            mu_k[i, j.item()] * (self.dh_dxi(x_k[i], x_k[j.item()]))
+            mu_k[i, j.item()] * (self.game.dh_dxi(x_k[i], x_k[j.item()]))
             for j in np.nonzero(h_k_plus_mask[i])[0]
         ],
             axis=0)
         val += -1.0 / self.rho * np.sum([
-            min(1 / self.h(x_k[i], x_k[j.item()]), 1e20) *
-            self.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i)
+            min(1 / self.game.h(x_k[i], x_k[j.item()]), 1e20) *
+            self.game.dh_dxi(x_k[i], x_k[j.item()]) * (j.item() != i)
             for j in np.nonzero(~h_k_plus_mask[i])[0]
         ],
             axis=0)
@@ -606,22 +605,22 @@ class RD3G(BaseSolver):
         if self.config.DEBUG:
             # dJi_dx -- passed
             num = jacobian_numerical(
-                lambda xx: self.J(xx.reshape(x_k.shape), u_k_i, i),
+                lambda xx: self.game.J(xx.reshape(x_k.shape), u_k_i, i),
                 x_k.flatten())
             num = num.reshape((1, self.N, self.n))[:, i]
-            ana = self.dJi_dxi(x_k, u_k_i, i)
+            ana = self.game.dJi_dxi(x_k, u_k_i, i)
             assert np.linalg.norm(num - ana) < 1e-4
             # df_dx -- inconclusive
-            num = jacobian_numerical(lambda uu: self.J(x_k, uu, i), u_k_i)
-            ana = self.dJi_du(x_k, u_k_i, i)
+            num = jacobian_numerical(lambda uu: self.game.J(x_k, uu, i), u_k_i)
+            ana = self.game.dJi_du(x_k, u_k_i, i)
             assert np.linalg.norm(num - ana) < 1e-4
             # dh_dxi -- inconclusive
             for j in np.nonzero(h_k_plus_mask[i])[0]:
                 if i == j:
                     continue
-                ana = self.dh_dxi(x_k[i], x_k[j])
+                ana = self.game.dh_dxi(x_k[i], x_k[j])
                 # pylint: disable-next=cell-var-from-loop
-                num = jacobian_numerical(lambda xx: self.h(xx, x_k[j]), x_k[i])
+                num = jacobian_numerical(lambda xx: self.game.h(xx, x_k[j]), x_k[i])
                 assert np.linalg.norm(num - ana) < 1e-4
 
             num = jacobian_numerical(
@@ -633,7 +632,7 @@ class RD3G(BaseSolver):
 
         if self.config.CPP_DEBUG:
             alt = self.cpp.dJi_dxi(x_k, u_k_i, i)
-            if np.linalg.norm(self.dJi_dxi(x_k, u_k_i, i) - alt) > 1e-4:
+            if np.linalg.norm(self.game.dJi_dxi(x_k, u_k_i, i) - alt) > 1e-4:
                 breakpoint()
             alt = self.cpp.dL_dx_ik(x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k,
                                     mu_k, i)
@@ -655,8 +654,8 @@ class RD3G(BaseSolver):
         del x_k1_i
         del h_k_plus_mask
         del mu_k
-        val = self.dJi_du(x_k, u_k_i,
-                          i) + lamda_k[i].T @ self.df_du(x_k[i], u_k_i, i)
+        val = self.game.dJi_du(x_k, u_k_i,
+                               i) + lamda_k[i].T @ self.game.df_du(x_k[i], u_k_i, i)
         return val
 
     def jax_LLi(self, x, u, h_plus_mask, lamda, mu, i):
@@ -688,7 +687,7 @@ class RD3G(BaseSolver):
         # x_T related terms
         LLi_val += self.jax_Jfi(x[T - 1], i)
         h_T_val = jnp.fromfunction(
-            lambda j: self.h(x[T-1, i], x[T-1, j]) * (i != j),
+            lambda j: self.game.h(x[T-1, i], x[T-1, j]) * (i != j),
             shape=(self.N,),
             dtype=int
         )
@@ -720,20 +719,20 @@ class RD3G(BaseSolver):
             axis=0)
 
         # x0 related terms
-        LLi_val += self.J(
+        LLi_val += self.game.J(
             self.x0, u[0, i],
-            i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
+            i) + lamda[0, i].T @ (self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
         # x_T related terms
-        LLi_val += self.Jfi(x[T - 1], i)
+        LLi_val += self.game.Jfi(x[T - 1], i)
 
         h_plus = np.sum([
             mu[T - 1, i, j.item()] *
-            (self.h(x[T - 1, i], x[T - 1, j.item()]))
+            (self.game.h(x[T - 1, i], x[T - 1, j.item()]))
             for j in np.nonzero(h_plus_mask[T - 1, i])[0]
         ],
             axis=0)
         h_minus = -1 / self.rho * np.sum([
-            np.log(-min(self.h(x[T - 1, i], x[T - 1, j.item()]), -1e-100)) *
+            np.log(-min(self.game.h(x[T - 1, i], x[T - 1, j.item()]), -1e-100)) *
             (j.item() != i) for j in np.nonzero(~h_plus_mask[T - 1, i])[0]
         ],
             axis=0)
@@ -773,7 +772,7 @@ class RD3G(BaseSolver):
         sub = submtx_k(T)
         h_pos_term = np.sum(
             [
-                mu[T-1, i, j.item()] * (self.dh_dxi(x[T-1, i], x[T-1, j.item()]))
+                mu[T-1, i, j.item()] * (self.game.dh_dxi(x[T-1, i], x[T-1, j.item()]))
                 for j in np.nonzero(h_plus_mask[T-1, i])[0]
             ],
             axis=0
@@ -781,7 +780,7 @@ class RD3G(BaseSolver):
 
         h_neg_term = - 1/self.rho*np.sum(
             [
-                min(1/self.h(x[T-1, i], x[T-1, j.item()]), 1e20)*self.dh_dxi(
+                min(1/self.game.h(x[T-1, i], x[T-1, j.item()]), 1e20)*self.game.dh_dxi(
                     x[T-1, i], x[T-1, j.item()]) * (j.item() != i)
                 for j in np.nonzero(~h_plus_mask[T-1, i])[0]
             ],
@@ -789,7 +788,7 @@ class RD3G(BaseSolver):
         )
 
         sub[:] = -lamda[T-1, i].T + \
-            self.dJfi_dxi(x[T-1], i) + h_pos_term + h_neg_term
+            self.game.dJfi_dxi(x[T-1], i) + h_pos_term + h_neg_term
 
         val = der.reshape(1, -1)
         if self.config.CPP_DEBUG:
@@ -816,15 +815,15 @@ class RD3G(BaseSolver):
             return der[k * m:(k + 1) * m]
         # dLLi_dui_0
         sub = submtx_k(0)
-        sub[:] = self.dJi_du(self.x0, u[0, i], i) + lamda[0, i].T @ self.df_du(
+        sub[:] = self.game.dJi_du(self.x0, u[0, i], i) + lamda[0, i].T @ self.game.df_du(
             self.x0[i], u[0, i], i)
         # dLLi_dui_k
         for k in range(1, T):
             sub = submtx_k(k)
             # dL_du
-            sub[:] = self.dJi_du(
+            sub[:] = self.game.dJi_du(
                 x[k - 1], u[k, i],
-                i) + lamda[k, i].T @ self.df_du(x[k - 1, i], u[k, i], i)
+                i) + lamda[k, i].T @ self.game.df_du(x[k - 1, i], u[k, i], i)
         val = der.reshape(1, -1)
         if self.config.CPP_DEBUG:
             alt = self.cpp.dLLi_dui([xx for xx in x], [uu for uu in u],
@@ -849,7 +848,7 @@ class RD3G(BaseSolver):
         dLLi_dxi_dmu = np.zeros((T * n, dim_mu))
         for k in range(1, T + 1):
             for j in np.nonzero(h_plus_mask[k - 1, i])[0]:
-                dLLi_dxki_dmuijk = self.dh_dxi(x[k - 1, i], x[k - 1, j])
+                dLLi_dxki_dmuijk = self.game.dh_dxi(x[k - 1, i], x[k - 1, j])
                 dLLi_dxi_dmu[(k - 1) * n:k * n,
                              (k - 1) * N * N + i * N + j] = dLLi_dxki_dmuijk
         if self.config.CPP_DEBUG:
@@ -879,21 +878,21 @@ class RD3G(BaseSolver):
             # dynamics for f(x0,u0) = x1
             r = jnp.hstack([
                 r, self.config.dynamics_residual_weight *
-                self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = jnp.hstack([
                     r, self.config.dynamics_residual_weight *
-                    self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
                 r = jnp.hstack([r] + [
-                    self.h(x[k - 1, i], x[k - 1, j.item()])
+                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
                     for j in np.nonzero(h_plus_mask[k - 1, i])[0]
                 ])
             # h(x_T_i, x_T_j)
             r = jnp.hstack([r] + [
-                self.h(x[T - 1, i], x[T - 1, j.item()])
+                self.game.h(x[T - 1, i], x[T - 1, j.item()])
                 for j in np.nonzero(h_plus_mask[T - 1, i])[0]
             ])
 
@@ -921,21 +920,21 @@ class RD3G(BaseSolver):
             # dynamics for f(x0,u0) = x1
             r = np.hstack([
                 r, self.config.dynamics_residual_weight *
-                self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = np.hstack([
                     r, self.config.dynamics_residual_weight *
-                    self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
                 r = np.hstack([r] + [
-                    self.h(x[k - 1, i], x[k - 1, j.item()])
+                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
                     for j in np.nonzero(h_plus_mask[k - 1, i])[0]
                 ])
             # h(x_T_i, x_T_j)
             r = np.hstack([r] + [
-                self.h(x[T - 1, i], x[T - 1, j.item()])
+                self.game.h(x[T - 1, i], x[T - 1, j.item()])
                 for j in np.nonzero(h_plus_mask[T - 1, i])[0]
             ])
 
@@ -948,13 +947,13 @@ class RD3G(BaseSolver):
         return r
 
     def Bh(self, x_i, x_j):
-        h_val = self.h(x_i, x_j)
+        h_val = self.game.h(x_i, x_j)
         return -1 / self.rho * jnp.log(-jnp.where(h_val < -1e-100, h_val, -1e-100))
 
     def dBh_dxi(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
         # dB(h)/dx = -rho^-1 h^-1 dhdx
-        val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxi(x_i, x_j)
+        val = -1 / (self.rho * self.game.h(x_i, x_j)) * self.game.dh_dxi(x_i, x_j)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
                 lambda xx: self.Bh(xx.reshape(x_i.shape), x_j), x_i.flatten())
@@ -964,7 +963,7 @@ class RD3G(BaseSolver):
     def dBh_dxj(self, x_i, x_j):
         # B(h) = -rho^-1 log(-h)
         # dB(h)/dx = -rho^-1 h^-1 dhdx
-        val = -1 / (self.rho * self.h(x_i, x_j)) * self.dh_dxj(x_i, x_j)
+        val = -1 / (self.rho * self.game.h(x_i, x_j)) * self.game.dh_dxj(x_i, x_j)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
                 lambda xx: self.Bh(x_i, xx.reshape(x_j.shape)), x_j.flatten())
@@ -972,9 +971,9 @@ class RD3G(BaseSolver):
         return val
 
     def dBh_dxi_dxi(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxi_dxi(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxi = self.game.dh_dxi(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxi_dxi(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxi)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -985,10 +984,10 @@ class RD3G(BaseSolver):
         return val
 
     def dBh_dxi_dxj(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxi = self.dh_dxi(x_i, x_j).reshape(1, self.n)
-        dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxi_dxj(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxi = self.game.dh_dxi(x_i, x_j).reshape(1, self.n)
+        dhdxj = self.game.dh_dxj(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxi_dxj(x_i, x_j) +
                                     1 / h * dhdxi.T @ dhdxj)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -999,9 +998,9 @@ class RD3G(BaseSolver):
         return val
 
     def dBh_dxj_dxj(self, x_i, x_j):
-        h = self.h(x_i, x_j)
-        dhdxj = self.dh_dxj(x_i, x_j).reshape(1, self.n)
-        val = 1 / (self.rho * h) * (-self.dh_dxj_dxj(x_i, x_j) +
+        h = self.game.h(x_i, x_j)
+        dhdxj = self.game.dh_dxj(x_i, x_j).reshape(1, self.n)
+        val = 1 / (self.rho * h) * (-self.game.dh_dxj_dxj(x_i, x_j) +
                                     1 / h * dhdxj.T @ dhdxj)
         if self.config.DEBUG:
             val_num = jacobian_numerical(
@@ -1030,10 +1029,10 @@ class RD3G(BaseSolver):
         for k in range(1, T):
             # dLLi_dxki_dxki
             mtx = submtx(k, i)
-            val1 = self.dJi_dxi_dxi(x[k - 1], u[k, i], i)
+            val1 = self.game.dJi_dxi_dxi(x[k - 1], u[k, i], i)
             val2 = np.sum([
                 mu[k - 1, i, j.item()] *
-                (self.dh_dxi_dxi(x[k - 1, i], x[k - 1, j.item()]))
+                (self.game.dh_dxi_dxi(x[k - 1, i], x[k - 1, j.item()]))
                 for j in np.nonzero(h_plus_mask[k - 1, i])[0]
             ],
                 axis=0)
@@ -1055,13 +1054,13 @@ class RD3G(BaseSolver):
         )
         h_pos_terms = np.sum(
             [
-                mu[T-1, i, j.item()] * (self.dh_dxi_dxi(x[T-1, i], x[T-1, j.item()]))
+                mu[T-1, i, j.item()] * (self.game.dh_dxi_dxi(x[T-1, i], x[T-1, j.item()]))
                 for j in np.nonzero(h_plus_mask[T-1, i])[0]
             ],
             axis=0
         )
 
-        mtx[:, :] = self.dJfi_dxi_dxi(x[T-1], i) + h_neg_terms + h_pos_terms
+        mtx[:, :] = self.game.dJfi_dxi_dxi(x[T-1], i) + h_neg_terms + h_pos_terms
 
         # dLLi_dxi_dxj
         for k in range(1, T):
@@ -1070,17 +1069,17 @@ class RD3G(BaseSolver):
                     continue
                 if j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                     # dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(
+                    val = self.game.dJi_dxi_dxj(
                         x[k - 1], u[k, i], i,
-                        j) + mu[k - 1, i, j] * self.dh_dxi_dxj(
+                        j) + mu[k - 1, i, j] * self.game.dh_dxi_dxj(
                             x[k - 1, i], x[k - 1, j])
                     mtx = submtx(k, j)
                     mtx[:, :] = val
                 else:
                     # dLLi_dxki_dxkj
-                    val = self.dJi_dxi_dxj(x[k - 1], u[k, i], i,
-                                           j) + self.dBh_dxi_dxj(
-                                               x[k - 1, i], x[k - 1, j])
+                    val = self.game.dJi_dxi_dxj(x[k - 1], u[k, i], i,
+                                                j) + self.dBh_dxi_dxj(
+                        x[k - 1, i], x[k - 1, j])
                     mtx = submtx(k, j)
                     mtx[:, :] = val
         k = T
@@ -1089,14 +1088,14 @@ class RD3G(BaseSolver):
                 continue
             if j in np.nonzero(h_plus_mask[k - 1, i])[0]:
                 # dLLi_dxki_dxkj
-                val = self.dJfi_dxi_dxj(x[k - 1], i,
-                                        j) + mu[k - 1, i, j] * self.dh_dxi_dxj(
-                                            x[k - 1, i], x[k - 1, j])
+                val = self.game.dJfi_dxi_dxj(x[k - 1], i,
+                                             j) + mu[k - 1, i, j] * self.game.dh_dxi_dxj(
+                    x[k - 1, i], x[k - 1, j])
                 mtx = submtx(k, j)
                 mtx[:, :] = val
             else:
                 # dLLi_dxki_dxkj
-                val = self.dJfi_dxi_dxj(x[k - 1], i, j) + self.dBh_dxi_dxj(
+                val = self.game.dJfi_dxi_dxj(x[k - 1], i, j) + self.dBh_dxi_dxj(
                     x[k - 1, i], x[k - 1, j])
                 mtx = submtx(k, j)
                 mtx[:, :] = val
@@ -1130,11 +1129,11 @@ class RD3G(BaseSolver):
         for i in range(N):
             k = 0
             dxdu[k * N * n + i * n:k * N * n + (i + 1) * n,
-                 k * N * m + i * m:k * N * m + (i + 1) * m] = self.df_du(
+                 k * N * m + i * m:k * N * m + (i + 1) * m] = self.game.df_du(
                      self.x0[i], u[0, i], i)
             for k in range(1, T):
                 dxdu[k * N * n + i * n:k * N * n + (i + 1) * n,
-                     k * N * m + i * m:k * N * m + (i + 1) * m] = self.df_du(
+                     k * N * m + i * m:k * N * m + (i + 1) * m] = self.game.df_du(
                          x[k - 1, i], u[k, i], i)
 
         if self.config.DEBUG:
@@ -1157,7 +1156,7 @@ class RD3G(BaseSolver):
         dim_x = T * N * n
         dFdx = np.zeros((n, dim_x))
         dFdx[:, (k - 1) * N * n + i * n:(k - 1) * N * n +
-             (i + 1) * n] = self.df_dx(x[k - 1, i], u[k, i], i)
+             (i + 1) * n] = self.game.df_dx(x[k - 1, i], u[k, i], i)
         dFdx[:, k * N * n + i * n:k * N * n + (i + 1) * n] = -np.eye(n)
         if self.config.CPP_DEBUG:
             alt = self.cpp.dF_dx([xx for xx in x], [uu for uu in u], i, k)
@@ -1193,9 +1192,9 @@ class RD3G(BaseSolver):
         dim_x = T * N * n
         dhdx = np.zeros((1, dim_x))
         dhdx[:, (k - 1) * N * n + i * n:(k - 1) * N * n +
-             (i + 1) * n] = self.dh_dxi(x[k - 1, i], x[k - 1, j])
+             (i + 1) * n] = self.game.dh_dxi(x[k - 1, i], x[k - 1, j])
         dhdx[:, (k - 1) * N * n + j * n:(k - 1) * N * n +
-             (j + 1) * n] = self.dh_dxj(x[k - 1, i], x[k - 1, j])
+             (j + 1) * n] = self.game.dh_dxj(x[k - 1, i], x[k - 1, j])
         if self.config.CPP_DEBUG:
             alt = self.cpp.dh_dx([xx for xx in x], k, i, j)
             if np.linalg.norm(alt - dhdx) > 1e-4:
@@ -1235,7 +1234,7 @@ class RD3G(BaseSolver):
                 if len(indices) == 0:
                     continue
                 dhdx = np.vstack(
-                    [self.dh_dx(x, k, i, j.item()) for j in indices])
+                    [self.game.dh_dx(x, k, i, j.item()) for j in indices])
                 drdx[index:index + dhdx.shape[0], :] = dhdx
                 index += len(indices)
 
@@ -1272,19 +1271,19 @@ class RD3G(BaseSolver):
         for i in range(self.N):
             index += T * n
             for k in range(self.T):
-                dLL_duik_duik = self.dJi_dudu(x[k - 1], u[k, i], i)
+                dLL_duik_duik = self.game.dJi_dudu(x[k - 1], u[k, i], i)
                 drdu[index + k * m:index + (k + 1) * m,
                      k * N * m + i * m:k * N * m + (i + 1) * m] = dLL_duik_duik
             index += T * m
             k = 0
             drdu[index + k * n:index + (k + 1) * n,
                  k * N * m + i * m:k * N * m +
-                 (i + 1) * m] = self.config.dynamics_residual_weight * self.df_du(
+                 (i + 1) * m] = self.config.dynamics_residual_weight * self.game.df_du(
                      self.x0[i], u[k, i], i)
             for k in range(1, self.T):
                 drdu[index + k * n:index + (k + 1) * n,
                      k * N * m + i * m:k * N * m +
-                     (i + 1) * m] = self.config.dynamics_residual_weight * self.df_du(
+                     (i + 1) * m] = self.config.dynamics_residual_weight * self.game.df_du(
                          x[k - 1, i], u[k, i], i)
             index += n * T + np.sum(h_plus_mask[:,
                                                 i])  # skip  f(x,u)-x+,  h(x,x)
@@ -1333,7 +1332,7 @@ class RD3G(BaseSolver):
                 # dLLi_dxki_dlamda_ki
                 dr_dlamda[index + (k - 1) * n:index + k * n,
                           k * N * n + i * n:k * N * n +
-                          (i + 1) * n] = self.df_dx(x[k - 1, i], u[k, i], i).T
+                          (i + 1) * n] = self.game.df_dx(x[k - 1, i], u[k, i], i).T
                 # dLLi_dxki_dlamda_k-1,i
                 dr_dlamda[index + (k - 1) * n:index + k * n, (k - 1) * N * n +
                           i * n:(k - 1) * N * n + (i + 1) * n] = -np.eye(n)
@@ -1343,12 +1342,12 @@ class RD3G(BaseSolver):
             index += T * n  # skip dLL_dxi, index now points at dLLi_dui
             k = 0
             dr_dlamda[index + k * m:index + (k + 1) * m,
-                      k * N * n + i * n:k * N * n + (i + 1) * n] = self.df_du(
+                      k * N * n + i * n:k * N * n + (i + 1) * n] = self.game.df_du(
                           self.x0[i], u[k, i], i).T
             for k in range(1, T):
                 dr_dlamda[index + k * m:index + (k + 1) * m,
                           k * N * n + i * n:k * N * n +
-                          (i + 1) * n] = self.df_du(x[k - 1, i], u[k, i], i).T
+                          (i + 1) * n] = self.game.df_du(x[k - 1, i], u[k, i], i).T
 
             index += T * m + n * T + np.sum(
                 h_plus_mask[:, i])  # skip  dLL_dui, f(x,u)-x+,  h(x,x)
@@ -1428,7 +1427,7 @@ class RD3G(BaseSolver):
         self.jax_LLi = jit(self.jax_LLi)
         self.jax_dL_dx_ik = jit(lambda *args: jacrev(self.jax_L, argnums=0)(*args)[args[-1]])
         self.jax_dL_dx_ik1 = jit(jacrev(self.jax_L, argnums=2))
-        h_map_i = vmap(lambda x, k, i, j: self.h(
+        h_map_i = vmap(lambda x, k, i, j: self.game.h(
             x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
         h_map_ij = vmap(h_map_i, in_axes=(None, None, None, 0), out_axes=0)
         h_map_kij = vmap(h_map_ij, in_axes=(None, 0, None, None), out_axes=0)
