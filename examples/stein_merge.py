@@ -5,7 +5,7 @@ import numpy as np
 
 from residual_game import ResidualGame, ResidualGameConfig
 from stein_game import SteinGame, SteinGameConfig
-from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+from rd3g.games.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle  # pylint: disable=no-name-in-module
 
 logger = logging.getLogger("SteinMerge")
@@ -111,7 +111,7 @@ if __name__ == '__main__':
     # main.testAnimation()
 
     # Visualize top 5 weighted equilibria
-    #for i in range(5):
+    # for i in range(5):
     #    main.visualize(U=main.belief_support[i],
     #                   visualize=True,
     #                   animate=True,

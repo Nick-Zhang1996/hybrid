@@ -12,7 +12,7 @@ import scipy.sparse
 import scipy.sparse.linalg
 
 from .utilities.time_util import TimeUtil
-from .residual_game import ResidualGame, ResidualGameConfig
+from .residual_game import RD3G, RD3GConfig
 
 logger = logging.getLogger("ProfileSteinMerge")
 logger.setLevel(logging.INFO)
@@ -20,12 +20,12 @@ logger.setLevel(logging.INFO)
 
 # TODO adopt this
 @dataclass(frozen=True)
-class SteinGameConfig(ResidualGameConfig):
+class SteinGameConfig(RD3GConfig):
     stein_iterations: int = 20
     particles: int = 20
 
 
-class SteinGame(ResidualGame):
+class SteinGame(RD3G):
     """ Stein Variational Game Solver 
     Finds the particle-represented distribution of Nash Equilibria in a Differential Dynamic Game.
     """
@@ -40,6 +40,9 @@ class SteinGame(ResidualGame):
         self.stein_profiler = TimeUtil(True)
         self.covariance_mtx = None
         self.kernel_scaling = 20
+        # stein sampling prior
+        self.dim_theta = self.T * self.N * self.m
+        self.covariance_mtx = np.diag([2 * 0.5] * self.dim_theta)
 
         self.particle_history = []
 
@@ -96,21 +99,23 @@ class SteinGame(ResidualGame):
                     grad, posterior_residual, new_dual = result
                     cost_vec.append(posterior_residual)
                     theta_dual[i] = new_dual
-                    val = -self.alpha * grad  #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    # + 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    val = -self.alpha * grad
                     posterior_log_grad.append(val.flatten())
 
             else:
                 self.stein_profiler.s('particle grad')
                 for i in range(self.config.particles):
-                    #retval = self.d_cost_d_theta(theta[i])
-                    #current_grad = retval[0]
-                    #alt_grad = jacobianNumerical(self.cost, theta[i])
+                    # retval = self.d_cost_d_theta(theta[i])
+                    # current_grad = retval[0]
+                    # alt_grad = jacobianNumerical(self.cost, theta[i])
                     grad, posterior_residual, new_dual = self.d_theta(
                         theta[i], theta_dual[i])
                     theta_dual[i] = new_dual
                     cost_vec.append(posterior_residual)
                     # NOTE
-                    val = -self.alpha * grad  #+ 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    # + 1.0/self.proposal(theta[i]) * self.d_proposal_d_theta(theta[i])
+                    val = -self.alpha * grad
                     posterior_log_grad.append(val.flatten())
                 self.stein_profiler.e('particle grad')
 
@@ -145,11 +150,11 @@ class SteinGame(ResidualGame):
                 theta_dual[i] = np.zeros(T * N * n + T * N * N)
 
             # DEBUG: check cost of new particles
-            #old_cost = np.sum([self.cost(val) for val in theta])
+            # old_cost = np.sum([self.cost(val) for val in theta])
             if (iter > 0):
                 count = np.sum((np.array(cost_vec) -
                                 np.array(old_cost_vec)) < 0)
-                #logger.debug(f' cost decrease particle ratio : {count/self.config.particles}')
+                # logger.debug(f' cost decrease particle ratio : {count/self.config.particles}')
             cost_vec = np.array(cost_vec)
             mean_cost = np.mean(
                 cost_vec[sort_idx[:-int(0.1 * self.config.particles)]])
@@ -158,8 +163,8 @@ class SteinGame(ResidualGame):
             logger.debug(f'min cost: %f', min_cost)
             theta = new_theta
             # DEBUG plot cost
-            #plt.hist(cost_vec[sort_idx[:-int(0.1*self.config.particles)]])
-            #plt.show()
+            # plt.hist(cost_vec[sort_idx[:-int(0.1*self.config.particles)]])
+            # plt.show()
 
         # Stage 2: Residual Game for particle refinement
         self.stein_profiler.s('particle refine')
@@ -258,7 +263,7 @@ class SteinGame(ResidualGame):
         # total agent cost, this is the negative social utility
         self.belief_support_cost = np.array(good_agent_cost)
         self.particle_history = np.array(self.particle_history)
-        #for u_ref in good_u_ref:
+        # for u_ref in good_u_ref:
         #    self.visualize(u_ref,visualize=visualize, animate=animate,gif_prefix='before')
 
         return good_u_ref[0].reshape(self.T, self.N,
@@ -309,7 +314,7 @@ class SteinGame(ResidualGame):
             u_k: observed control for all agents at time step k, shape: N*m
             k: time step
         """
-        #TODO maybe we should add a prior based on residual (for self.belief_weight_by_agent)
+        # TODO maybe we should add a prior based on residual (for self.belief_weight_by_agent)
         assert u_k.shape == (self.N, self.m)
         prob_by_agent = [
             np.zeros(len(self.belief_support)) for i in range(self.N)
@@ -368,8 +373,8 @@ class SteinGame(ResidualGame):
         u_ref = theta.reshape(dim_u)
         x_ref = self.rollout(self.x0, u_ref)
 
-        #lambda_ref = np.zeros((T,N,self.n))
-        #mu_ref = np.zeros((T,N,N))
+        # lambda_ref = np.zeros((T,N,self.n))
+        # mu_ref = np.zeros((T,N,N))
         lambda_ref = dual[:T * N * n].reshape((T, N, n))
         mu_ref = dual[T * N * n:].reshape((T, N, N))
         """
@@ -449,8 +454,8 @@ class SteinGame(ResidualGame):
         self.stein_profiler.e('lsqr')
         dy = np.zeros(T * N * n + T * N * N)
         dy[nonzero_cols] = reduced_dy
-        split_y = lambda y: (y[:N * T * n].reshape(T, N, n), y[T * N * n:].
-                             reshape(T, N, N))
+        def split_y(y): return (y[:N * T * n].reshape(T, N, n), y[T * N * n:].
+                                reshape(T, N, N))
         lamda_f, mu_f = split_y(dy)
         r_min = self.r(x, u, lamda_f, mu_f, h_plus_mask)
         assert (np.linalg.norm(r0) > np.linalg.norm(r_min))
@@ -462,7 +467,7 @@ class SteinGame(ResidualGame):
     # TODO check
     def d_kernel_d_theta_i(self, theta_j, theta_i, kernel_val=None):
         ''' derivative of kernel for RKHS, mapping to positive scalar '''
-        #return self.kernel(theta_i,theta_j) * (-1/self.theta_norm_median)*2*(theta_i-theta_j).T
+        # return self.kernel(theta_i,theta_j) * (-1/self.theta_norm_median)*2*(theta_i-theta_j).T
         dim_u = (self.T, self.N, self.m)
         dim_x = (self.T, self.N, self.n)
         u_i = theta_i.reshape(dim_u)
@@ -475,7 +480,7 @@ class SteinGame(ResidualGame):
 
     def kernel(self, theta_j, theta_i):
         ''' kernel for RKHS, mapping to positive scalar '''
-        #return np.exp(- np.linalg.norm(theta_i-theta_j)**2/self.theta_norm_median)
+        # return np.exp(- np.linalg.norm(theta_i-theta_j)**2/self.theta_norm_median)
         dim_u = (self.T, self.N, self.m)
         u_i = theta_i.reshape(dim_u)
         u_j = theta_j.reshape(dim_u)

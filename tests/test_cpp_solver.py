@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 import numpy as np
 
-from ..examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+from ..rd3g.games.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from ..stein_game import SteinGameConfig
 
 

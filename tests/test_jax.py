@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jax import jit, jacfwd, jacrev, jacobian, vmap
 from concurrent.futures import ThreadPoolExecutor
 
-from ..examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+from ..rd3g.games.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 from ..stein_game import SteinGameConfig
 
 

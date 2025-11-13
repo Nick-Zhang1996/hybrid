@@ -2,31 +2,32 @@
 UnstructuredDriving.py."""
 # pylint: disable=invalid-name, forgotten-debug-statement
 
+import os
+from functools import lru_cache
 import logging
 from time import time
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import chain
 
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
+from PIL import Image
 import matplotlib.pyplot as plt
+from jax import jit, grad, jacfwd, jacrev, hessian, jacobian, vmap
 
-from rd3g.utilities.util import jacobian_numerical
-from rd3g.utilities.time_util import TimeUtil
-from rd3g.core.base_solver import BaseSolver, BaseSolverConfig
-from rd3g.core.base_game import BaseGame
+from .utilities.util import PrintObject, jacobian_numerical
+from .utilities.time_util import TimeUtil
 
 logger = logging.getLogger('ResidualGame')
 logger.setLevel(logging.INFO)
 
 
 @dataclass(frozen=True)
-class RD3GConfig(BaseSolverConfig):
+class ResidualGameConfig():
     """Configs for Residual Game."""
     USE_CPP: bool = False
     CPP_DEBUG: bool = False
@@ -34,19 +35,9 @@ class RD3GConfig(BaseSolverConfig):
     FORCE_PYTHON_SOLVER: bool = False
     tolerance: float = 5e-4
     iterations: int = 30
-    # backtracking line search param
-    bc_a: float = 0.1  # alpha
-    bc_b: float = 0.5  # beta
-    backtracking_max_iter: int = 20
-    # NOTE this is not implemented in cpp
-    dynamics_residual_weight: float = 1.0
-    # barrier function scaling schedule
-    rho_0: float = 20.0
-    # scaling rate for rho, rho+ = rho * rho_b
-    rho_b: float = 1.0
 
 
-class RD3G(BaseSolver):
+class ResidualGame(PrintObject, ABC):
     """Residual Descent Differential Dynamic Game Solver (RD3G)
 
     Attributes:
@@ -62,41 +53,24 @@ class RD3G(BaseSolver):
 
     """
 
-    def __init__(self, config: RD3GConfig, game: BaseGame):
-        BaseSolver.__init__(self, config, game)
-
-        self.N = self.game.config.N
-        self.T = self.game.config.T
-        self.dt = self.game.config.dt
-        self.n = self.game.config.n
-        self.m = self.game.config.m
-        self.x0 = self.game.config.x0
-
+    @abstractmethod
+    def __init__(self, config: ResidualGameConfig):
+        """example of a constructor."""
+        PrintObject.__init__(self)
+        self.config = config
+        self.N = None
+        self.T = None
+        self.dt = 0.1
+        self.n = None
+        self.m = None
+        self.x0 = None
         self.dim_theta = None
+
+        # initialize default parameters
+        self.init()
 
         self.guess = None
         self.violations = None
-
-        self.rho = self.config.rho_0
-        self.profiler = TimeUtil(False)
-        # logger.debug_enable()
-        self.residual_vec = []
-        if self.config.USE_CPP:
-            self.cpp = self.game.setup_rd3g_cpp()
-            if self.cpp is None:
-                logger.error('User specified USE_CPP, but cpp backend for this game is unavailable')
-
-        """ Jax """
-        x_ref = np.zeros((self.N, self.n))
-        x_ref[:, 2] = 2.0  # target speed
-        x_ref[:, 1] = np.array(self.config.target_y)  # target y position
-        self.jax_target_x_ref = jnp.array(x_ref)
-        ''' (N,n), reference state'''
-
-        self.jax_x0 = jnp.array(self.config.x0)
-        self.jax_J_Qr = jnp.array(self.config.J_Qr)
-        self.jax_J_Q = jnp.array(self.config.J_Q)
-        self.jax_J_R = jnp.array(self.config.J_R)
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -117,9 +91,83 @@ class RD3G(BaseSolver):
     def init(self):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
-        raise NotImplementedError
+        # solver tuning parameters
+        # barrier function scaling schedule
+        self.rho = 10.0 * 2
+        self.rho_b = 1.0  # 2.0
+        # backtracking line search param
+        self.bc_a = 0.1  # alpha
+        self.bc_b = 0.5  # beta
+        self.backtracking_max_iter = 20
 
-    def cpp_solve(self):
+        # NOTE this is not implemented in cpp
+        self.dynamics_residual_weight = 1.0
+
+        # solver variables
+        self.frame_vec = []
+        self.profiler = TimeUtil(False)
+        # logger.debug_enable()
+        self.residual_vec = []
+        self.cpp = None
+
+    def setup(self):
+        # subclass responsible for loading specific cpp/eigen module
+        # and setting x0
+        logger.info(
+            ' ---------------------------------------------------------------------------- '
+        )
+        logger.info(
+            ' subclass did not define custom setup function, cpp module likely unavailable '
+        )
+        logger.info(
+            ' ---------------------------------------------------------------------------- '
+        )
+        # example usage:
+        # if self.config.USE_CPP:
+        #     self.cpp = ParticleGame(...)
+        #     self.cpp.set_x0(self.x0)
+
+    def naive_particle_solve(self,
+                             save_gif=False,
+                             visualize=False,
+                             animate=False):
+        del save_gif
+        del visualize
+        del animate
+        best_residual = 1e99
+        samples = 10
+        for i in range(samples):
+            # u_ref = np.random.uniform(-1.5,1.5, (self.T,self.N,self.m))
+            u_dim = self.T * self.N * self.m
+            u_ref = np.random.multivariate_normal(np.zeros(u_dim),
+                                                  np.diag([0.5] * u_dim),
+                                                  1).reshape(
+                                                      self.T, self.N, self.m)
+            retval = self.cpp.solve(u_ref)
+            x_ref, u_ref, lambda_ref, mu_ref = [
+                np.array(val) for val in retval[:-1]
+            ]
+            has_converged = retval[-1]
+            logger.debug(f'sample {i} has_converged: {has_converged}')
+
+            # check residual
+            h_plus_mask = self.get_h_plus_mask(x_ref)
+            r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+            r0_norm = np.linalg.norm(r0)
+            if r0_norm < best_residual:
+                best_residual = r0_norm
+            logger.info(
+                f' residual = {r0_norm}, current best = {best_residual}')
+
+            if has_converged:
+                logger.debug(f'found a solution at sample {i}')
+                break
+
+        full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
+        return u_ref, full_x_ref, has_converged
+
+    def cpp_solve(self, save_gif=False, visualize=False, animate=False):
+        del save_gif
         logger.debug('solve using cpp.solve()')
         u_ref = self.guess
         t0 = time()
@@ -136,9 +184,17 @@ class RD3G(BaseSolver):
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
         r0_norm = np.linalg.norm(r0)
         logger.debug(f' residual = {r0_norm}')
+        self.visualize(u_ref,
+                       visualize=visualize,
+                       animate=animate,
+                       gif_prefix='before')
         return
 
-    def solve(self):
+    def solve(self,
+              u_ref=None,
+              save_gif=False,
+              visualize=False,
+              animate=False):
         """main entry point for solver, will call cpp version if available,
         will fallback to python if cpp does not provide a solution, I forgot
         why I did the fallback."""
@@ -157,10 +213,14 @@ class RD3G(BaseSolver):
         if u_ref is None:
             u_ref = self.guess
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
-        x_ref = self.game.rollout(self.x0, u_ref)
+        x_ref = self.rollout(self.x0, u_ref)
         lambda_ref = np.zeros((T, N, self.n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T, N, N))
+        self.visualize(u_ref,
+                       visualize=visualize,
+                       animate=animate,
+                       gif_prefix='before')
         t0 = time()
         t = self.profiler
         has_converged = False
@@ -201,7 +261,7 @@ class RD3G(BaseSolver):
                     has_converged = True
                     break
             # NOTE may not be necessary
-            x_ref = self.game.rollout(self.x0, u_ref)
+            x_ref = self.rollout(self.x0, u_ref)
             t.e()
             logger.debug(f'------ {N} agents, iter {i} ------')
 
@@ -210,6 +270,12 @@ class RD3G(BaseSolver):
         if i == self.config.iterations - 1:
             logger.warning(' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
+        self.visualize(u_ref,
+                       full_x_ref,
+                       visualize,
+                       save_gif,
+                       animate,
+                       gif_prefix='after')
 
         # check second order conditions
         h_plus_mask = np.zeros((self.T, self.N, self.N), dtype=bool)
@@ -380,7 +446,7 @@ class RD3G(BaseSolver):
         dy = dy.flatten()
         r0_norm = np.linalg.norm(r0)
         flag_no_step = True
-        for i in range(self.config.backtracking_max_iter):
+        for i in range(self.backtracking_max_iter):
             y_new = y0 + step * dy
             x_new, _, _, _ = split_y(y_new)
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
@@ -389,9 +455,9 @@ class RD3G(BaseSolver):
             search_h_res = self.get_collision_residual(x_new)
             r_t = r_y_fun(y_new)
             r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1 - self.config.bc_a * step) * r0_norm
+            if (r_t_norm > (1 - self.bc_a * step) * r0_norm
                     or search_h_res > apriori_h_res):
-                step *= self.config.bc_b
+                step *= self.bc_b
             else:
                 flag_no_step = False
                 break
@@ -411,7 +477,7 @@ class RD3G(BaseSolver):
         if flag_no_step:
             raise StopIteration('iteration not making progress')
 
-        self.rho *= self.config.rho_b
+        self.rho *= self.rho_b
 
         if self.config.USE_CPP:
             # normally we won't reach here because we'd use  the cpp.step(),
@@ -420,15 +486,129 @@ class RD3G(BaseSolver):
 
         return split_y(y_new)
 
+    def rollout(self, x0: np.ndarray, u: np.ndarray):
+        """ Rollout control to get state trajectory (cached)
+        Args:
+            x0: (N,m)
+            u: (T,N,m), u0..u_T-1, will be reshaped
+        Return:
+            X: (T,N,n) x1..xT
+        """
+        # use cached version
+        # x0_tuple = tuple(x0.flatten())
+        # u_tuple = tuple(u.flatten())
+        # return self._rollout_cached(x0_tuple, u_tuple)
+        return self._rollout(x0, u)
+
+    @lru_cache(maxsize=128)
+    def _rollout_cached(self, x0: tuple, u: tuple):
+        x0_np = np.array(x0)
+        u_np = np.array(u).reshape((self.T, self.N, self.m))
+        return self._rollout(x0_np, u_np)
+
+    def _rollout(self, x0: np.ndarray, u: np.ndarray) -> np.ndarray:
+        """ Rollout control to get state trajectory
+        Args:
+            x0: (N,m)
+            u: (T,N,m), u0..u_T-1, will be reshaped
+        Return:
+            X: (T,N,n) x1..xT
+        """
+        assert u.shape == (self.T, self.N, self.m)
+        # u = u.reshape(self.T, self.N, self.m)
+        X = np.zeros((self.T + 1, self.N, self.n))
+        X[0, :, :] = x0.reshape(self.N, self.n)
+        # x+ = x + vx*dt + 0.5*ax*dt*dt
+        # vx+ = vx + ax*dt
+        for i in range(self.N):
+            for k in range(1, self.T + 1):
+                X[k, i] = self.f(X[k - 1, i], u[k - 1, i], i).flatten()
+        return X[1:, :, :]
+
+    @abstractmethod
+    def _visualize(self, u: np.ndarray, x: np.ndarray | None):
+        """Visualize the control.
+
+        populate x if not provided. Abstrat method, subclass
+        are expected to implement this for the specific game
+        Args:
+            u: control, [T,N,m] np.ndarray, but will be reshaped
+            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
+
+        """
+        raise NotImplementedError
+
+    def visualize(self,
+                  u,
+                  x=None,
+                  visualize=False,
+                  save_gif=False,
+                  save_fig=False,
+                  animate=False,
+                  fig_name='visualize',
+                  gif_prefix='run'):
+        """Visualize the control.
+
+        populate x if not provided. Abstrat method, subclass
+        are expected to implement this for the specific game
+        Args:
+            u: control, [T,N,m] np.ndarray, but will be reshaped
+            x: optional, [T+1,N,m], x0..xT, if empty will be rolled out from U using set x0
+
+        """
+        if (visualize or save_gif or save_fig):
+            fig = self._visualize(u, x)
+            if save_gif:
+                fig.canvas.draw()
+                frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
+                                        fig.canvas.tostring_rgb())
+                self.frame_vec.append(frame)
+            if visualize:
+                plt.show()
+            if save_fig:
+                filename = f'logs/{fig_name}.png'
+                plt.savefig(filename)
+                logger.info(f'saved figure to {filename}')
+        if animate:
+            self._animation(u, x, gif_prefix=gif_prefix)
+        return
+
+    @abstractmethod
+    def _animation(self, U, X=None, gif_prefix=''):
+        """build a gif animation."""
+        raise NotImplementedError
+
     def final(self):
         self.profiler.summary()
         if self.config.USE_CPP:
             self.cpp.summary()
+        if len(self.frame_vec) > 0:
+            gif_filename = self.resolveLogname()
+            self.frame_vec[0].save(fp=gif_filename,
+                                   format='GIF',
+                                   append_images=self.frame_vec,
+                                   save_all=True,
+                                   duration=200,
+                                   loop=0)
+            logger.info(f'GIf saved to {gif_filename}')
         plt.plot(self.residual_vec, '*-')
         plt.yscale('log')
         plt.xlabel('Iteration')
         plt.ylabel('Residual (exp)')
         plt.show()
+
+    def resolveLogname(self, logPrefix='run'):
+        # setup log file
+        # log file will record state of the vehicle for later analysis
+        logSuffix = '.gif'
+        no = 1
+        logFolder = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), 'gifs/'))
+        while os.path.isfile(logFolder + logPrefix + str(no) + logSuffix):
+            no += 1
+
+        logFilename = logFolder + logPrefix + str(no) + logSuffix
+        return logFilename
 
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         t = self.profiler
@@ -542,7 +722,7 @@ class RD3G(BaseSolver):
         dynamics = lamda_k[i].T @ (self.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
-    def _jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
+    def jax_L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
         ''' Lagrangian for agent i
         Args:
             x_k: (N,n) state vector at step k
@@ -651,6 +831,7 @@ class RD3G(BaseSolver):
         return -lamda_k[i].T
 
     # NOTE deprecated, usually dJi_du is called directly
+
     def dL_du(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i):
         del x_k1_i
         del h_k_plus_mask
@@ -725,6 +906,11 @@ class RD3G(BaseSolver):
             i) + lamda[0, i].T @ (self.f(self.x0[i], u[0, i], i).flatten() - x[0, i])
         # x_T related terms
         LLi_val += self.Jfi(x[T - 1], i)
+        h_plus_debug = [
+            mu[T - 1, i, j.item()] *
+            (self.h(x[T - 1, i], x[T - 1, j.item()]))
+            for j in np.nonzero(h_plus_mask[T - 1, i])[0]
+        ]
 
         h_plus = np.sum([
             mu[T - 1, i, j.item()] *
@@ -878,12 +1064,12 @@ class RD3G(BaseSolver):
             r = jnp.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
             # dynamics for f(x0,u0) = x1
             r = jnp.hstack([
-                r, self.config.dynamics_residual_weight *
+                r, self.dynamics_residual_weight *
                 self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = jnp.hstack([
-                    r, self.config.dynamics_residual_weight *
+                    r, self.dynamics_residual_weight *
                     self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
@@ -920,12 +1106,12 @@ class RD3G(BaseSolver):
             r = np.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
             # dynamics for f(x0,u0) = x1
             r = np.hstack([
-                r, self.config.dynamics_residual_weight *
+                r, self.dynamics_residual_weight *
                 self.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
             ])
             for k in range(1, self.T):
                 r = np.hstack([
-                    r, self.config.dynamics_residual_weight *
+                    r, self.dynamics_residual_weight *
                     self.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
                 ])  # dual for dynamics
             for k in range(1, self.T):
@@ -1139,7 +1325,7 @@ class RD3G(BaseSolver):
 
         if self.config.DEBUG:
             dxdu_num = jacobian_numerical(
-                fun=lambda uu: self.game.rollout(self.x0, uu.reshape((T, N, m))),
+                fun=lambda uu: self.rollout(self.x0, uu.reshape((T, N, m))),
                 x=u.flatten(),
                 dim=dim_x)
             logger.debug(f'dxdu_num err {np.linalg.norm(dxdu_num - dxdu)}')
@@ -1224,11 +1410,11 @@ class RD3G(BaseSolver):
             # dynamics for f(x0,u0) = x1
             drdx[index:index + T * n, :] = dLL_dxi_dx
             index += T * n + T * m
-            drdx[index:index + n, :] = self.config.dynamics_residual_weight * dF0dx
+            drdx[index:index + n, :] = self.dynamics_residual_weight * dF0dx
             for k in range(1, self.T):
                 dFdx = self.dF_dx(x, u, i, k)
                 drdx[index + k * n:index +
-                     (k + 1) * n, :] = self.config.dynamics_residual_weight * dFdx
+                     (k + 1) * n, :] = self.dynamics_residual_weight * dFdx
             index += n * T
             for k in range(1, self.T + 1):
                 indices = np.nonzero(h_plus_mask[k - 1, i])[0]
@@ -1279,12 +1465,12 @@ class RD3G(BaseSolver):
             k = 0
             drdu[index + k * n:index + (k + 1) * n,
                  k * N * m + i * m:k * N * m +
-                 (i + 1) * m] = self.config.dynamics_residual_weight * self.df_du(
+                 (i + 1) * m] = self.dynamics_residual_weight * self.df_du(
                      self.x0[i], u[k, i], i)
             for k in range(1, self.T):
                 drdu[index + k * n:index + (k + 1) * n,
                      k * N * m + i * m:k * N * m +
-                     (i + 1) * m] = self.config.dynamics_residual_weight * self.df_du(
+                     (i + 1) * m] = self.dynamics_residual_weight * self.df_du(
                          x[k - 1, i], u[k, i], i)
             index += n * T + np.sum(h_plus_mask[:,
                                                 i])  # skip  f(x,u)-x+,  h(x,x)
@@ -1424,7 +1610,7 @@ class RD3G(BaseSolver):
         self.jax_r = jit(self._jax_r)
         self.jax_dLLi_dx = jit(jacrev(self.jax_LLi, argnums=0))
         self.jax_dLLi_du = jit(jacrev(self.jax_LLi, argnums=1))
-        self.jax_L = jit(self._jax_L)
+        self.jax_L = jit(self.jax_L)
         self.jax_LLi = jit(self.jax_LLi)
         self.jax_dL_dx_ik = jit(lambda *args: jacrev(self.jax_L, argnums=0)(*args)[args[-1]])
         self.jax_dL_dx_ik1 = jit(jacrev(self.jax_L, argnums=2))
@@ -1473,18 +1659,18 @@ class RD3G(BaseSolver):
         dy = dy.flatten()
         r0_norm = jnp.linalg.norm(r0)
         apriori_h_res = jnp.sum(h_map_val)
-        for i in range(self.config.backtracking_max_iter):
+        for i in range(self.backtracking_max_iter):
             y_new = y0 + step * dy
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
             # x_new, _, _, _ = split_y(y_new)
-            # x_new = self.game.rollout(self.x0, u_new)
+            # x_new = self.rollout(self.x0, u_new)
             # y_new[:dim_x] = x_new.flatten()
             search_h_res = jnp.sum(h_map_val)
             r_t = r_y_fun(y_new)
             r_t_norm = jnp.linalg.norm(r_t)
-            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.config.bc_a * step) * r0_norm,
+            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.bc_a * step) * r0_norm,
                                           search_h_res > apriori_h_res)
-            step = jnp.where(flag_no_step, step*self.config.bc_b, 0)
+            step = jnp.where(flag_no_step, step*self.bc_b, 0)
         x_ref, u_ref, lambda_ref, mu_ref = split_y(y_new)
 
         return x_ref, u_ref, lambda_ref, mu_ref
@@ -1528,5 +1714,216 @@ class RD3G(BaseSolver):
     def jax_dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
         return self.jax_dLLi_du(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
 
-    def jax_J_x_ref_fun(self, i):
-        return self.jax_target_x_ref[i]
+    # ---------- Defaults for  some Application specific functions -------
+    # terminal(final) cost for agent i
+    # x_T: terminal GAME state (N*n)
+    # return : scalar
+    # if User doesn't choose a terminal cost, the step cost J will be used
+
+    def Jfi(self, x_T, i):
+        return self.J(x_T, np.zeros(self.m), i)
+
+    def jax_Jfi(self, x_T, i):
+        return self.jax_J(x_T, jnp.zeros(self.m), i)
+
+    def dJfi_dxi(self, x_T, i):
+        return self.dJi_dxi(x_T, np.zeros(self.m), i)
+
+    def dJfi_dxj(self, x_T, i, j):
+        return self.dJi_dxj(x_T, np.zeros(self.m), i, j)
+
+    def dJfi_dxi_dxi(self, x_T, i):
+        return self.dJi_dxi_dxi(x_T, np.zeros(self.m), i)
+
+    def dJfi_dxi_dxj(self, x_T, i, j):
+        return self.dJi_dxi_dxj(x_T, np.zeros(self.m), i, j)
+
+    def dJfi_dxj_dxj(self, x_T, i, j):
+        return self.dJi_dxj_dxj(x_T, np.zeros(self.m), i, j)
+
+    # step cost function
+    @abstractmethod
+    def J(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int) -> float:
+        """Step cost function for agent i.
+
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+        Return:
+            cost for agent i at this step (k)
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def dJi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray,
+                i: int) -> np.ndarray:
+        """ Step cost gradient w.r.t. x_i
+        Args:
+            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
+            u_k_i: [m] control for agent i at this step (k), (a, omega)
+                a=dv_dt is acceleration
+                omega=dheading_dt is angular acceleration
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n] Partial derivative
+        """
+        return np.zeros((self.n))
+
+    @abstractmethod
+    def dJi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                j: int) -> np.ndarray:
+        """ Step cost gradient w.r.t. x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n] Partial derivative
+        """
+        return np.zeros((self.n))
+
+    @abstractmethod
+    def dJi_dxi_dxi(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int):
+        """ Step cost second order derivative w.r.t. x_i
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
+        return np.zeros((self.n, self.n))
+
+    @abstractmethod
+    def dJi_dxi_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
+        """ Step cost second ordder derivative w.r.t. x_i, then x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k), (x, y, heading, v)
+            u_k_i: [m] control for agent i at this step (k), (a, omega)
+                a=dv_dt is acceleration
+                omega=dheading_dt is angular acceleration
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
+        return np.zeros((self.n, self.n))
+
+    @abstractmethod
+    def dJi_dxj_dxj(self, x_k: np.ndarray, u_k_i: np.ndarray, i: int,
+                    j: int) -> np.ndarray:
+        """ Step cost second order derivative w.r.t. x_j
+        Args:
+            x_k: [N, n] *all* agent state at this step (k)
+            u_k_i: [m] control for agent i at this step (k)
+            i: agent id, starts from 0
+            j: agent id, starts from 0
+        Return:
+            [n, n] Partial derivative
+        """
+        return np.zeros((self.n, self.n))
+
+    @abstractmethod
+    def dJi_du(self, x_k, u_k_i, i):
+        return np.zeros((1, self.m))
+
+    @abstractmethod
+    def dJi_dudu(self, x_k, u_k_i, i):
+        return np.zeros((self.m, self.m))
+
+    # --- dynamics and related derivatives ---
+    @abstractmethod
+    def f(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """ Dynamics funciton, gives x(state) at next time step 
+        Args:
+            x: [n] states of agent i
+            u: [m] control of agent i
+            i: agent index 
+        Return:
+           States [n] at next time step
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def df_dx(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """ Dynamics derivative df/dx
+        Args:
+            x: [n] states of agent i
+            u: [m] control of agent i
+            i: agent index 
+        Return:
+            [n,n] State derivative
+        """
+        del x
+        del u
+        del i
+        raise NotImplementedError
+
+    @abstractmethod
+    def df_du(self, x: np.ndarray, u: np.ndarray, i: int) -> np.ndarray:
+        """
+        Derivative df/du
+        Args:
+            x: [n] states of agent i
+                x = (x, y, heading, v)
+            u: [m] control of agent i
+                u = (a, omega)
+            i: agent index 
+        Return:
+            [n,m] Derivative
+        """
+        del x
+        del u
+        del i
+        raise NotImplementedError
+
+    def h(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> float:
+        """ Constraint function h <= 0"""
+        del x_i
+        del x_j
+        return -1
+
+    def dh_dxi(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> jnp.ndarray:
+        """ Derivative of constraint h, dh/dx_i
+        Return:
+            [n] Derivative
+        """
+        del x_i
+        del x_j
+        return jnp.zeros((self.n))
+
+    def dh_dxj(self, x_i: jnp.ndarray, x_j: jnp.ndarray) -> jnp.ndarray:
+        """ Derivative of constraint h, dh/dx_j
+        Return:
+            [n] Derivative
+        """
+        del x_i
+        del x_j
+        return jnp.zeros((self.n))
+
+    def dh_dxi_dxi(self, x_i, x_j):
+        del x_i
+        del x_j
+        return jnp.zeros((self.n, self.n))
+
+    def dh_dxj_dxi(self, x_i, x_j):
+        del x_i
+        del x_j
+        return jnp.zeros((self.n, self.n))
+
+    def dh_dxi_dxj(self, x_i, x_j):
+        del x_i
+        del x_j
+        return np.zeros((self.n, self.n))
+
+    def dh_dxj_dxj(self, x_i, x_j):
+        del x_i
+        del x_j
+        return np.zeros((self.n, self.n))

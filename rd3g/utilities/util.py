@@ -6,7 +6,9 @@ import functools
 
 import numpy as np
 
-BASEDIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# root folder of repo.
+BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 def cpp_capable(py_function):
     """
@@ -38,6 +40,18 @@ def print_current_memory_usage(text=''):
                 # Print the line (memory usage)
                 print(text + ' ' + line.split()[1] + 'kB')
                 break
+
+
+def resolve_logname(prefix='run', suffix='log'):
+    """ Find next available logname, e.g. [prefix]_3.[suffix]"""
+    no = 1
+    log_folder = os.path.join(BASEDIR, 'logs')
+    filename = os.path.join(log_folder, f'{prefix}_{no}.{suffix}')
+    while os.path.isfile(filename):
+        no += 1
+        filename = os.path.join(log_folder, f'{prefix}_{no}.{suffix}')
+
+    return filename
 
 
 def jacobian_numerical(fun, x, dim=1):
@@ -160,15 +174,14 @@ class PrintObject:
         if self.silent:
             return
         # yellow
-        if self.config.DEBUG:
-            print('\033[93m', self.prefix(),
-                  inspect.stack()[1][3], *message, '\033[0m')
+        print('\033[93m', self.prefix(),
+              inspect.stack()[1][3], *message, '\033[0m')
 
     def print_warning(self, *message):
         if self.silent:
             return
         # yellow
-        #print('\033[93m',self.prefix(), *message, '\033[0m')
+        # print('\033[93m',self.prefix(), *message, '\033[0m')
         # red
         print('\033[91m', self.prefix(), 'WARNING: ', *message, '\033[0m')
 

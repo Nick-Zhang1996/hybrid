@@ -1,6 +1,39 @@
 """ Base class for Differential Dynamic Game Solver"""
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class BaseSolverConfig():
+    """Configs for Residual Game."""
+    USE_CPP: bool = False
+    CPP_DEBUG: bool = False
+    DEBUG: bool = False
+    FORCE_PYTHON_SOLVER: bool = False
+    tolerance: float = 5e-4
+    iterations: int = 30
+
+
+@dataclass(frozen=True)
+class Solution():
+    """Solution to a Game, return type of BaseSolver"""
+    elapsed_time: float = 0
+    u: Any = None
+    """(T,N,m) Open-loop Nash policy"""
+    x: Any = None
+    """(T,N,n) State trajectory """
+    residual: float = 0
+    has_converged: bool = False
+    is_optimal: bool = False
 
 
 class BaseSolver(ABC):
-    """Base class"""
+    """Base class for DDG solver"""
+
+    def __init__(self, config: BaseSolverConfig, game):
+        self.config = config
+        self.game = game
+
+    def solve(self) -> Solution:
+        """ Solve game. """
