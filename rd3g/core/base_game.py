@@ -121,6 +121,11 @@ class BaseGame(ABC):
         Return:
             val: (float) stage cost for agent i at stage k
         '''
+    @abstractmethod
+    def Jfi(self, x_T, i):
+        '''
+        Terminal stage cost for agent i
+        '''
 
     @abstractmethod
     def f(self, x, u, i):

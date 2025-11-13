@@ -4,6 +4,7 @@
 import logging
 from time import time
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 import jax
@@ -74,8 +75,9 @@ class RD3GJax(BaseSolver):
         # Define jax functions
         self.dLLi_dx = jit(jacrev(self.LLi, argnums=0))
         self.dLLi_du = jit(jacrev(self.LLi, argnums=1))
-        self.dL_dx_ik = jit(lambda *args: jacrev(self.L, argnums=0)(*args)[args[-1]])
-        self.dL_dx_ik1 = jit(jacrev(self.L, argnums=2))
+        self.dL_dx_ik = jit(lambda *args: jacrev(self.L, argnums=0)
+                            (*args)[args[-1]], static_argnums=0)
+        self.dL_dx_ik1 = jit(jacrev(self.L, argnums=2), static_argnums=0)
 
         h_map_i = vmap(lambda x, k, i, j: self.game.h(
             x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
@@ -84,8 +86,11 @@ class RD3GJax(BaseSolver):
 
         self.h_map_fun = jit(lambda x: h_map_kij(x, jnp.arange(self.T),
                                                  jnp.arange(self.N),
-                                                 jnp.arange(self.N)))
+                                                 jnp.arange(self.N)),
+                             )
         self.validate()
+        t0 = time()
+        logger.info(f'Compiling functions with jax jit')
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -134,7 +139,7 @@ class RD3GJax(BaseSolver):
                 x_ref, u_ref, lambda_ref, mu_ref)
             h_plus_mask = self.get_h_plus_mask(x_ref)
             r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-            if r0 < self.config.tolerance:
+            if np.linalg.norm(r0) < self.config.tolerance:
                 t.e()
                 has_converged = True
                 break
@@ -166,7 +171,7 @@ class RD3GJax(BaseSolver):
         plt.ylabel('Residual (exp)')
         plt.show()
 
-    @jit
+    @partial(jit, static_argnums=0)
     def get_h_plus_mask(self, x):
         ''' Get a matrix mask of currently active constraints
         Args:
@@ -184,7 +189,7 @@ class RD3GJax(BaseSolver):
         )
         return h_plus_mask
 
-    @jit
+    @partial(jit, static_argnums=0)
     def L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
         ''' Lagrangian for agent i
         Args:
@@ -217,7 +222,7 @@ class RD3GJax(BaseSolver):
         dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
-    @jit
+    @partial(jit, static_argnums=0)
     def LLi(self, x, u, h_plus_mask, lamda, mu, i):
         ''' Lagrangian for agent i across all time steps 1-T
         Args:
@@ -322,7 +327,7 @@ class RD3GJax(BaseSolver):
 
         return x_ref, u_ref, lambda_ref, mu_ref
 
-    @jit
+    @partial(jit, static_argnums=0)
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         n = self.n
         m = self.m
@@ -336,7 +341,7 @@ class RD3GJax(BaseSolver):
                          drdmu.reshape(full_r_dim, -1)])
         return Dr
 
-    @jit
+    @partial(jit, static_argnums=0)
     def r(self, x, u, lamda, mu, h_plus_mask):
         # NOTE we don't do active set here since jax doesn't work with variable size array
         r = jnp.empty(0)

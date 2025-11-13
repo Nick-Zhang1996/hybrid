@@ -315,6 +315,9 @@ class CarMergeKinematicBicycle(BaseGame):
         ) + x_k[i].T @ self.config.J_Q @ x_k[i] + u_k_i.t @ self.config.J_R @ u_k_i
         return val
 
+    def Jfi(self, x_T, i):
+        return self.J(x_T, np.zeros(self.m), i)
+
     def _jax_j(self, x_k, u_k_i, i):
         '''
         step cost for an agent, given x,u
