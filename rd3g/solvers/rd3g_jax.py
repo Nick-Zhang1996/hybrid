@@ -129,6 +129,7 @@ class RD3GJax(BaseSolver):
         lambda_ref = np.zeros((T, N, n))
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = np.zeros((T, N, N))
+
         t0 = time()
         t = self.profiler
         has_converged = False
@@ -137,9 +138,10 @@ class RD3GJax(BaseSolver):
             t.s()
             x_ref, u_ref, lambda_ref, mu_ref = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
-            h_plus_mask = self.get_h_plus_mask(x_ref)
+            h_plus_mask = self.h_map_fun(x_ref) > 0
             r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-            if np.linalg.norm(r0) < self.config.tolerance:
+            residual = np.linalg.norm(r0)
+            if residual < self.config.tolerance:
                 t.e()
                 has_converged = True
                 break
@@ -158,7 +160,7 @@ class RD3GJax(BaseSolver):
         sol = Solution(elapsed_time=t_solve,
                        u=u_ref,
                        x=full_x_ref,
-                       residual=-1,
+                       residual=residual,
                        has_converged=has_converged,
                        is_optimal=has_converged)
         return sol
@@ -189,7 +191,7 @@ class RD3GJax(BaseSolver):
         )
         return h_plus_mask
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def L(self, x_k, u_k_i, x_k1_i, h_k_plus_mask, lamda_k, mu_k, i: int):
         ''' Lagrangian for agent i
         Args:
@@ -222,7 +224,7 @@ class RD3GJax(BaseSolver):
         dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def LLi(self, x, u, h_plus_mask, lamda, mu, i):
         ''' Lagrangian for agent i across all time steps 1-T
         Args:
@@ -276,7 +278,9 @@ class RD3GJax(BaseSolver):
         h_val = self.game.h(x_i, x_j)
         return -1 / self.rho * jnp.log(-jnp.where(h_val < -1e-100, h_val, -1e-100))
 
+    @partial(jit, static_argnums=0)
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
+        print('jit step()')
         h_map_val = self.h_map_fun(x_ref)
         h_plus_mask = jnp.where(jnp.eye(self.N), False, h_map_val >= 0)
 
@@ -327,7 +331,7 @@ class RD3GJax(BaseSolver):
 
         return x_ref, u_ref, lambda_ref, mu_ref
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         n = self.n
         m = self.m

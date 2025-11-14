@@ -273,7 +273,7 @@ class CarMergeKinematicBicycleJax(BaseGame):
         # frame.save(filename)
         return
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def J(self, x_k, u_k_i, i):
         '''
         stage cost for an agent, given x,u
@@ -289,11 +289,11 @@ class CarMergeKinematicBicycleJax(BaseGame):
             x_k_i.T @ self.config.J_Q @ x_k_i + u_k_i.T @ self.config.J_R @ u_k_i
         return val
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def Jfi(self, x_T, i):
         return self.J(x_T, jnp.zeros(self.m), i)
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def f(self, x: ArrayLike, u: ArrayLike, i: int):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
@@ -314,7 +314,7 @@ class CarMergeKinematicBicycleJax(BaseGame):
         # NOTE the cpp version return has dimension (n,1), while this is (n,)
         return val
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def h(self, x_i, x_j):
         """ Collision constraint for x_i, anx x_j agent, h <= 0
         Args:

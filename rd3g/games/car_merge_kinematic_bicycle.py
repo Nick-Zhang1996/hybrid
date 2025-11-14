@@ -4,9 +4,6 @@ from math import sin, cos, tan, atan, radians, degrees
 from dataclasses import dataclass
 from typing import Any
 
-import jax.lax
-import jax.numpy as jnp
-from jax.typing import ArrayLike
 import numpy as np
 from scipy import interpolate
 from scipy.ndimage import rotate
@@ -318,24 +315,6 @@ class CarMergeKinematicBicycle(BaseGame):
     def Jfi(self, x_T, i):
         return self.J(x_T, np.zeros(self.m), i)
 
-    def _jax_j(self, x_k, u_k_i, i):
-        '''
-        step cost for an agent, given x,u
-        x_k.shape (N,n) x_k_i
-        u_k_i.shape (m) u_k_i
-        i: agent id
-        '''
-        # val = (x_k[i] - self.jax_J_x_ref_fun(i)).T @ self.J_Qr @ (
-        #     x_k[i] - self.jax_J_x_ref_fun(i)
-        # ) + x_k[i].T @ self.J_Q @ x_k[i] + u_k_i.T @ self.J_R @ u_k_i
-
-        x_k_i = jax.lax.dynamic_index_in_dim(x_k, i, keepdims=False)
-        dx = x_k_i - jax.lax.dynamic_index_in_dim(self.jax_target_x_ref, i, keepdims=False)
-
-        val = dx.T @ self.jax_J_Qr @ dx + \
-            x_k_i.T @ self.jax_J_Q @ x_k_i + u_k_i.T @ self.jax_J_R @ u_k_i
-        return val
-
     @cpp_capable
     def dJi_dxi(self, x_k, u_k_i, i):
         val = 2 * (x_k[i] -
@@ -345,7 +324,7 @@ class CarMergeKinematicBicycle(BaseGame):
 
     @cpp_capable
     def dJi_dxj(self, x_k, u_k_i, i, j):
-        val = jnp.zeros((1, self.config.n))
+        val = np.zeros((1, self.config.n))
         return val
 
     @cpp_capable
@@ -374,7 +353,7 @@ class CarMergeKinematicBicycle(BaseGame):
         return 2 * self.config.J_R
 
     @cpp_capable
-    def f(self, x: ArrayLike, u: ArrayLike, i: int):
+    def f(self, x, u, i: int):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x: (n,) State for agent i
@@ -394,40 +373,20 @@ class CarMergeKinematicBicycle(BaseGame):
         # NOTE the cpp version return has dimension (n,1), while this is (n,)
         return val
 
-    def jax_f(self, x: ArrayLike, u: ArrayLike, i: int):
-        ''' Dynamics function x_{t+1} = f(x_t,u,i)
-        Args:
-            x: (n,) State for agent i
-            u: (m,) Control for agent i
-        Return:
-            (n,) The next state, progressed by self.dt
-
-        this problem has homogeneous agents, so [i] is irrelevant'''
-        lf = 1.0
-        lr = 1.0
-        beta = jnp.atan(jnp.tan(u[1]) * lr / (lf + lr))
-        dx = jnp.array([
-            x[2] * jnp.cos(x[3] + beta), x[2] * jnp.sin(x[3] + beta), u[0],
-            x[2] / lr * jnp.sin(beta)
-        ])
-        val = x + dx * self.config.dt
-        # NOTE the cpp version return has dimension (n,1), while this is (n,)
-        return val
-
     @cpp_capable
     def df_dx(self, x, u, i):
         beta = atan(tan(u[1]) * 0.5)
-        A = jnp.array([[0, 0, cos(x[3] + beta), -x[2] * sin(x[3] + beta)],
+        A = np.array([[0, 0, cos(x[3] + beta), -x[2] * sin(x[3] + beta)],
                       [0, 0, sin(x[3] + beta), x[2] * cos(x[3] + beta)],
                       [0, 0, 0, 0], [0, 0, sin(beta) / 1.0, 0]])
-        val = jnp.eye(4) + A * self.config.dt
+        val = np.eye(4) + A * self.config.dt
         return val
 
     @cpp_capable
     def df_du(self, x, u, i):
         beta = atan(tan(u[1]) * 0.5)
         dbeta_dst = 0.5 / (((tan(u[1]) * 0.5)**2 + 1) * cos(u[1])**2)
-        B = jnp.array([[0, -x[2] * sin(x[3] + beta) * dbeta_dst],
+        B = np.array([[0, -x[2] * sin(x[3] + beta) * dbeta_dst],
                       [0, x[2] * cos(x[3] + beta) * dbeta_dst], [1, 0],
                       [0, x[2] / 1.0 * cos(beta) * dbeta_dst]])
         val = B * self.config.dt
