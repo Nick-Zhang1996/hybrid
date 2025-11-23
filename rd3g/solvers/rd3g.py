@@ -59,6 +59,7 @@ class RD3G(BaseSolver):
 
     def __init__(self, config: RD3GConfig, game: BaseGame):
         BaseSolver.__init__(self, config, game)
+        self.USE_CPP = config.USE_CPP
 
         self.N = self.game.config.N
         self.T = self.game.config.T
@@ -154,6 +155,7 @@ class RD3G(BaseSolver):
                 t.s('cpp step')
                 try:
                     try:
+                        breakpoint()
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref,
                                                mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [
@@ -1089,7 +1091,7 @@ class RD3G(BaseSolver):
                 if len(indices) == 0:
                     continue
                 dhdx = np.vstack(
-                    [self.game.dh_dx(x, k, i, j.item()) for j in indices])
+                    [self.dh_dx(x, k, i, j.item()) for j in indices])
                 drdx[index:index + dhdx.shape[0], :] = dhdx
                 index += len(indices)
 

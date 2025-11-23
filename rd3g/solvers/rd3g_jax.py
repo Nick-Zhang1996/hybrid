@@ -76,8 +76,8 @@ class RD3GJax(BaseSolver):
         self.dLLi_dx = jit(jacrev(self.LLi, argnums=0))
         self.dLLi_du = jit(jacrev(self.LLi, argnums=1))
         self.dL_dx_ik = jit(lambda *args: jacrev(self.L, argnums=0)
-                            (*args)[args[-1]], static_argnums=0)
-        self.dL_dx_ik1 = jit(jacrev(self.L, argnums=2), static_argnums=0)
+                            (*args)[args[-1]])
+        self.dL_dx_ik1 = jit(jacrev(self.L, argnums=2))
 
         h_map_i = vmap(lambda x, k, i, j: self.game.h(
             x[k, i], x[k, j]), in_axes=(None, None, 0, None), out_axes=0)
@@ -138,7 +138,9 @@ class RD3GJax(BaseSolver):
             t.s()
             x_ref, u_ref, lambda_ref, mu_ref = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
-            h_plus_mask = self.h_map_fun(x_ref) > 0
+            h_plus_mask = jnp.where(jnp.eye(self.N),
+                                    False,
+                                    self.h_map_fun(x_ref) > 0)
             r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
             residual = np.linalg.norm(r0)
             if residual < self.config.tolerance:
@@ -173,7 +175,7 @@ class RD3GJax(BaseSolver):
         plt.ylabel('Residual (exp)')
         plt.show()
 
-    @partial(jit, static_argnums=0)
+    # @partial(jit, static_argnums=0)
     def get_h_plus_mask(self, x):
         ''' Get a matrix mask of currently active constraints
         Args:
@@ -208,7 +210,7 @@ class RD3GJax(BaseSolver):
         h_plus_comp = jnp.fromfunction(
             lambda j: jnp.where(i != j, mu_k[i, j] * self.game.h(x_k[i], x_k[j]), 0),
             shape=self.N,
-            dtype=int
+            dtype=jnp.int32
         )
         h_plus_comp = jnp.where(h_k_plus_mask[i], h_plus_comp, 0)
         h_plus = jnp.sum(h_plus_comp)
@@ -224,7 +226,7 @@ class RD3GJax(BaseSolver):
         dynamics = lamda_k[i].T @ (self.game.f(x_k[i], u_k_i, i).flatten() - x_k1_i)
         return self.game.J(x_k, u_k_i, i) + h_plus + h_minus + dynamics
 
-    # @partial(jit, static_argnums=0)
+    @partial(jit, static_argnums=0)
     def LLi(self, x, u, h_plus_mask, lamda, mu, i):
         ''' Lagrangian for agent i across all time steps 1-T
         Args:
@@ -331,7 +333,7 @@ class RD3GJax(BaseSolver):
 
         return x_ref, u_ref, lambda_ref, mu_ref
 
-    # @partial(jit, static_argnums=0)
+    @partial(jit, static_argnums=0)
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
         n = self.n
         m = self.m
@@ -366,9 +368,11 @@ class RD3GJax(BaseSolver):
                 r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
         return r
 
+    @partial(jit, static_argnums=0)
     def dLLi_dxi(self, x, u, h_plus_mask, lamda, mu, i):
         return self.dLLi_dx(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
 
+    @partial(jit, static_argnums=0)
     def dLLi_dui(self, x, u, h_plus_mask, lamda, mu, i):
         return self.dLLi_du(x, u, h_plus_mask, lamda, mu, i)[:, i, :].reshape(1, -1)
 

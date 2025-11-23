@@ -14,7 +14,8 @@ from matplotlib.animation import FuncAnimation
 from rd3g.utilities.util import cpp_capable, BASEDIR, resolve_logname
 # pylint: disable-next=no-name-in-module
 from rd3g.src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
-from rd3g.core.base_game import BaseGame, BaseGameConfig
+from rd3g.core.base_game import BaseGameConfig
+from rd3g.core.base_residual_game import BaseResidualGame
 
 logger = logging.getLogger('CarMergeKinematicBicycle')
 logger.setLevel(logging.INFO)
@@ -39,10 +40,9 @@ class CarMergeKinematicBicycleConfig(BaseGameConfig):
     """ Cost matrix for penalizing non-zero state """
     J_R: Any = None
     """ Cost matrix for control effort """
-    USE_CPP: bool = True
 
 
-class CarMergeKinematicBicycle(BaseGame):
+class CarMergeKinematicBicycle(BaseResidualGame):
     ''' Kinematic Bicycle Merging Game
         u = [throttle, steering]
         x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
@@ -60,6 +60,7 @@ class CarMergeKinematicBicycle(BaseGame):
 
     def __init__(self, config: CarMergeKinematicBicycleConfig):
         super().__init__(config)
+        self.USE_CPP = False  # if setup_rd3g_cpp is called, this will be overridden
 
         # bounds for visualization
         self.visual_x_lim = [-2.5, 2.5]
@@ -104,6 +105,7 @@ class CarMergeKinematicBicycle(BaseGame):
             False)
         cpp.set_x0(self.config.x0)
         self.cpp = cpp
+        self.USE_CPP = solver_config.USE_CPP
         return cpp
 
     def visualize(self, x0, u, x=None, show=True, save=False):
@@ -309,7 +311,7 @@ class CarMergeKinematicBicycle(BaseGame):
         # return (x[2] - 2.0)**2 + (x[1] - self.target_y[i])**2 + 1e-2*x[3]**2 + 1e-2*u.T @ np.eye(self.m) @ u
         val = (x_k[i] - self.J_x_ref_fun(i)).T @ self.config.J_Qr @ (
             x_k[i] - self.J_x_ref_fun(i)
-        ) + x_k[i].T @ self.config.J_Q @ x_k[i] + u_k_i.t @ self.config.J_R @ u_k_i
+        ) + x_k[i].T @ self.config.J_Q @ x_k[i] + u_k_i.T @ self.config.J_R @ u_k_i
         return val
 
     def Jfi(self, x_T, i):

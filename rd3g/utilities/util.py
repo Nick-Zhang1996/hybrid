@@ -21,7 +21,7 @@ def cpp_capable(py_function):
     """
     @functools.wraps(py_function)
     def wrapper(self, *args, **kwargs):
-        if self.config.USE_CPP:
+        if self.USE_CPP:
             # Get the function with the same name from the C++ object
             cpp_function = getattr(self.cpp, py_function.__name__)
             return cpp_function(*args, **kwargs)
