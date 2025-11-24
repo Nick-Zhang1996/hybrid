@@ -68,7 +68,7 @@ class RD3GJax(BaseSolver):
         self.violations = None
 
         self.rho = self.config.rho_0
-        self.profiler = TimeUtil(False)
+        self.profiler = TimeUtil(True)
         # logger.debug_enable()
         self.residual_vec = []
 
@@ -89,8 +89,6 @@ class RD3GJax(BaseSolver):
                                                  jnp.arange(self.N)),
                              )
         self.validate()
-        t0 = time()
-        logger.info(f'Compiling functions with jax jit')
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -112,6 +110,39 @@ class RD3GJax(BaseSolver):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
         raise NotImplementedError
+
+    def jax_compile(self):
+        """ Run key functions once to compile """
+        logger.info('Compiling functions with jax jit')
+        t0 = time()
+        p = TimeUtil(True)
+        p.s()
+
+        u_ref = self.guess
+        # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
+        p.s('rollout')
+        x_ref = self.game.rollout(self.x0, u_ref)
+        p.e('rollout')
+        lambda_ref = np.zeros((self.T, self.N, self.n))
+        # defined for all h_k_i_j, but all values may not be used
+        mu_ref = np.zeros((self.T, self.N, self.N))
+        p.s('step')
+        x_ref, u_ref, lambda_ref, mu_ref, _ = self.step(x_ref, u_ref, lambda_ref, mu_ref)
+        p.e('step')
+        p.s('h_mask')
+        h_plus_mask = jnp.where(jnp.eye(self.N),
+                                False,
+                                self.h_map_fun(x_ref) > 0)
+        p.e('h_mask')
+
+        p.s('r')
+        _ = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        p.e('r')
+        p.e()
+
+        dt = time() - t0
+        logger.info(f'jax compile {dt=}s')
+        p.summary()
 
     def solve(self):
         N = self.N
@@ -136,19 +167,30 @@ class RD3GJax(BaseSolver):
         for i in range(self.config.iterations):
             logger.info(f'------ iter {i+1} ------')
             t.s()
-            x_ref, u_ref, lambda_ref, mu_ref = self.step(
+            t.s('step')
+            x_ref, u_ref, lambda_ref, mu_ref, step_size = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
+            t.e('step')
+            t.s('h_plus_mask')
             h_plus_mask = jnp.where(jnp.eye(self.N),
                                     False,
                                     self.h_map_fun(x_ref) > 0)
+            t.e('h_plus_mask')
+            t.s('residual')
             r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+            t.e('residual')
+            t.s('tolerance')
             residual = np.linalg.norm(r0)
+            logger.info(f'{residual=}, {step_size=}')
             if residual < self.config.tolerance:
                 t.e()
                 has_converged = True
                 break
+            t.e('tolerance')
             # NOTE may not be necessary
+            t.s('final rollout')
             x_ref = self.game.rollout(self.x0, u_ref)
+            t.e('final rollout')
             t.e()
             logger.debug(f'------ {N} agents, iter {i} ------')
 
@@ -311,27 +353,34 @@ class RD3GJax(BaseSolver):
             return self.r(*split_y(y), h_plus_mask)
         # pylint: disable-next=unused-variable
         dy, residual, rank, s = jax.numpy.linalg.lstsq(Dr, y0)
-        flag_no_step = True
         # line search
-        step = 1.0  # step size
         dy = dy.flatten()
         r0_norm = jnp.linalg.norm(r0)
         apriori_h_res = jnp.sum(h_map_val)
-        for _ in range(self.config.backtracking_max_iter):
+
+        def cond_fun(step):
             y_new = y0 + step * dy
+            r_t = r_y_fun(y_new)
+            r_t_norm = jnp.linalg.norm(r_t)
+            search_h_res = jnp.sum(h_map_val)
+            return jnp.logical_and(r_t_norm < (1 - self.config.bc_a * step) * r0_norm,
+                                   search_h_res < apriori_h_res)
+
+        def body_fun(step):
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
             # x_new, _, _, _ = split_y(y_new)
             # x_new = self.game.rollout(self.x0, u_new)
             # y_new[:dim_x] = x_new.flatten()
-            search_h_res = jnp.sum(h_map_val)
-            r_t = r_y_fun(y_new)
-            r_t_norm = jnp.linalg.norm(r_t)
-            flag_no_step = jnp.logical_or(r_t_norm > (1 - self.config.bc_a * step) * r0_norm,
-                                          search_h_res > apriori_h_res)
-            step = jnp.where(flag_no_step, step*self.config.bc_b, 0)
+            step = step*self.config.bc_b
+            return step
+
+        # line search step size
+        step = jax.lax.while_loop(cond_fun, body_fun, 1.0)
+        y_new = y0 + step * dy
+
         x_ref, u_ref, lambda_ref, mu_ref = split_y(y_new)
 
-        return x_ref, u_ref, lambda_ref, mu_ref
+        return x_ref, u_ref, lambda_ref, mu_ref, step
 
     @partial(jit, static_argnums=0)
     def dr_dy(self, x, u, lamda, mu, h_plus_mask):
@@ -349,9 +398,50 @@ class RD3GJax(BaseSolver):
 
     @partial(jit, static_argnums=0)
     def r(self, x, u, lamda, mu, h_plus_mask):
+        """ Find residual vector for KKT conditions"""
+        # NOTE we don't do active set here since jax doesn't work with variable size array
+        h_val = self.h_map_fun(x)
+
+        def residual_i(i):
+            """ residual for agent i """
+            # residual for dLLi/dxi and dLLi/dui
+            dLLi_dxi_val = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
+            dLLi_dui_val = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
+            # residual for f(x0, u0) - x1
+            r_f0 = self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
+
+            # residual for f(x_k,u_k) - x k+1
+            def _get_fk(k):
+                fk = self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
+                return fk
+            get_fk = vmap(_get_fk, in_axes=0)
+            r_fk = jnp.hstack(get_fk(jnp.arange(1, self.T)))
+
+            # residual for h(x_i, x_j)
+            def _get_h(k):
+                mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(self.N)[i] == 0)
+                return jnp.where(mask, h_val[k-1, i], 0)
+            get_h = vmap(_get_h, in_axes=0)
+            r_h = jnp.hstack(get_h(jnp.arange(1, self.T+1)))
+
+            r = jnp.hstack([dLLi_dxi_val.flatten(),
+                            dLLi_dui_val.flatten(),
+                            r_f0,
+                            r_fk,
+                            r_h
+                            ])
+            return r
+        get_residual_all_agents = vmap(residual_i, in_axes=(0,))
+        r_all_agents = get_residual_all_agents(jnp.arange(self.N))
+
+        return jnp.hstack(r_all_agents)
+
+    @partial(jit, static_argnums=0)
+    def old_r(self, x, u, lamda, mu, h_plus_mask):
         # NOTE we don't do active set here since jax doesn't work with variable size array
         r = jnp.empty(0)
         h_val = self.h_map_fun(x)
+
         for i in range(self.N):
             dLLi_dxi_val = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
             dLLi_dui_val = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
@@ -366,6 +456,7 @@ class RD3GJax(BaseSolver):
             for k in range(1, self.T+1):
                 mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(self.N)[i] == 0)
                 r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
+
         return r
 
     @partial(jit, static_argnums=0)

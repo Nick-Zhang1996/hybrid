@@ -155,7 +155,6 @@ class RD3G(BaseSolver):
                 t.s('cpp step')
                 try:
                     try:
-                        breakpoint()
                         retval = self.cpp.step(x_ref, u_ref, lambda_ref,
                                                mu_ref)
                         x_ref, u_ref, lambda_ref, mu_ref = [

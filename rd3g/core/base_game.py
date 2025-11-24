@@ -60,7 +60,7 @@ class BaseGame(ABC):
             """
 
     def rollout(self, x0: np.ndarray, u: np.ndarray) -> np.ndarray:
-        """ Rollout control to get state trajectory (cached)
+        """ Rollout control to get state trajectory
         Args:
             x0: (N,m)
             u: (T,N,m), u0..u_T-1, will be reshaped

@@ -1,4 +1,5 @@
 ''' Test Jax '''
+import logging
 from dataclasses import replace
 from time import time
 import numpy as np
@@ -12,6 +13,8 @@ from rd3g.games.car_merge_kinematic_bicycle_jax import CarMergeKinematicBicycleJ
 
 from rd3g.solvers.rd3g_jax import RD3GJax, RD3GJaxConfig
 from rd3g.solvers.rd3g import RD3G, RD3GConfig
+
+logging.basicConfig(level=logging.INFO)
 
 
 def assert_flattened_allclose(val1, val2):
@@ -65,7 +68,19 @@ def copy_game(game):
     return CarMergeKinematicBicycle(config)
 
 
-def test_jax_autodiff():
+def test_jax_rollout():
+    game = rgame()
+    game_jax = jax_game_from_regular(game)
+    u = np.random.uniform(-1, 1,  (game_jax.T, game_jax.N, game_jax.m))
+
+    rollout = jit(game_jax.rollout)
+
+    jax_state_traj = rollout(game_jax.x0, u)
+    py_state_traj = game.rollout(game.x0, u)
+    assert_allclose(jax_state_traj, py_state_traj)
+
+
+def test_jax_py_equality():
     solver_config = RD3GConfig()
     game = rgame()
     solver = RD3G(solver_config, game)

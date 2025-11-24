@@ -16,7 +16,8 @@ import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.base_game import BaseGame, BaseGameConfig
+from rd3g.core.base_game import BaseGameConfig
+from rd3g.core.base_jax_game import BaseJaxGame
 
 logger = logging.getLogger('CarMergeKinematicBicycle')
 logger.setLevel(logging.INFO)
@@ -44,7 +45,7 @@ class CarMergeKinematicBicycleJaxConfig(BaseGameConfig):
     """ Cost matrix for control effort """
 
 
-class CarMergeKinematicBicycleJax(BaseGame):
+class CarMergeKinematicBicycleJax(BaseJaxGame):
     ''' Kinematic Bicycle Merging Game, with Jax
         u = [throttle, steering]
         x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
