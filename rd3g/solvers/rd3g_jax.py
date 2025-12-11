@@ -363,8 +363,8 @@ class RD3GJax(BaseSolver):
             r_t = r_y_fun(y_new)
             r_t_norm = jnp.linalg.norm(r_t)
             search_h_res = jnp.sum(h_map_val)
-            return jnp.logical_and(r_t_norm < (1 - self.config.bc_a * step) * r0_norm,
-                                   search_h_res < apriori_h_res)
+            return jnp.logical_or(r_t_norm > (1 - self.config.bc_a * step) * r0_norm,
+                                  search_h_res > apriori_h_res)
 
         def body_fun(step):
             # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
@@ -435,29 +435,6 @@ class RD3GJax(BaseSolver):
         r_all_agents = get_residual_all_agents(jnp.arange(self.N))
 
         return jnp.hstack(r_all_agents)
-
-    @partial(jit, static_argnums=0)
-    def old_r(self, x, u, lamda, mu, h_plus_mask):
-        # NOTE we don't do active set here since jax doesn't work with variable size array
-        r = jnp.empty(0)
-        h_val = self.h_map_fun(x)
-
-        for i in range(self.N):
-            dLLi_dxi_val = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
-            dLLi_dui_val = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
-            r = jnp.hstack([r, dLLi_dxi_val.flatten(), dLLi_dui_val.flatten()])
-            # f(x0, u0) - x1
-            f0 = self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
-            r = jnp.hstack([r, f0])
-            for k in range(1, self.T):
-                fk = self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
-                r = jnp.hstack([r, fk])
-            # h(x_i, x_j)
-            for k in range(1, self.T+1):
-                mask = jnp.logical_and(h_val[k-1, i] > 0, jnp.eye(self.N)[i] == 0)
-                r = jnp.hstack([r, jnp.where(mask, h_val[k-1, i], 0)])
-
-        return r
 
     @partial(jit, static_argnums=0)
     def dLLi_dxi(self, x, u, h_plus_mask, lamda, mu, i):

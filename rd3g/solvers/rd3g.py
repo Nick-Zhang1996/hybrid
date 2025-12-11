@@ -217,6 +217,7 @@ class RD3G(BaseSolver):
             #     logger.info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
             has_converged = pde and has_converged
         r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
+        r0 = np.linalg.norm(r0)
 
         sol = Solution(elapsed_time=t_solve,
                        u=u_ref,
