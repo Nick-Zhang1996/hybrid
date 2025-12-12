@@ -23,7 +23,21 @@ class CasadiGameConfig(BaseGameConfig):
     _double_param_sx: dict = field(init=False, repr=False)
 
     def __post_init__(self):
-        """ Put int param and double param into SX variables"""
+        """ Put int param and double param into SX variables.
+        This solves the issue of passing parameters to casadi functions.
+        casadi functions need access to constant problem-specific parameters like
+        x0, x_ref, cost matrices, collision radius, etc.
+        However we want to maintain identical signature across problems.
+        So we need to pass a config struct to all casadi functions.
+        Since casadi doesn't understand structs, we concatenate all params into a flat vector,
+        and send this big flat param vector to all casadi functions.
+        We provide member method .get_param(PARAM_NAME) to retrieve the specific param,
+        sliced and reshaped from the big param. 
+        This provides the SX object for constructing a symbolic function.
+        We provide get_XX_param_sx() to retrieve the flat param symbotic vector in SX.
+        We provide get_XX_param_np() to retrieve the flat param numerical vector in np array.
+        There are two param vectors, one for double, one for int
+        """
         int_param_list = []
         double_param_list = []
         for _field in fields(self):
