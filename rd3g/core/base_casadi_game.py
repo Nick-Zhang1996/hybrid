@@ -51,13 +51,13 @@ class CasadiGameConfig(BaseGameConfig):
                 elif val.dtype == int:
                     int_param_list.append(val.T.flatten())
                 else:
-                    logger.error(f"Unsupported numpy type {val.dtype}")
+                    logger.error(f"{_field.name} has unsupported numpy type {val.dtype}")
             elif isinstance(val, float):
                 double_param_list.append([val])
             elif isinstance(val, int):
                 int_param_list.append([val])
             else:
-                logger.error(f"Unsupported type {type(val)}")
+                logger.error(f"{_field.name} has unsupported type {type(val)}")
         int_param = np.asarray(np.hstack(int_param_list), order='F')
         double_param = np.asarray(np.hstack(double_param_list), order='F')
         object.__setattr__(self, '_int_param_np', int_param)
@@ -85,7 +85,7 @@ class CasadiGameConfig(BaseGameConfig):
                         int_offset:int_offset + val.size].reshape(val.shape)
                     int_offset += val.size
                 else:
-                    logger.error(f"Unsupported numpy type {val.dtype}")
+                    logger.error(f"{_field.name} has unsupported numpy type {val.dtype}")
             elif isinstance(val, float):
                 param_dict[_field.name] = double_param_sx[
                     double_offset:double_offset + 1]
@@ -95,10 +95,11 @@ class CasadiGameConfig(BaseGameConfig):
                     int_offset:int_offset + 1]
                 int_offset += 1
             else:
-                logger.error(f"Unsupported type {type(val)}")
+                logger.error(f"{_field.name} has unsupported type {type(val)}")
         object.__setattr__(self, '_param_dict', param_dict)
 
     def get_param(self, param_name):
+        """ Get sliced CasADi parameter from config"""
         return self._param_dict[param_name]
 
     def get_int_param_np(self):

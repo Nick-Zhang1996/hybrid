@@ -43,22 +43,6 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     J_R: Any = None
     """ Cost matrix for control effort dim: (m,m)"""
 
-    def serialize(self):
-        """ Serialize to int_param, double_param for interfacing with CasADi codegen
-        Returns:
-            int_param: flattened integer array
-            double_param: flattened double array
-        """
-        int_param = np.array([self.T, self.N, self.n, self.m])
-        double_param = np.hstack([[self.dt],  # 0
-                                  self.x0.flatten(),  # 1:N*n+1
-                                  self.target_x_ref.flatten(),  # N*n+1:N*n+1+N*n
-                                  self.J_Qr.flatten(),  # 2*N*n+1:3*N*n+1
-                                  self.J_R.flatten()])  # 3*N*n+1: 3*N*n+1 + m*m
-        assert len(int_param.shape) == 1
-        assert len(double_param.shape) == 1
-        return int_param, double_param
-
 
 class CarMergeKinematicBicycleCasadi(BaseGame):
     ''' Kinematic Bicycle Merging Game, with CasADi
@@ -84,8 +68,6 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         self.visual_y_lim = [-2, 30]
         # animation/visualization related
         self.sprite_visualization = True  # True would use car images instead of boaxes
-
-        self.int_param, self.double_param = config.serialize()
 
         if self.sprite_visualization:
             self.car_scale = 0.0045 / 2  # 0.005/2
@@ -291,43 +273,46 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         # frame.save(filename)
         return
 
-    def J(self, x_k, u_k_i, i, int_param, double_param):
+    def J(self, x_k, u_k_i, i_onehot):
         '''
         stage cost for an agent, given x,u
         x_k.shape (N,n) x_k_i
         u_k_i.shape (m) u_k_i
-        i: agent id
-        int_param: integer parameters
-        double_param: double parameters
+        i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
         '''
 
-        x_k_i = x_k[i, :]
-        dx = x_k_i - self.config.target_x_ref[i]
+        target_x_ref = self.config.get_param('target_x_ref')
+        J_Qr = self.config.get_param('J_Qr')
+        J_Q = self.config.get_param('J_Q')
+        J_R = self.config.get_param('J_R')
+        x_k_i = x_k.T @ i_onehot  # dim: n,1
+        dx = x_k_i - target_x_ref.T @ i_onehot
 
-        val = dx.T @ self.config.J_Qr @ dx + \
-            x_k_i.T @ self.config.J_Q @ x_k_i + u_k_i.T @ self.config.J_R @ u_k_i
+        val = dx.T @ J_Qr @ dx + \
+            x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
         return val
 
     def Jfi(self, x_T, i):
         return self.J(x_T, cas.SX.zeros(self.m), i)
 
-    def f(self, x, u, i: int):
+    def f(self, x_k_i, u_k_i, i: int):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
-            x: (n,) State for agent i
-            u: (m,) Control for agent i
+            x_k_i: (n,) State for agent i
+            u_k_i: (m,) Control for agent i
         Return:
             (n,) The next state, progressed by self.dt
 
         this problem has homogeneous agents, so [i] is irrelevant'''
         lf = 1.0
         lr = 1.0
-        beta = cas.atan(cas.tan(u[1]) * lr / (lf + lr))
+        beta = cas.atan(cas.tan(u_k_i[1]) * lr / (lf + lr))
         dx = cas.vertcat(
-            x[2] * cas.cos(x[3] + beta), x[2] * cas.sin(x[3] + beta), u[0],
-            x[2] / lr * cas.sin(beta)
+            x_k_i[2] * cas.cos(x_k_i[3] + beta), x_k_i[2] * cas.sin(x_k_i[3] + beta), u_k_i[0],
+            x_k_i[2] / lr * cas.sin(beta)
         )
-        val = x + dx * self.config.dt
+        dt = self.config.get_param('dt')
+        val = x_k_i + dx * dt
         return val
 
     def h(self, x_i, x_j):
@@ -338,8 +323,9 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
         """
         # car distance larger than 1.2 normalized
+        collision_radius = self.config.get_param('collision_radius')
         val = -((x_i[0] - x_j[0]) / 1.0)**2 - (
-            x_i[1] - x_j[1])**2 + self.config.collision_radius**2
+            x_i[1] - x_j[1])**2 + collision_radius**2
         return val
 
 
