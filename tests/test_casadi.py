@@ -1,8 +1,11 @@
 """ Test casadi game """
 from dataclasses import fields
+from functools import partial
 import casadi as cas
 import numpy as np
 from rd3g.games.car_merge_kinematic_bicycle_casadi import CarMergeKinematicBicycleCasadiConfig
+from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
+from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 
 def test_casadi_config():
@@ -48,3 +51,46 @@ def test_casadi_config():
                                 params_val)
         val_dm = cas.DM(val_sx[0]).full()
         np.testing.assert_allclose(val_dm, getattr(config, _field.name))
+
+
+def test_casadi_game():
+    """ Test auto-differentiation correctness for RD3G CasADi solver"""
+    game = create_random_game(car_count=3, horizon=20)
+    config = RD3GCasadiConfig()
+    solver = RD3GCasadi(config, game)
+    N = game.config.N
+    n = game.config.n
+    m = game.config.m
+    T = game.config.T
+
+    x = cas.SX.sym('x', N*n, T)
+    u = cas.SX.sym('u', N*m, T)
+    lamda = cas.SX.sym('lamda', N*n, T)
+    mu = cas.SX.sym('mu', N*N, T)
+
+    x_k = cas.SX.sym('x_k', N, n)
+    # x_k_i = cas.SX.sym('x_k_i', n)
+    x_k1_i = cas.SX.sym('x_k1_i', n)
+    u_k_i = cas.SX.sym('u_k_i', m)
+
+    lamda_k = cas.SX.sym('lamda_k', N, n)
+    mu_k = cas.SX.sym('mu_k', N, N)
+
+    config_params = [game.config.get_int_param_sx(), game.config.get_double_param_sx()]
+
+    # L, since i is a constant, use a partial function
+    args = [x_k, u_k_i, x_k1_i, lamda_k, mu_k]
+
+    def L_fixed_i(x_k, u_k_i, x_k1_i, lamda_k, mu_k):
+        return solver.L(x_k, u_k_i, x_k1_i, lamda_k, mu_k, i=1)
+
+    L_val = L_fixed_i(*args)
+    L = cas.Function('L', args+config_params, [L_val])
+
+    # LLi
+    args = [x, u, lamda, mu]
+
+    def LLi_fixed_i(x, u, lamda, mu):
+        return solver.LLi(x, u, lamda, mu, i=1)
+    LLi_val = LLi_fixed_i(*args)
+    LLi = cas.Function('LLi', args+config_params, [LLi_val])

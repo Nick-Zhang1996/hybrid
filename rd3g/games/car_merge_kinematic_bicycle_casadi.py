@@ -277,9 +277,12 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         '''
         stage cost for an agent, given x,u
         x_k.shape (N,n) x_k_i
-        u_k_i.shape (m) u_k_i
+        u_k_i.shape (m,1) u_k_i
         i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
         '''
+        assert x_k.shape == (self.config.N, self.config.n)
+        assert u_k_i.shape == (self.config.m, 1)
+        assert i_onehot.shape == (self.config.N, 1)
 
         target_x_ref = self.config.get_param('target_x_ref')
         J_Qr = self.config.get_param('J_Qr')
@@ -292,18 +295,22 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
             x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
         return val
 
-    def Jfi(self, x_T, i):
-        return self.J(x_T, cas.SX.zeros(self.m), i)
+    def Jfi(self, x_T, i_onehot):
+        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    def f(self, x_k_i, u_k_i, i: int):
+    def f(self, x_k_i, u_k_i, i_onehot):
         ''' Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
-            x_k_i: (n,) State for agent i
-            u_k_i: (m,) Control for agent i
+            x_k_i: (n,1) State for agent i
+            u_k_i: (m,1) Control for agent i
+            i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
         Return:
-            (n,) The next state, progressed by self.dt
+            (n,1) The next state, progressed by self.dt
 
         this problem has homogeneous agents, so [i] is irrelevant'''
+        assert x_k_i.shape == (self.config.n, 1)
+        assert u_k_i.shape == (self.config.m, 1)
+        assert i_onehot.shape == (self.config.N, 1)
         lf = 1.0
         lr = 1.0
         beta = cas.atan(cas.tan(u_k_i[1]) * lr / (lf + lr))
