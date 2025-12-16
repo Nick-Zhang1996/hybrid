@@ -39,7 +39,7 @@ h = Function('h', [x_k_i, x_k_j, config.get_int_param_sx(),
 
 
 # Switch working directory
-codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'casadi_codegen')
+codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'games', 'casadi_codegen')
 if not os.path.exists(codegen_dir):
     os.makedirs(codegen_dir)
 old_cwd = os.getcwd()

@@ -1,5 +1,7 @@
 """ Construct a residual function from constrained optimization"""
+import os
 from casadi import *
+from rd3g.utilities.util import BASEDIR
 
 # J(x) = x[0] + x[1]
 # g(x) = || x ||_2 = 1
@@ -28,7 +30,16 @@ solver = rootfinder('solver', 'newton', r)
 res = solver([0.1, 0.1, 0.1])
 print(res)
 
+# Switch working directory
+codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'examples')
+if not os.path.exists(codegen_dir):
+    os.makedirs(codegen_dir)
+old_cwd = os.getcwd()
+os.chdir(codegen_dir)
+
 # solving manually
-cg = CodeGenerator('gen.c', {'with_header': True})
+cg = CodeGenerator('casadi_toy_example.c', {'with_header': True})
 cg.add(r)
 cg.generate()
+
+os.chdir(old_cwd)
