@@ -73,6 +73,7 @@ class RD3GCasadi(BaseSolver):
         # logger.debug_enable()
         self.residual_vec = []
         self.validate()
+        self.construct_gradient_fun()
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -89,6 +90,10 @@ class RD3GCasadi(BaseSolver):
         assert isinstance(self.T, int) and self.T > 0
         assert isinstance(self.N, int) and self.N > 0
         return
+
+    def construct_gradient_fun(self):
+        """ Construct functions based on CasADi autodiff"""
+        pass
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
@@ -485,14 +490,14 @@ class RD3GCasadi(BaseSolver):
         mu_h_plus_vals = cas.dot(mu_k[i, :].T, cas.fmax(h_vals, 0))
 
         # barrier for h < 0
-        h_neg_barrier_vals = -1.0/self.rho * cas.log(-cas.fmin(h_vals, -1e-100))
+        h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(h_vals, -1e-100)))
 
         i_onehot = cas.SX.eye(self.N)[:, i]
         # NOTE it may be better to store lamda_k_T to take advantage of col-major storage
         dynamics_val = lamda_k[i, :] @ (self.game.f(x_k[i, :].T, u_k_i, i_onehot) - x_k1_i)
-        return self.game.J(x_k, u_k_i, i_onehot) + mu_h_plus_vals + h_neg_barrier_vals + dynamics_val
-
-    # NOTE wip revised for casadi
+        val = self.game.J(x_k, u_k_i, i_onehot) + mu_h_plus_vals + h_neg_barrier_vals + dynamics_val
+        assert val.shape == (1, 1)
+        return val
 
     def LLi(self, x, u, lamda, mu, i):
         ''' Lagrangian for agent i across all time steps
@@ -528,51 +533,68 @@ class RD3GCasadi(BaseSolver):
         LLi_val += self.game.Jfi(x_T, i_onehot)
         h_vals = cas.vertcat(*[self.game.h(x_T[i, :].T, x_T[j, :].T) for j in range(self.N)])
         mu_h_plus = cas.dot(cas.reshape(mu[:, T-1], N, N)[i, :].T, cas.fmax(h_vals, 0))
-        h_neg = -1.0/self.rho * cas.log(-cas.fmin(h_vals, -1e-100))
+        h_neg = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(h_vals, -1e-100)))
 
         LLi_val += mu_h_plus + h_neg
+        assert LLi_val.shape == (1, 1)
         return LLi_val
 
-    def r(self, x, u, lamda, mu, h_plus_mask):
+    def r(self, x, u, lamda, mu):
+        ''' Residual for the game
+        Args:
+            x: (N*n,T) Agent states
+            u: (N*m,T) Agent control
+            lamda: (N*n, T) Multiplier for dynamics constraint
+            mu: (N*N, T) Multiplier for positive h 
+        Return:
+            val: (N*(T*(n+m) + T*n + T*N) column vector of residual r
+        '''
         T = self.T
-        r = np.zeros(0)
-        for i in range(self.N):
-            dLL_dxi = self.dLLi_dxi(x, u, h_plus_mask, lamda, mu, i)
-            dLL_dui = self.dLLi_dui(x, u, h_plus_mask, lamda, mu, i)
-            # this needs to be updated
-            # if self.config.DEBUG:
-            #     dLL_du_num = jacobianNumerical(lambda uu:self.LLi(x,uu.reshape(u.shape),
-            #                               h_plus_mask,lamda,mu,i), u.flatten())
-            #     assert(np.linalg.norm(dLL_du-dLL_du_num)<1e-4)
-            #     dLL_dx_num = jacobianNumerical(lambda xx:self.LLi(xx.reshape(x.shape),
-            #                                   u,h_plus_mask,lamda,mu,i), x.flatten())
-            #     assert(np.linalg.norm(dLL_dx-dLL_dx_num)<1e-4)
-            r = np.hstack([r, dLL_dxi.flatten(), dLL_dui.flatten()])
-            # dynamics for f(x0,u0) = x1
-            r = np.hstack([
-                r, self.config.dynamics_residual_weight *
-                self.game.f(self.x0[i], u[0, i], i).flatten() - x[0, i]
-            ])
-            for k in range(1, self.T):
-                r = np.hstack([
-                    r, self.config.dynamics_residual_weight *
-                    self.game.f(x[k - 1, i], u[k, i], i).flatten() - x[k, i]
-                ])  # dual for dynamics
-            for k in range(1, self.T):
-                r = np.hstack([r] + [
-                    self.game.h(x[k - 1, i], x[k - 1, j.item()])
-                    for j in np.nonzero(h_plus_mask[k - 1, i])[0]
-                ])
-            # h(x_T_i, x_T_j)
-            r = np.hstack([r] + [
-                self.game.h(x[T - 1, i], x[T - 1, j.item()])
-                for j in np.nonzero(h_plus_mask[T - 1, i])[0]
-            ])
+        N = self.N
+        n = self.n
+        m = self.m
+        # elements are column vectors
+        r_vec = []
+        for i in range(N):
+            i_onehot = cas.SX.eye(self.N)[:, i]
+            xi_vec = []
+            ui_vec = []
+            for k in range(T):
+                xik = cas.reshape(x[:, k], N, n)[i, :]
+                xi_vec.append(xik.T)
+                uik = cas.reshape(u[:, k], N, m)[i, :]
+                ui_vec.append(uik.T)
+            xi = cas.vertcat(*xi_vec)
+            ui = cas.vertcat(*ui_vec)
+            dLLi_dxi = cas.jacobian(self.LLi(x, u, lamda, mu, i), xi).T
+            dLLi_dui = cas.jacobian(self.LLi(x, u, lamda, mu, i), ui).T
+            r_vec.append(dLLi_dxi)
+            r_vec.append(dLLi_dui)
+            assert dLLi_dxi.size2() == 1
+            assert dLLi_dui.size2() == 1
 
-        if self.config.CPP_DEBUG:
-            alt = self.cpp.r([xx for xx in x], [uu for uu in u],
-                             [ll for ll in lamda], [mmm for mmm in mu],
-                             [hh for hh in h_plus_mask])
-            if np.linalg.norm(alt.flatten() - r) > 1e-4:
-                breakpoint()
-        return r
+            # dynamics residual for f(x0,u0) = x1
+            x0 = self.game.config.get_param('x0')
+            u0 = cas.reshape(u[:, 0], N, m)
+            f0 = self.game.f(x0[i, :].T, u0[i, :].T, i_onehot) - cas.reshape(x[:, 0], N, n)[i, :].T
+            assert f0.size2() == 1
+            r_vec.append(f0)
+
+            # dynamics residual for f(xk,uk) = x_{k+1}
+            for k in range(1, self.T):
+                xk = cas.reshape(x[:, k-1], N, n)
+                xk1 = cas.reshape(x[:, k], N, n)
+                uk = cas.reshape(u[:, k], N, m)
+                fk = self.game.f(xk[i, :].T, uk[i, :].T, i_onehot) - xk1[i, :].T
+                assert fk.size2() == 1
+                r_vec.append(fk)
+
+            # collision residual for h > 0
+            for k in range(1, self.T+1):
+                xk = cas.reshape(x[:, k-1], N, n)  # x[k] -> x_{k+1} due to index alignment
+                h_vals = [self.game.h(xk[i, :].T, xk[j, :].T) for j in range(self.N)]
+                h_vals_pos = cas.fmax(cas.vertcat(*h_vals), 0)
+                assert h_vals_pos.size2() == 1
+                r_vec.append(h_vals_pos)
+
+        return cas.vertcat(*r_vec)

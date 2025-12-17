@@ -94,3 +94,14 @@ def test_casadi_game():
         return solver.LLi(x, u, lamda, mu, i=1)
     LLi_val = LLi_fixed_i(*args)
     LLi = cas.Function('LLi', args+config_params, [LLi_val])
+
+    # r
+    r_val = solver.r(*args)
+    r = cas.Function('r', args+config_params, [r_val])
+    print(r_val.shape)
+    T = solver.T
+    N = solver.N
+    n = solver.n
+    m = solver.m
+    r_dim = N*(T*(n+m) + T*n + T*N)
+    print(r_dim)
