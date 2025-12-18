@@ -93,38 +93,14 @@ class RD3GCasadi(BaseSolver):
 
     def construct_gradient_fun(self):
         """ Construct functions based on CasADi autodiff"""
-        pass
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
         raise NotImplementedError
 
-    def cpp_solve(self):
-        logger.debug('solve using cpp.solve()')
-        u_ref = self.guess
-        t0 = time()
-        retval = self.cpp.solve(u_ref)
-        x_ref, u_ref, lambda_ref, mu_ref = [
-            np.array(val) for val in retval[:-1]
-        ]
-        has_converged = retval[-1]
-        logger.debug(f'has_converged: {has_converged}')
-        t_solve = time() - t0
-        logger.info(f'Total solve time: {t_solve}s')
-
-        h_plus_mask = self.get_h_plus_mask(x_ref)
-        r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        r0_norm = np.linalg.norm(r0)
-        logger.debug(f' residual = {r0_norm}')
-        return
-
+    """
     def solve(self):
-        """main entry point for solver, will call cpp version if available,
-        will fallback to python if cpp does not provide a solution, I forgot
-        why I did the fallback."""
-        logger.info(f'USE_CPP: {self.config.USE_CPP}')
-        logger.info(f'FORCE_PYTHON_SOLVER: {self.config.FORCE_PYTHON_SOLVER}')
 
         N = self.N
         T = self.T
@@ -134,86 +110,14 @@ class RD3GCasadi(BaseSolver):
         logger.debug(
             f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}'
         )
-
-        u_ref = self.guess
-        # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
-        x_ref = self.game.rollout(self.x0, u_ref)
-        lambda_ref = np.zeros((T, N, self.n))
-        # defined for all h_k_i_j, but all values may not be used
-        mu_ref = np.zeros((T, N, N))
-        t = self.profiler
-        has_converged = False
         t0 = time()
-        for i in range(self.config.iterations):
-            logger.info(f'------ iter {i+1} ------')
-            t.s()
-            if self.config.USE_CPP and not self.config.FORCE_PYTHON_SOLVER:
-                t.s('cpp step')
-                try:
-                    try:
-                        retval = self.cpp.step(x_ref, u_ref, lambda_ref,
-                                               mu_ref)
-                        x_ref, u_ref, lambda_ref, mu_ref = [
-                            np.array(val) for val in retval
-                        ]
-                        # put update here because in case solver failed,
-                        # self.step() will call cpp.post_step_update()
-                        self.cpp.post_step_update()
-                    except RuntimeError as e:
-                        logger.warning('-----------------------------------')
-                        logger.warning(f'cpp.step() error: {e}')
-                        logger.warning('-----------------------------------')
-                        x_ref, u_ref, lambda_ref, mu_ref = self.step(
-                            x_ref, u_ref, lambda_ref, mu_ref)
-                except StopIteration as e:
-                    logger.debug(e)
-                    if 'criteria met' in str(e):
-                        has_converged = True
-                    break
-                finally:
-                    t.e('cpp step')
-            else:
-                try:
-                    x_ref, u_ref, lambda_ref, mu_ref = self.step(
-                        x_ref, u_ref, lambda_ref, mu_ref)
-                except StopIteration as e:
-                    logger.debug(e)
-                    has_converged = True
-                    break
-            # NOTE may not be necessary
-            x_ref = self.game.rollout(self.x0, u_ref)
-            t.e()
-            logger.debug(f'------ {N} agents, iter {i} ------')
+
 
         t_solve = time() - t0
         logger.info(f'Total solve time: {t_solve}s')
         if i == self.config.iterations - 1:
             logger.warning(' algorithm did not reach stopping criterion ')
         full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
-
-        # check second order conditions
-        h_plus_mask = np.zeros((self.T, self.N, self.N), dtype=bool)
-        for i in range(self.N):
-            # x: T,N,n
-            idx = []
-            for k in range(self.T):
-                idx.append(
-                    range(k * self.N * self.n + i * self.n,
-                          k * self.N * self.n + (i + 1) * self.n))
-            idx = [i for item in idx for i in item]
-
-            # dLL / dxdx, hessian
-            M = self.dLLi_dxi_dx(x_ref, u_ref, h_plus_mask, lambda_ref, mu_ref,
-                                 i)[:, idx]
-            pde = not np.all(np.linalg.eigvals(M) < 1e-3)
-            logger.debug(f'{i} eig val: {np.linalg.eigvals(M)}')
-            # check the second order condition for J at each time step
-            # for k in range(self.T):
-            #     H = self.dJfi_dxi_dxi(x_ref[k], i)
-            #     logger.info(f'{i, k} eig val: {np.linalg.eigvals(H)}')
-            has_converged = pde and has_converged
-        r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        r0 = np.linalg.norm(r0)
 
         sol = Solution(elapsed_time=t_solve,
                        u=u_ref,
@@ -407,57 +311,15 @@ class RD3GCasadi(BaseSolver):
             self.cpp.post_step_update()
 
         return split_y(y_new)
+    """
 
     def final(self):
         self.profiler.summary()
-        if self.config.USE_CPP:
-            self.cpp.summary()
         plt.plot(self.residual_vec, '*-')
         plt.yscale('log')
         plt.xlabel('Iteration')
         plt.ylabel('Residual (exp)')
         plt.show()
-
-    def dr_dy(self, x, u, lamda, mu, h_plus_mask):
-        t = self.profiler
-        if self.config.USE_CPP:
-            # t.s('drdy-stacked')
-            # drdx = self.cpp.dr_dx(x, u, lamda, mu, h_plus_mask)
-            # drdu = self.cpp.dr_du(x, u, lamda, mu, h_plus_mask)
-            # drdlamda = self.cpp.dr_dlamda(x, u, lamda, mu, h_plus_mask)
-            # drdmu = self.cpp.dr_dmu(x, u, lamda, mu, h_plus_mask)
-            # Dr = np.hstack([drdx,drdu,drdlamda,drdmu])
-            # t.e('drdy-stacked')
-            t.s('drdy-cpp')
-            Dr = self.cpp.dr_dy(x, u, lamda, mu, h_plus_mask)
-            t.e('drdy-cpp')
-        else:
-            t.s('drdx')
-            drdx = self.dr_dx(x, u, lamda, mu, h_plus_mask)
-            t.e('drdx')
-            t.s('drdu')
-            drdu = self.dr_du(x, u, lamda, mu, h_plus_mask)
-            t.e('drdu')
-            t.s('drdlamda')
-            drdlamda = self.dr_dlamda(x, u, lamda, mu, h_plus_mask)
-            t.e('drdlamda')
-            t.s('drdmu')
-            drdmu = self.dr_dmu(x, u, lamda, mu, h_plus_mask)
-            t.e('drdmu')
-            t.s('stack')
-            Dr = np.hstack([drdx, drdu, drdlamda, drdmu])
-            t.e('stack')
-        return Dr
-
-    def get_collision_residual(self, x):
-        h_res = 0
-        for k in range(1, self.T + 1):
-            for i in range(self.N):
-                for j in range(i + 1, self.N):
-                    this_h = self.game.h(x[k - 1, i], x[k - 1, j])
-                    if this_h > 0:
-                        h_res += this_h
-        return h_res
 
     # ----- derivatives and other generic math functions ----
     # NOTE revised for casadi

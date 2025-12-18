@@ -17,90 +17,90 @@ extern "C" {
 #define casadi_int long long int
 #endif
 
-int J(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
-int J_alloc_mem(void);
-int J_init_mem(int mem);
-void J_free_mem(int mem);
-int J_checkout(void);
-void J_release(int mem);
-void J_incref(void);
-void J_decref(void);
-casadi_int J_n_in(void);
-casadi_int J_n_out(void);
-casadi_real J_default_in(casadi_int i);
-const char* J_name_in(casadi_int i);
-const char* J_name_out(casadi_int i);
-const casadi_int* J_sparsity_in(casadi_int i);
-const casadi_int* J_sparsity_out(casadi_int i);
-int J_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-int J_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-#define J_SZ_ARG 5
-#define J_SZ_RES 1
-#define J_SZ_IW 0
-#define J_SZ_W 0
-int Jfi(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
-int Jfi_alloc_mem(void);
-int Jfi_init_mem(int mem);
-void Jfi_free_mem(int mem);
-int Jfi_checkout(void);
-void Jfi_release(int mem);
-void Jfi_incref(void);
-void Jfi_decref(void);
-casadi_int Jfi_n_in(void);
-casadi_int Jfi_n_out(void);
-casadi_real Jfi_default_in(casadi_int i);
-const char* Jfi_name_in(casadi_int i);
-const char* Jfi_name_out(casadi_int i);
-const casadi_int* Jfi_sparsity_in(casadi_int i);
-const casadi_int* Jfi_sparsity_out(casadi_int i);
-int Jfi_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-int Jfi_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-#define Jfi_SZ_ARG 4
-#define Jfi_SZ_RES 1
-#define Jfi_SZ_IW 0
-#define Jfi_SZ_W 0
-int f(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
-int f_alloc_mem(void);
-int f_init_mem(int mem);
-void f_free_mem(int mem);
-int f_checkout(void);
-void f_release(int mem);
-void f_incref(void);
-void f_decref(void);
-casadi_int f_n_in(void);
-casadi_int f_n_out(void);
-casadi_real f_default_in(casadi_int i);
-const char* f_name_in(casadi_int i);
-const char* f_name_out(casadi_int i);
-const casadi_int* f_sparsity_in(casadi_int i);
-const casadi_int* f_sparsity_out(casadi_int i);
-int f_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-int f_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-#define f_SZ_ARG 5
-#define f_SZ_RES 1
-#define f_SZ_IW 0
-#define f_SZ_W 0
-int h(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
-int h_alloc_mem(void);
-int h_init_mem(int mem);
-void h_free_mem(int mem);
-int h_checkout(void);
-void h_release(int mem);
-void h_incref(void);
-void h_decref(void);
-casadi_int h_n_in(void);
-casadi_int h_n_out(void);
-casadi_real h_default_in(casadi_int i);
-const char* h_name_in(casadi_int i);
-const char* h_name_out(casadi_int i);
-const casadi_int* h_sparsity_in(casadi_int i);
-const casadi_int* h_sparsity_out(casadi_int i);
-int h_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-int h_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
-#define h_SZ_ARG 4
-#define h_SZ_RES 1
-#define h_SZ_IW 0
-#define h_SZ_W 0
+int r(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int r_alloc_mem(void);
+int r_init_mem(int mem);
+void r_free_mem(int mem);
+int r_checkout(void);
+void r_release(int mem);
+void r_incref(void);
+void r_decref(void);
+casadi_int r_n_in(void);
+casadi_int r_n_out(void);
+casadi_real r_default_in(casadi_int i);
+const char* r_name_in(casadi_int i);
+const char* r_name_out(casadi_int i);
+const casadi_int* r_sparsity_in(casadi_int i);
+const casadi_int* r_sparsity_out(casadi_int i);
+int r_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int r_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define r_SZ_ARG 6
+#define r_SZ_RES 1
+#define r_SZ_IW 0
+#define r_SZ_W 0
+int dr_dy(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int dr_dy_alloc_mem(void);
+int dr_dy_init_mem(int mem);
+void dr_dy_free_mem(int mem);
+int dr_dy_checkout(void);
+void dr_dy_release(int mem);
+void dr_dy_incref(void);
+void dr_dy_decref(void);
+casadi_int dr_dy_n_in(void);
+casadi_int dr_dy_n_out(void);
+casadi_real dr_dy_default_in(casadi_int i);
+const char* dr_dy_name_in(casadi_int i);
+const char* dr_dy_name_out(casadi_int i);
+const casadi_int* dr_dy_sparsity_in(casadi_int i);
+const casadi_int* dr_dy_sparsity_out(casadi_int i);
+int dr_dy_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int dr_dy_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define dr_dy_SZ_ARG 6
+#define dr_dy_SZ_RES 1
+#define dr_dy_SZ_IW 0
+#define dr_dy_SZ_W 0
+int get_n(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int get_n_alloc_mem(void);
+int get_n_init_mem(int mem);
+void get_n_free_mem(int mem);
+int get_n_checkout(void);
+void get_n_release(int mem);
+void get_n_incref(void);
+void get_n_decref(void);
+casadi_int get_n_n_in(void);
+casadi_int get_n_n_out(void);
+casadi_real get_n_default_in(casadi_int i);
+const char* get_n_name_in(casadi_int i);
+const char* get_n_name_out(casadi_int i);
+const casadi_int* get_n_sparsity_in(casadi_int i);
+const casadi_int* get_n_sparsity_out(casadi_int i);
+int get_n_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int get_n_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define get_n_SZ_ARG 0
+#define get_n_SZ_RES 1
+#define get_n_SZ_IW 0
+#define get_n_SZ_W 0
+int get_m(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int get_m_alloc_mem(void);
+int get_m_init_mem(int mem);
+void get_m_free_mem(int mem);
+int get_m_checkout(void);
+void get_m_release(int mem);
+void get_m_incref(void);
+void get_m_decref(void);
+casadi_int get_m_n_in(void);
+casadi_int get_m_n_out(void);
+casadi_real get_m_default_in(casadi_int i);
+const char* get_m_name_in(casadi_int i);
+const char* get_m_name_out(casadi_int i);
+const casadi_int* get_m_sparsity_in(casadi_int i);
+const casadi_int* get_m_sparsity_out(casadi_int i);
+int get_m_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int get_m_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define get_m_SZ_ARG 0
+#define get_m_SZ_RES 1
+#define get_m_SZ_IW 0
+#define get_m_SZ_W 0
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

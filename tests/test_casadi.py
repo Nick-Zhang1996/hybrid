@@ -105,3 +105,8 @@ def test_casadi_game():
     m = solver.m
     r_dim = N*(T*(n+m) + T*n + T*N)
     print(r_dim)
+
+    # r derivative
+    y = cas.vertcat(*[cas.vec(val) for val in args])
+    dr_dy = cas.jacobian(r_val, y)
+    print(dr_dy.shape)
