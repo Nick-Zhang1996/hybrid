@@ -142,7 +142,7 @@ protected:
   int max_iterations;
   // dim: N*n
   Matrix x0;
-  mutable Profiler<false> profiler;
+  mutable Profiler<true> profiler;
   int current_memory_usage_kb;
   bool verbose;
 

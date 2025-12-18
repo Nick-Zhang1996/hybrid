@@ -55,13 +55,23 @@ pybind11_add_module(car_merge_kinematic_bicycle games/car_merge_kinematic_bicycl
 pybind11_add_module(car_racing games/car_racing.cpp)
 pybind11_add_module(unicycle games/unicycle.cpp)
 
+# --- CasADi compatible games ---
+add_library(car_merge_kinematic_bicycle_casadi_N3_T20 SHARED
+            games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N3_T20.c)
+
 # --- CasADi toy example ----
 add_library(toy_example SHARED examples/casadi_toy_example.c)
 add_executable(casadi_toy_example examples/casadi_toy_example_main.cpp)
 target_include_directories(casadi_toy_example PUBLIC ${CASADI_INCLUDE_DIR})
 target_link_libraries(casadi_toy_example ${CASADI_LIB})
-set_target_properties(casadi_toy_example PROPERTIES BUILD_RPATH "$ORIGIN/../lib")
+#set_target_properties(casadi_toy_example PROPERTIES BUILD_RPATH "$ORIGIN/../lib")
 
-# --- CasADi compatible RD3G ---
-add_library(car_merge_kinematic_bicycle_casadi_N3_T20 
-            games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N3_T20.c)
+# --- CasADi - Eigen example ----
+add_executable(casadi_eigen examples/casadi_eigen.cpp)
+target_include_directories(casadi_eigen PUBLIC ${CASADI_INCLUDE_DIR})
+target_link_libraries(casadi_eigen ${CASADI_LIB})
+
+# --- CasADi - RD3G ----
+pybind11_add_module(rd3g_casadi examples/rd3g_casadi.cpp)
+target_include_directories(rd3g_casadi PUBLIC ${CASADI_INCLUDE_DIR})
+

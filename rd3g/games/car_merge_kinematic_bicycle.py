@@ -13,7 +13,7 @@ from matplotlib.animation import FuncAnimation
 
 from rd3g.utilities.util import cpp_capable, BASEDIR, resolve_logname
 # pylint: disable-next=no-name-in-module
-from rd3g.src.build.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
+from rd3g.src.build.lib.car_merge_kinematic_bicycle import CarMergeKinematicBicycle as cpp_CarMergeKinematicBicycle
 from rd3g.core.base_game import BaseGameConfig
 from rd3g.core.base_residual_game import BaseResidualGame
 
