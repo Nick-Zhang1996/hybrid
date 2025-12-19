@@ -6,6 +6,7 @@ import functools
 
 import numpy as np
 from casadi import *
+from scipy.sparse import csc_matrix
 
 # root folder of repo.
 BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -198,6 +199,7 @@ def casadi_generate_code(solver):
     CasADi expects fixed dimension, so the exact game config needs to be given.
     Each tuple of (GameType, N,T) requres a different source file.
     Changing solver configuration MAY require re-compilation. (TBD)
+    TODO should part of this logic be in the solver?
     Args:
         solver: Solver instance, with solver.game set
     Returns:
@@ -248,3 +250,14 @@ def casadi_generate_code(solver):
 
     os.chdir(old_cwd)
     return r_fun, dr_dy_fun
+
+
+def dm_to_csc(dm):
+    """ Convert a CasADi DM sparse matrix to scipy csc_matris"""
+    data = dm.nonzeros()        # The numerical values
+    indices = dm.sparsity().row()  # The row indices
+    indptr = dm.sparsity().colind()  # The column pointers
+    shape = dm.size()           # (rows, cols)
+
+    csc = csc_matrix((data, indices, indptr), shape=shape)
+    return csc

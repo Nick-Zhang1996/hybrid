@@ -4,16 +4,18 @@
 # so most frequent slicing is on columns
 
 import logging
-from time import time
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.sparse  # sparse matrix operations
+import scipy.sparse.linalg
 import matplotlib.pyplot as plt
 import casadi as cas
 
+from rd3g.utilities.util import dm_to_csc
 from rd3g.utilities.time_util import TimeUtil
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
-from rd3g.core.base_game import BaseGame
+from rd3g.core.base_casadi_game import CasadiGameConfig
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.INFO)
@@ -53,7 +55,7 @@ class RD3GCasadi(BaseSolver):
 
     """
 
-    def __init__(self, config: RD3GCasadiConfig, game: BaseGame):
+    def __init__(self, config: RD3GCasadiConfig, game):
         BaseSolver.__init__(self, config, game)
 
         self.N = self.game.config.N
@@ -73,6 +75,8 @@ class RD3GCasadi(BaseSolver):
         # logger.debug_enable()
         self.residual_vec = []
         self.validate()
+
+        # CasADi objects
         self.construct_gradient_fun()
 
     def validate(self):
@@ -93,15 +97,40 @@ class RD3GCasadi(BaseSolver):
 
     def construct_gradient_fun(self):
         """ Construct functions based on CasADi autodiff"""
+        N = self.N
+        n = self.n
+        m = self.m
+        T = self.T
+        gc = self.game.config
+
+        x = cas.SX.sym('x', N*n, T)
+        u = cas.SX.sym('u', N*m, T)
+        lamda = cas.SX.sym('lamda', N*n, T)
+        mu = cas.SX.sym('mu', N*N, T)
+        x0 = cas.SX.sym('x0', N, n)
+        config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
+
+        args = [x, u, lamda, mu]
+        y = cas.vertcat(*[cas.vec(val) for val in args])
+
+        # get_n_fun = cas.Function('get_n', [], [self.n])
+        # get_m_fun = cas.Function('get_m', [], [self.m])
+
+        r = self.r(*args)
+        self.r_fun_casadi = cas.Function('r', args+config_params, [r])
+
+        dr_dy = cas.jacobian(r, y)
+        self.dr_dy_fun_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
+
+        X = self.game.rollout(x0, u)
+        self.rollout_fun_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
         raise NotImplementedError
 
-    """
     def solve(self):
-
         N = self.N
         T = self.T
         n = self.n
@@ -110,208 +139,52 @@ class RD3GCasadi(BaseSolver):
         logger.debug(
             f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}'
         )
-        t0 = time()
 
+        u_ref = np.zeros((N, m, T), order='F')
+        # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
+        # return: (T,N,n)
+        # TODO start here
 
-        t_solve = time() - t0
-        logger.info(f'Total solve time: {t_solve}s')
-        if i == self.config.iterations - 1:
-            logger.warning(' algorithm did not reach stopping criterion ')
-        full_x_ref = np.vstack([self.x0[np.newaxis, :, :], x_ref])
+        x_ref_raw = self.game.rollout(self.x0, u_ref)
 
-        sol = Solution(elapsed_time=t_solve,
-                       u=u_ref,
-                       x=full_x_ref,
-                       residual=r0,
-                       has_converged=has_converged,
-                       is_optimal=has_converged)
+        # change axis ordering to (N,n,T)
+        x_ref = x_ref_raw.transpose((1, 2, 0))
 
-        return sol
+        lambda_ref = np.zeros((N, self.n, T), order='F')
+        # defined for all h_k_i_j, but all values may not be used
+        mu_ref = np.zeros((N, N, T), order='F')
+        self.step(x_ref, u_ref, lambda_ref, mu_ref)
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
-        t = self.profiler
-        t.s('setup')
+        """ Solver step function
+        Args:
+            x_ref: N,n,T,
+            u_ref: N,m,T
+            lamda: N,n,T
+            mu: N,N,T
+        Return:
+            TBD
+        """
         N = self.N
         T = self.T
         n = self.n
         m = self.m
-        dim_x = T * N * n
-        # r0 + Dr*dr = 0
-        h_plus_mask = self.get_h_plus_mask(x_ref)
+        gc = self.game.config
+        x = cas.DM(x_ref.reshape((N*n, T)))
+        u = cas.DM(u_ref.reshape((N*m, T)))
+        lamda = cas.DM(lambda_ref.reshape((N*n, T)))
+        mu = cas.DM(mu_ref.reshape((N*N, T)))
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
 
-        r0 = self.r(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        y0 = np.hstack([
-            x_ref.flatten(),
-            u_ref.flatten(),
-            lambda_ref.flatten(),
-            mu_ref.flatten()
-        ])
-        # x,u,lamda,mu = split_y(y)
-
-        def split_y(y):
-            return (y[:T * N * n].reshape(T, N, n),
-                    y[T * N * n:T * N * n + T * N * m].reshape(T, N, m), y[
-                    T * N * n + T * N * m:T * N * n + T * N * m + N * T * n
-                    ].reshape(T, N, n), y[T * N * n + T * N * m + N * T * n:].reshape(
-                    T, N, N))
-
-        def r_y_fun(y):
-            return self.r(*split_y(y), h_plus_mask)
-
-        t.e('setup')
-        Dr = self.dr_dy(x_ref, u_ref, lambda_ref, mu_ref, h_plus_mask)
-        # after we remove the cols associated with unused mu, Dr will be square
-
-        if self.config.DEBUG:
-            t0 = time()
-            Dr_alt = jacobian_numerical(r_y_fun, y0, dim=r0.shape[0])
-            logger.debug(f't: Dr numerical {time()-t0}')
-            logger.debug(np.linalg.norm(Dr - Dr_alt))
-            assert np.linalg.norm(Dr - Dr_alt) < 1e-4
-
-        # find newton direction, dense matrix
-        # t.s('lstsq')
-        # dy, residuals, rank, s = np.linalg.lstsq(Dr,-r0)
-        # t.e('lstsq')
-        # find newton direction, Sparse lsqr
-        # t.s('sparse-lstsq')
-        # sparse_Dr = scipy.sparse.csc_matrix(Dr, dtype=float)
-        # dy, istop, itn, normr = scipy.sparse.linalg.lsqr(sparse_Dr,-r0)[:4]
-        # t.e('sparse-lstsq')
-
-        # remove zero col/rows first, then use Sparse lsqr
-        t.s('nonzero reduction')
-        nonzero_rows = np.nonzero(np.sum(np.abs(Dr), axis=1))[0]
-        nonzero_cols = np.nonzero(np.sum(np.abs(Dr), axis=0))[0]
-        reduced_Dr = Dr[nonzero_rows, :][:, nonzero_cols]
-        t.e('nonzero reduction')
-        # NOTE debug heatmap
-        # abs_matrix = np.abs(reduced_Dr)
-        # # Plotting the heatmap
-        # plt.imshow(abs_matrix, cmap='viridis', interpolation='none')
-        # # Adding a color bar
-        # plt.colorbar(label='Absolute Value')
-        # plt.title('Heatmap of Matrix Values')
-        # plt.xlabel('Column Index')
-        # plt.ylabel('Row Index')
-        # plt.show()
-
-        # use python's Sparse lsqr
-        t.s('reduced-sparse-lstsq')
-        sparse_Dr = scipy.sparse.csc_matrix(reduced_Dr, dtype=float)
-        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(
-            sparse_Dr, -r0[nonzero_rows])[:4]
-        del normr
-        t.e('reduced-sparse-lstsq')
-        logger.debug(
-            f'Solver status: {"exact solution" if istop==1 else "Least Square Solution"},'
-            f'iterations: {itn}'
-        )
-        # use cpp's sparse QR
-        # t.s('cpp SparseQR')
-        # reduced_dy_sqr = self.cpp.SparseQR(reduced_Dr, -r0[nonzero_rows])
-        # t.e('cpp SparseQR')
-
-        # use cpp's lscg (fastest)
-        # if self.config.USE_CPP:
-        #     t.s('cpp lscg')
-        #     reduced_dy = self.cpp.LeastSquaresConjugateGradient(reduced_Dr, -r0[nonzero_rows])
-        #     t.e('cpp lscg')
-
-        dy = np.zeros_like(y0)
-        dy[nonzero_cols] = reduced_dy.flatten()
-
-        # projection onto dynamics null space
-        # extract control constraint F
-        # assert that x,u are separated from the rest
-        # F @ [x,u] = Fx @ x + Fu @ u= -r_F
-        # NOTE this is extremely expensive, only do this if we can't obtain an exact solution
-        if istop == 2:
-            index = 0
-            for i in range(self.N):
-                index += T * n + T * m
-                # x: T*N*n
-                x_indices = list(
-                    chain.from_iterable([
-                        list(range(t * N * n + i * n, t * N * n + (i + 1) * n))
-                        for t in range(T)
-                    ]))
-                # u: T*N*m
-                u_indices = list(
-                    chain.from_iterable([
-                        list(
-                            range(dim_x + t * N * m + i * m,
-                                  dim_x + t * N * m + (i + 1) * m))
-                        for t in range(T)
-                    ]))
-
-                Fx = Dr[index:index + n * T, x_indices]
-                Fu = Dr[index:index + n * T, u_indices]
-                dx_i = dy[x_indices].flatten()
-                du_i = dy[u_indices].flatten()
-                F = np.hstack([Fx, Fu])
-                z = np.hstack([dx_i, du_i])[:, np.newaxis]
-                FFT_inv = np.linalg.inv(
-                    F @ F.T
-                )  # TODO add regularization if this in singular, or use pseudoinverse
-                z_null = (np.eye(z.shape[0]) - F.T @ FFT_inv @ F) @ z
-                dx_i_after = z_null[:dx_i.shape[0], 0]
-                du_i_after = z_null[dx_i.shape[0]:, 0]
-
-                # apriori = Fu @ du_i + Fx @ dx_i
-                # posterior = Fu @ du_i_after + Fx @ dx_i_after
-                dy[u_indices] = du_i_after
-                dy[x_indices] = dx_i_after
-                index += n * T + np.sum(h_plus_mask[:, i])
-
-        # Backtracking line search
-        t.s('line search')
-        apriori_h_res = self.get_collision_residual(x_ref)  # NOTE optimize?
-        # backtracking line search
-        step = 1.0  # step size
-        dy = dy.flatten()
-        r0_norm = np.linalg.norm(r0)
-        flag_no_step = True
-        for i in range(self.config.backtracking_max_iter):
-            y_new = y0 + step * dy
-            x_new, _, _, _ = split_y(y_new)
-            # NOTE do we still need to rollout here? maybe for nonlinear dynamics?
-            # x_new = self.rollout(self.x0, u_new)
-            # y_new[:dim_x] = x_new.flatten()
-            search_h_res = self.get_collision_residual(x_new)
-            r_t = r_y_fun(y_new)
-            r_t_norm = np.linalg.norm(r_t)
-            if (r_t_norm > (1 - self.config.bc_a * step) * r0_norm
-                    or search_h_res > apriori_h_res):
-                step *= self.config.bc_b
-            else:
-                flag_no_step = False
-                break
-        t.e('line search')
-
-        self.residual_vec.append(r0_norm)
-        self.violations = violations = np.sum(h_plus_mask) / 2
-        expected_posterior_norm = np.linalg.norm(r0 + Dr @ dy)
-        logger.info(
-            f'r0_norm {r0_norm} expected full step {expected_posterior_norm}'
-            f'rt_norm {r_t_norm}, h>0 {violations}'
-        )
-
-        # stopping criterion
-        if np.abs(r_t_norm) < self.config.tolerance and violations == 0:
-            raise StopIteration('stopping criterion met!')
-        if flag_no_step:
-            raise StopIteration('iteration not making progress')
-
-        self.rho *= self.config.rho_b
-
-        if self.config.USE_CPP:
-            # normally we won't reach here because we'd use  the cpp.step(),
-            # but if we are only using the "subfunctions", then this will be called
-            self.cpp.post_step_update()
-
-        return split_y(y_new)
-    """
+        r0_val = self.r_fun_casadi(x, u, lamda, mu, int_param_dm, double_param_dm)
+        dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, int_param_dm, double_param_dm)
+        r0_csc = dm_to_csc(r0_val)
+        dr_dy_csc = dm_to_csc(dr_dy_val)
+        # r0 + dr_dy @ dy = 0
+        # solve for dy directly
+        dy, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_csc)[:4]
+        breakpoint()
 
     def final(self):
         self.profiler.summary()
@@ -331,7 +204,7 @@ class RD3GCasadi(BaseSolver):
             u_k_i: (m,1) control vector for agent i at step k
             x_k1_i: (n,1) state vector for agent i at step k+1
             lamda_k: (N,n) Multiplier for dynamics constraint
-            mu_k: (N,N), symmetric,  multiplier for positive h 
+            mu_k: (N,N), symmetric,  multiplier for positive h
             i: agent index i
         Return:
             val: scalar value of lagrangian
@@ -367,7 +240,7 @@ class RD3GCasadi(BaseSolver):
             x: (N*n,T) Agent states
             u: (N*m,T) Agent control
             lamda: (N*n, T) Multiplier for dynamics constraint
-            mu: (N*N, T) Multiplier for positive h 
+            mu: (N*N, T) Multiplier for positive h
             i: agent index
         Return:
             val: scalar value of Lagrangian
@@ -407,7 +280,7 @@ class RD3GCasadi(BaseSolver):
             x: (N*n,T) Agent states
             u: (N*m,T) Agent control
             lamda: (N*n, T) Multiplier for dynamics constraint
-            mu: (N*N, T) Multiplier for positive h 
+            mu: (N*N, T) Multiplier for positive h
         Return:
             val: (N*(T*(n+m) + T*n + T*N) column vector of residual r
         '''

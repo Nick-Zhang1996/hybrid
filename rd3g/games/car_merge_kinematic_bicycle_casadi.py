@@ -273,6 +273,45 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         # frame.save(filename)
         return
 
+    def F(self, x_k, u_k):
+        """ Dynamics for all agents
+        Args:
+            x_k: (N,n)
+            u_k: (N,m)
+        Return:
+            x_k_next: (N,n)
+        """
+        x_k_next_vec = []
+        for i in range(self.N):
+            i_onehot = cas.SX.eye(self.N)[:, i]
+            x_k_next_vec.append(self.f(x_k[i, :].T, u_k[i, :].T, i_onehot))
+        retval = cas.horzcat(*x_k_next_vec).T
+        assert retval.shape == (self.N, self.n)
+        return retval
+
+    def rollout(self, x0, u):
+        """ Rollout control to get state trajectory, casadi compatible
+        Args:
+            x0: (N,n)
+            u: (N*m, T), u0..u_T-1
+        Return:
+            X: (N*n, T) x1..xT
+        """
+        assert u.shape == (self.N*self.m, self.T)
+        assert x0.shape == (self.N, self.n)
+
+        x_k = cas.SX.sym('x_k_', (self.N*self.n))
+        u_k = cas.SX.sym('u_k_', (self.N*self.m))
+        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.N, self.n),
+                                  cas.reshape(u_k, self.N, self.m)))
+        config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
+        config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
+        accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
+        rollout_fun = accum_fun.mapaccum(self.T)
+
+        X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
+        return X
+
     def J(self, x_k, u_k_i, i_onehot):
         '''
         stage cost for an agent, given x,u
