@@ -18,6 +18,7 @@ void bind_sparse_struct(py::module &m) {
 
 
 PYBIND11_MODULE(rd3g_casadi, m) {
+  bind_sparse_struct(m);
   m.doc() = "RD3G CasADi solver";
   py::class_<ClassName>(m, "Rd3gCasadi")
     .def(py::init<int, int, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar,

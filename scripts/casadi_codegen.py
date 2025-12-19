@@ -1,7 +1,9 @@
 """ Generate c code for CasADi symbolic game functions """
 import os
+from time import time
 
 from casadi import *
+from scipy.sparse import csc_matrix
 
 from rd3g.utilities.util import BASEDIR
 from rd3g.games.car_merge_kinematic_bicycle_casadi import CarMergeKinematicBicycleCasadi
@@ -55,6 +57,7 @@ def casadi_generate_code(solver):
     cg.generate()
 
     os.chdir(old_cwd)
+    return r_fun, dr_dy_fun
 
 
 if __name__ == "__main__":
@@ -64,8 +67,11 @@ if __name__ == "__main__":
     game = create_random_game(car_count=3, horizon=20)
     solver_config = RD3GCasadiConfig()
     solver = RD3GCasadi(solver_config, game)
-    casadi_generate_code(solver)
+    r_fun, dr_dy_fun = casadi_generate_code(solver)
 
+    # Load compiled solver, compare results
+    # Example for sending matrices to/from casadi
+    # TODO move this to toy_example
     module_name = game.__module__.rsplit('.', maxsplit=1)[-1]
 
     cpp_solver = rd3g_casadi.Rd3gCasadi(
@@ -94,6 +100,27 @@ if __name__ == "__main__":
     u = np.zeros((N*m, T))
     lamda = np.zeros((N*n, T))
     mu = np.zeros((N*N, T))
+    t0 = time()
     res = cpp_solver.casadi_dr_dy(x, u, lamda, mu,
                                   game.config.get_int_param_np(),
                                   game.config.get_double_param_np())
+
+    matrix_sp = csc_matrix(
+        (res.data, res.row, res.colind),
+        shape=res.shape
+    )
+    cpp_retval = matrix_sp.toarray()
+    dt = time() - t0
+    print(f'cpp dr_dy = {dt=}')  # 1000x -> 0.05, lots of overhead
+
+    x_dm = DM(x)
+    u_dm = DM(u)
+    lamda_dm = DM(lamda)
+    mu_dm = DM(mu)
+    int_param_dm = DM(game.config.get_int_param_np())
+    double_param_dm = DM(game.config.get_double_param_np())
+    t0 = time()
+    py_retval = dr_dy_fun(x, u, lamda, mu, int_param_dm, double_param_dm)
+    dt = time() - t0
+    print(f'py dr_dy = {dt=}')  # 1000x -> 0.19s
+    assert np.linalg.norm(py_retval - cpp_retval) < 1e-8

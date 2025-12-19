@@ -83,7 +83,7 @@ FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec)
   {
     size_t sz_arg_, sz_res_, sz_iw_, sz_w_;
     fun.sz_work(sz_arg_, sz_res_, sz_iw_, sz_w_);
-    std::cout << sz_arg_ << " " << sz_res_ << " " << sz_iw_ << " " << sz_w_ << std::endl;
+    //std::cout << sz_arg_ << " " << sz_res_ << " " << sz_iw_ << " " << sz_w_ << std::endl;
     sz_arg = sz_arg > sz_arg_ ? sz_arg : sz_arg_;
     sz_res = sz_res > sz_res_ ? sz_res : sz_res_;
     sz_iw = sz_iw > sz_iw_ ? sz_iw : sz_iw_;
@@ -197,5 +197,21 @@ public:
     res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
     res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
     return res;
+  }
+
+  void step(py::array_t<double> x,
+                      py::array_t<double> u,
+                      py::array_t<double> lamda,
+                      py::array_t<double> mu,
+                      py::array_t<double> int_param,
+                      py::array_t<double> double_param)
+  {
+    ;
+    // Solve r0 + H @ dy = 0
+    // identify inactive constraints
+    // skim down H, dy, remove inactive constraints, dual variables
+    // Solve for [dy]
+
+
   }
 };
