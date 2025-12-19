@@ -1,64 +1,20 @@
-""" Generate c code for CasADi symbolic game functions """
-import os
+""" Toy example to 
+1. Generate c code for CasADi symbolic game
+2. Load compiled game/solver dll (.so)
+3. Call compiled residual function with numpy array
+4. Reconstruct csc matrix from returned value from compiled residual fun
+"""
 from time import time
 
-from casadi import *
+from casadi import DM
+import numpy as np
 from scipy.sparse import csc_matrix
 
-from rd3g.utilities.util import BASEDIR
-from rd3g.games.car_merge_kinematic_bicycle_casadi import CarMergeKinematicBicycleCasadi
+from rd3g.utilities.util import BASEDIR, casadi_generate_code
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 from rd3g.src.build.lib import rd3g_casadi
-
-
-def casadi_generate_code(solver):
-    game = solver.game
-    config = game.config
-    N = game.config.N
-    n = game.config.n
-    m = game.config.m
-    T = game.config.T
-
-    x = SX.sym('x', N*n, T)
-    u = SX.sym('u', N*m, T)
-    lamda = SX.sym('lamda', N*n, T)
-    mu = SX.sym('mu', N*N, T)
-    config_params = [game.config.get_int_param_sx(), game.config.get_double_param_sx()]
-
-    args = [x, u, lamda, mu]
-    y = vertcat(*[vec(val) for val in args])
-
-    get_n_fun = Function('get_n', [], [config.n])
-    get_m_fun = Function('get_m', [], [config.m])
-
-    r = solver.r(*args)
-    r_fun = Function('r', args+config_params, [r])
-
-    dr_dy = jacobian(r, y)
-    dr_dy_fun = Function('dr_dy', args+config_params, [dr_dy])
-
-    # Switch working directory
-    codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'games', 'casadi_codegen')
-    if not os.path.exists(codegen_dir):
-        os.makedirs(codegen_dir)
-    old_cwd = os.getcwd()
-    os.chdir(codegen_dir)
-
-    # Generate source code
-    module_name = game.__module__.split('.')[-1]
-    cg = CodeGenerator(f'{module_name}_N{config.N}_T{config.T}.c',
-                       {'with_header': True})
-    cg.add(r_fun)
-    cg.add(dr_dy_fun)
-    cg.add(get_n_fun)
-    cg.add(get_m_fun)
-    cg.generate()
-
-    os.chdir(old_cwd)
-    return r_fun, dr_dy_fun
-
 
 if __name__ == "__main__":
     # CasADi expects fixed dimension, so the exact game config needs to be given apriori
@@ -69,9 +25,10 @@ if __name__ == "__main__":
     solver = RD3GCasadi(solver_config, game)
     r_fun, dr_dy_fun = casadi_generate_code(solver)
 
+    # The generated source code need to be compiled before the following code can be run
+
     # Load compiled solver, compare results
     # Example for sending matrices to/from casadi
-    # TODO move this to toy_example
     module_name = game.__module__.rsplit('.', maxsplit=1)[-1]
 
     cpp_solver = rd3g_casadi.Rd3gCasadi(
@@ -90,7 +47,6 @@ if __name__ == "__main__":
         module_name
     )
 
-    # Call compiled casadi RD3G solver
     N = game.config.N
     n = game.config.n
     m = game.config.m
@@ -101,10 +57,12 @@ if __name__ == "__main__":
     lamda = np.zeros((N*n, T))
     mu = np.zeros((N*N, T))
     t0 = time()
+    # Call compiled casadi function, with numpy arrays
     res = cpp_solver.casadi_dr_dy(x, u, lamda, mu,
                                   game.config.get_int_param_np(),
                                   game.config.get_double_param_np())
 
+    # Construct sparse and dense matrix from returned value
     matrix_sp = csc_matrix(
         (res.data, res.row, res.colind),
         shape=res.shape
@@ -113,6 +71,7 @@ if __name__ == "__main__":
     dt = time() - t0
     print(f'cpp dr_dy = {dt=}')  # 1000x -> 0.05, lots of overhead
 
+    # Replicate call in Python CasADi
     x_dm = DM(x)
     u_dm = DM(u)
     lamda_dm = DM(lamda)
@@ -123,4 +82,5 @@ if __name__ == "__main__":
     py_retval = dr_dy_fun(x, u, lamda, mu, int_param_dm, double_param_dm)
     dt = time() - t0
     print(f'py dr_dy = {dt=}')  # 1000x -> 0.19s
+    # Check results
     assert np.linalg.norm(py_retval - cpp_retval) < 1e-8

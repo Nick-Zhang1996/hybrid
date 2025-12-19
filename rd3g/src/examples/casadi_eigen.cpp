@@ -1,4 +1,4 @@
-// Test to use use eigen and casadi together
+// Example to use eigen and casadi together
 #include <iostream>
 #include <unistd.h>
 #include <limits.h>

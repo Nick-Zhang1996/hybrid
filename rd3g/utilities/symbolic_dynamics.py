@@ -1,3 +1,4 @@
+""" Symbolic dynamics based on sympy. We have moved to casadi"""
 from sympy import symbols, sin, cos, diff
 import numpy as np
 

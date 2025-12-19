@@ -59,13 +59,6 @@ pybind11_add_module(unicycle games/unicycle.cpp)
 add_library(car_merge_kinematic_bicycle_casadi_N3_T20 SHARED
             games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N3_T20.c)
 
-# --- CasADi toy example ----
-add_library(toy_example SHARED examples/casadi_toy_example.c)
-add_executable(casadi_toy_example examples/casadi_toy_example_main.cpp)
-target_include_directories(casadi_toy_example PUBLIC ${CASADI_INCLUDE_DIR})
-target_link_libraries(casadi_toy_example ${CASADI_LIB})
-#set_target_properties(casadi_toy_example PROPERTIES BUILD_RPATH "$ORIGIN/../lib")
-
 # --- CasADi - Eigen example ----
 add_executable(casadi_eigen examples/casadi_eigen.cpp)
 target_include_directories(casadi_eigen PUBLIC ${CASADI_INCLUDE_DIR})
