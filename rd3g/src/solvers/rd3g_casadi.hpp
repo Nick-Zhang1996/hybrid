@@ -113,33 +113,37 @@ protected:
   // CasADi related
   FuncWorkBuffer wb_;
 
-  cas::Function dr_dy;
-  cas::Function r;
+  cas::Function dr_dy_;
+  cas::Function r_;
 
 public:
   Rd3gCasadi(const int N, const int T, const Scalar dt, const Scalar rho,
                const Scalar rho_b, const Scalar bc_a, const Scalar bc_b,
                const Scalar tolerance, const int backtracking_max_iter,
                const int max_iter, const bool verbose,
-               const char *casadi_module_name)
+               const std::string base_dir,
+               const std::string casadi_module_name)
       : N_{N}, T_{T}, dt_{dt}, rho_{rho}, rho_b_{rho_b}, bc_a_{bc_a},
         bc_b_{bc_b}, tolerance_{tolerance},
         backtracking_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
         max_iterations_{max_iter}, verbose_(verbose)
   {
     // Load CasADi dll for given game, each (N,T) pair corresponds to a unique dll.
-    fs::path exe_dir = get_executable_dir();
+    //fs::path exe_dir = get_executable_dir();
     std::stringstream ss;
     ss << "lib" << casadi_module_name << "_N" << N << "_T" << T << ".so";
-    // TODO more informative error msg
     // Load Functions
-    fs::path lib_path = exe_dir / ".." / "lib" / ss.str();
-    cas::Function r = cas::external("r", lib_path.string());
-    cas::Function dr_dy = cas::external("dr_dy", lib_path.string());
+    fs::path lib_path = fs::path(base_dir) / "rd3g" / "src" / "build" / "lib" / ss.str();
+    r_ = cas::external("r", lib_path.string());
+    dr_dy_ = cas::external("dr_dy", lib_path.string());
     cas::Function get_n = cas::external("get_n", lib_path.string());
     cas::Function get_m = cas::external("get_m", lib_path.string());
+    // TODO check other functions
+    if (dr_dy_.is_null()) {
+      throw std::runtime_error("Failed to load dr_dy from " + lib_path.string());
+    }
 
-    wb_ = get_max_buffer({r, dr_dy});
+    wb_ = get_max_buffer({r_, dr_dy_});
 
     // Solver call should have the following args:
     // game (module name), N, T -> this determines dll.
@@ -147,6 +151,7 @@ public:
     // NOTE n,m may need to be template variables for performance
     n_ = get_n(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     m_ = get_m(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    std::cout << "Rd3gCasadi Initialized" << std::endl;
   }
 
   void set_x0(const Matrix &val) { x0_ = Matrix(val); }
@@ -162,22 +167,29 @@ public:
     //py::buffer_info x_buf = x.request();
     //double* x_ptr = static_cast<double*>(x_buf.ptr);
     // Set input args
-    wb_.args[0] = static_cast<double*>(x.request().ptr);
-    wb_.args[1] = static_cast<double*>(u.request().ptr);
-    wb_.args[2] = static_cast<double*>(lamda.request().ptr);
-    wb_.args[3] = static_cast<double*>(mu.request().ptr);
-    wb_.args[4] = static_cast<double*>(int_param.request().ptr);
-    wb_.args[5] = static_cast<double*>(double_param.request().ptr);
-    assert (dr_dy.n_in() == 6);
+    auto x_val = x.request();
+    auto u_val = u.request();
+    auto lamda_val = lamda.request();
+    auto mu_val = mu.request();
+    auto int_param_val = int_param.request();
+    auto double_param_val = double_param.request();
 
-    const casadi::Sparsity& res_sp = dr_dy.sparsity_out(0);
+    wb_.args[0] = static_cast<double*>(x_val.ptr);
+    wb_.args[1] = static_cast<double*>(u_val.ptr);
+    wb_.args[2] = static_cast<double*>(lamda_val.ptr);
+    wb_.args[3] = static_cast<double*>(mu_val.ptr);
+    wb_.args[4] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[5] = static_cast<double*>(double_param_val.ptr);
+    assert (dr_dy_.n_in() == 6);
+
+    const casadi::Sparsity& res_sp = dr_dy_.sparsity_out(0);
     // Prepare output buffer
     std::vector<double> res_buffer(res_sp.nnz());
     wb_.res[0] = res_buffer.data();
-    assert (dr_dy.n_out() == 1);
+    assert (dr_dy_.n_out() == 1);
 
     // Call work function
-    dr_dy(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    dr_dy_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
 
     SparseMatrixResult res;
     res.shape = res_sp.size();

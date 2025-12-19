@@ -72,6 +72,6 @@ target_include_directories(casadi_eigen PUBLIC ${CASADI_INCLUDE_DIR})
 target_link_libraries(casadi_eigen ${CASADI_LIB})
 
 # --- CasADi - RD3G ----
-pybind11_add_module(rd3g_casadi examples/rd3g_casadi.cpp)
+pybind11_add_module(rd3g_casadi solvers/rd3g_casadi.cpp)
 target_include_directories(rd3g_casadi PUBLIC ${CASADI_INCLUDE_DIR})
-
+target_link_libraries(rd3g_casadi PRIVATE ${CASADI_LIB})

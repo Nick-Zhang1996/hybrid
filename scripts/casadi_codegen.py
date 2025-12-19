@@ -66,6 +66,34 @@ if __name__ == "__main__":
     solver = RD3GCasadi(solver_config, game)
     casadi_generate_code(solver)
 
-    cpp_solver = rd3g_casadi.ResidualGame
+    module_name = game.__module__.rsplit('.', maxsplit=1)[-1]
+
+    cpp_solver = rd3g_casadi.Rd3gCasadi(
+        game.config.N,
+        game.config.T,
+        game.config.dt,
+        solver_config.rho_0,
+        solver_config.rho_b,
+        solver_config.bc_a,
+        solver_config.bc_b,
+        solver_config.tolerance,
+        solver_config.backtracking_max_iter,
+        solver_config.iterations,
+        True,
+        BASEDIR,
+        module_name
+    )
 
     # Call compiled casadi RD3G solver
+    N = game.config.N
+    n = game.config.n
+    m = game.config.m
+    T = game.config.T
+
+    x = np.zeros((N*n, T))
+    u = np.zeros((N*m, T))
+    lamda = np.zeros((N*n, T))
+    mu = np.zeros((N*N, T))
+    res = cpp_solver.casadi_dr_dy(x, u, lamda, mu,
+                                  game.config.get_int_param_np(),
+                                  game.config.get_double_param_np())
