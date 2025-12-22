@@ -6,6 +6,7 @@
 import logging
 from dataclasses import dataclass
 from itertools import accumulate
+from time import time
 
 import numpy as np
 import scipy.sparse  # sparse matrix operations
@@ -19,7 +20,7 @@ from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
 from rd3g.core.base_casadi_game import CasadiGameConfig
 
 logger = logging.getLogger('RD3G_CasADi')
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 # NOTE: changing config requires re-run codegen, since configs are constants
@@ -29,7 +30,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     tolerance: float = 5e-4
     iterations: int = 30
     # backtracking line search param
-    bc_a: float = 0.1  # alpha
+    bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
     backtracking_max_iter: int = 20
     # NOTE this is not implemented in cpp
@@ -126,8 +127,13 @@ class RD3GCasadi(BaseSolver):
         X = self.game.rollout(x0, u)
         self.rollout_fun_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
-        h_val = self.get_h_val(x)
-        self.h_val_casadi = cas.Function('H', [x]+config_params, [h_val])
+        H_val = self.get_h_val(x)
+        self.H_val_casadi = cas.Function('H', [x]+config_params, [H_val])
+
+        xki = cas.SX.sym('xki', n, 1)
+        xkj = cas.SX.sym('xkj', n, 1)
+        h_val = self.game.h(xki, xkj)
+        self.h_val_casadi = cas.Function('h', [xki, xkj]+config_params, [h_val])
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
@@ -153,66 +159,75 @@ class RD3GCasadi(BaseSolver):
         x_ref = self.rollout_fun_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(N,n,T, order='F') -> (N, n, T)
-
-        lambda_ref = np.zeros((N*n, T), order='F')
-
+        lambda_ref = cas.DM.zeros((N*n, T))
         # defined for all h_k_i_j, but all values may not be used
-        mu_ref = np.zeros((N*N, T), order='F')
-        self.step(x_ref, u_ref, lambda_ref, mu_ref)
+        mu_ref = cas.DM.zeros((N*N, T))
+
+        for _ in range(self.config.iterations):
+            x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref, u_ref, lambda_ref, mu_ref)
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
         """ Solver step function
         Args:
-            x_ref: N*n,T,
+            x_ref: N*n,T, casadi.DM
             u_ref: N*m,T
             lamda: N*n,T
             mu: N*N,T
         Return:
-            TBD
+            x_ref, u_ref, lamda, mu, updated
         """
         N = self.N
         T = self.T
         n = self.n
         m = self.m
         gc = self.game.config
-        x = cas.DM(x_ref.reshape((N*n, T)))
-        u = cas.DM(u_ref.reshape((N*m, T)))
-        lamda = cas.DM(lambda_ref.reshape((N*n, T)))
-        mu = cas.DM(mu_ref.reshape((N*N, T)))
+        x = x_ref
+        u = u_ref
+        lamda = lambda_ref
+        mu = mu_ref
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
+        params_dm = [int_param_dm, double_param_dm]
 
-        r0_val = self.r_fun_casadi(x, u, lamda, mu, int_param_dm, double_param_dm)
-        dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, int_param_dm, double_param_dm)
+        r0_val = self.r_fun_casadi(x, u, lamda, mu, *params_dm)
+        dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, *params_dm)
         r0_np = np.array(r0_val)
+        r0_norm = np.linalg.norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
 
         # Naive method: solve sparse system directly
         # r0 + dr_dy @ dy = 0
         # solve for dy directly
+        t0 = time()
         dy_np, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_np)[:4]
+        dt = time() - t0
+        logger.info(f'Solving full system {dt}s')
         # Check, does dy improve residual? do a line search --- Yes!
         dy = cas.DM(dy_np)
         # size of x, u, lamda, mu
         sizes = [0, N*n*T, N*m*T, N*n*T, N*N*T]
         offsets = list(accumulate(sizes))
         dx, du, dlamda, dmu = cas.vertsplit(dy, offsets)
-        step_size = 1e-5
+        step_size = 1.0
         step_size_vec = []
         stepped_r_vec = []
-        while step_size < 1:
+        for i in range(self.config.backtracking_max_iter):
             r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, N*n, T),
                                       u+step_size*cas.reshape(du, N*m, T),
                                       lamda+step_size*cas.reshape(dlamda, N*n, T),
                                       mu+step_size*cas.reshape(dmu, N*N, T),
                                       int_param_dm, double_param_dm
                                       )
+            r_norm = np.linalg.norm(r_val)
             step_size_vec.append(step_size)
-            stepped_r_vec.append(np.linalg.norm(r_val))
-            step_size *= 2
-            if step_size > 1:
-                step_size = 1
+            stepped_r_vec.append(r_norm)
+            if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
+                step_size *= self.config.bc_b
+            else:
+                break
         plt.plot(step_size_vec, stepped_r_vec, '*-')
+        plt.plot(0, r0_norm, 'o')
+        plt.title('Full descent')
         plt.show()
 
         # Remove inactive constraints and their multiplier
@@ -221,10 +236,103 @@ class RD3GCasadi(BaseSolver):
         # If h(i,j,k) < 0, then r[i*n_ri + 2nT + k*N + j] = 0 and can be removed
         # Also, the corresponding multiplier mu dim(NN,T) row [N*i+j, k] can be removed
         # NOTE that the same applies for flipped i,j
+        # TODO handle symmetry and keep sparseness
+        n_ri = 2*n*T + m*T + N*T
+        mu_in_y_offset = N*n*T + N*m*T + N*n*T
 
-        # Remove zero rows & columns
+        H_val = np.array(self.H_val_casadi(x, *params_dm), order='F').reshape((N, N, T), order='F')
+        neg_h_mask = np.array(H_val < 0).nonzero()
+        inactive_r_rows = []
+        inactive_y_rows = []
+        for i, j, k in zip(*neg_h_mask):
+            inactive_r_rows.append(i*n_ri + 2*n*T + m*T + k*N + j)
+            inactive_y_rows.append(mu_in_y_offset + k*N*N + N*i+j)
+            """
+            # Check h_val is indeed negative
+            print(f'adding {i,j,k}, -> {inactive_r_rows[-1]}')
+            xk = np.array(x_ref[:, k], order='F').reshape((N, n), order='F')
+            h_val = self.h_val_casadi(cas.DM(xk[i, :]), cas.DM(xk[j, :]), *params_dm)
+            if (h_val > 0):
+                print(i, j, k)
+                breakpoint()
+            assert h_val < 0
+            """
 
-        # TODO reduce size by removing empty rows and columns
+        # set all self-collision to be inactive
+        for k in range(T):
+            for i in range(N):
+                j = i
+                inactive_r_rows.append(i*n_ri + 2*n*T + m*T + k*N + j)
+                inactive_y_rows.append(mu_in_y_offset + k*N*N + N*i+j)
+                """
+                # Verify that h(xi,xi) > 0, because an agent always collide with itself
+                print(f'adding {i,j,k}, -> {inactive_r_rows[-1]}')
+                xk = np.array(x_ref[:, k], order='F').reshape(N, n)
+                h_val = self.h_val_casadi(cas.DM(xk[i, :]), cas.DM(xk[j, :]), *params_dm)
+                assert h_val >= 0
+                """
+        # Remove zero rows & columns in the linear system
+        all_r_indices = np.arange(dr_dy_csc.shape[0])
+        all_y_indices = np.arange(dr_dy_csc.shape[1])
+        # Get the "complement" (the indices you want to keep)
+        active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
+        active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
+
+        # Check that the rows/cols removed are indeed useless
+        """
+        for row_idx in inactive_r_rows:
+            if np.sum(np.abs(np.array(dr_dy_csc[row_idx, :]))) > 1e-5:
+                print(row_idx)
+                breakpoint()
+        """
+        # TODO set the relevant mu to 0
+
+        reduced_r0 = r0_np[active_r_rows, :]
+        reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
+
+        # Reduced method: solve sparse system directly
+        # r0 + dr_dy @ dy = 0
+        # Solve for reduced_dy
+        t0 = time()
+        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(reduced_dr_dy_csc, -reduced_r0)[:4]
+        dt = time() - t0
+        logger.info(f'Solving reduced system {dt}s')
+        # Verify residual reduction with a line search
+        # Recover full dy
+        dy = np.zeros(dr_dy_csc.shape[1])
+        dy[active_y_rows] = reduced_dy
+
+        dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
+        step_size = 1.0
+        step_size_vec = []
+        stepped_r_vec = []
+        for i in range(self.config.backtracking_max_iter):
+            r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, N*n, T),
+                                      u+step_size*cas.reshape(du, N*m, T),
+                                      lamda+step_size*cas.reshape(dlamda, N*n, T),
+                                      mu+step_size*cas.reshape(dmu, N*N, T),
+                                      int_param_dm, double_param_dm
+                                      )
+            r_norm = np.linalg.norm(r_val)
+            step_size_vec.append(step_size)
+            stepped_r_vec.append(r_norm)
+            if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
+                step_size *= self.config.bc_b
+            else:
+                break
+        plt.plot(step_size_vec, stepped_r_vec, '*-')
+        plt.plot(0, r0_norm, 'o')
+        plt.title('Reduced descent')
+        plt.show()
+        # TODO try just keep the lowest r value, no need to reducing step
+
+        new_x = x+step_size*cas.reshape(dx, N*n, T)
+        new_u = u+step_size*cas.reshape(du, N*m, T)
+        new_lamda = lamda+step_size*cas.reshape(dlamda, N*n, T)
+        new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
+        logger.info(f'{r0_norm=}, {step_size=}, {r_norm=}')
+
+        return new_x, new_u, new_lamda, new_mu
 
     def final(self):
         self.profiler.summary()
@@ -295,14 +403,14 @@ class RD3GCasadi(BaseSolver):
                               cas.reshape(lamda[:, k], N, n),
                               cas.reshape(mu[:, k - 1], N, N),
                               i)
-                       for k in range(1, T)])
+                      for k in range(1, T)])
         x0 = self.game.config.get_param('x0')
         # x0 related terms
         i_onehot = cas.SX.eye(self.N)[:, i]
         u0_i = cas.reshape(u[:, 0], N, m)[i, :].T
-        LLi_val += self.game.J(x0, u0_i, i_onehot) + \
-            cas.reshape(lamda[:, 0], N, n)[i, :] @ (self.game.f(x0[i, :].T, u0_i, i_onehot) -
-                                                    cas.reshape(x[:, 0], N, n)[i, :].T)
+        LLi_val += (self.game.J(x0, u0_i, i_onehot) +
+                    cas.reshape(lamda[:, 0], N, n)[i, :] @ (self.game.f(x0[i, :].T, u0_i, i_onehot) -
+                                                            cas.reshape(x[:, 0], N, n)[i, :].T))
         # x_T related terms
         x_T = cas.reshape(x[:, T-1], N, n)
         LLi_val += self.game.Jfi(x_T, i_onehot)
@@ -330,7 +438,8 @@ class RD3GCasadi(BaseSolver):
                 h_k_i = cas.vertcat(*[self.game.h(x_k[i, :].T, x_k[j, :].T) for j in range(self.N)])
                 h_k_i_vals.append(h_k_i)
             h_k_vals.append(cas.vertcat(*h_k_i_vals).T)
-        h_val = cas.vertcat(*h_k_vals)
+        h_val = cas.vertcat(*h_k_vals).T
+        assert h_val.shape == (self.N*self.N, self.T)
         return h_val
 
     def r(self, x, u, lamda, mu):
