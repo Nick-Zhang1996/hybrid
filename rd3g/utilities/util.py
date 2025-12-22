@@ -6,7 +6,7 @@ import functools
 
 import numpy as np
 from casadi import *
-from scipy.sparse import csc_matrix
+from scipy.sparse import csc_matrix, csc_array
 
 # root folder of repo.
 BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -252,12 +252,19 @@ def casadi_generate_code(solver):
     return r_fun, dr_dy_fun
 
 
-def dm_to_csc(dm):
-    """ Convert a CasADi DM sparse matrix to scipy csc_matris"""
+def dm_to_csc(dm, array=False):
+    """ Convert a CasADi DM sparse matrix to scipy csc_matris
+    Args:
+        dm: DM object, 
+        array: if True, return csc array, otherwise return csc matrix
+    """
     data = dm.nonzeros()        # The numerical values
     indices = dm.sparsity().row()  # The row indices
     indptr = dm.sparsity().colind()  # The column pointers
     shape = dm.size()           # (rows, cols)
 
-    csc = csc_matrix((data, indices, indptr), shape=shape)
+    if (array):
+        csc = csc_array((data, indices, indptr), shape=shape)
+    else:
+        csc = csc_matrix((data, indices, indptr), shape=shape)
     return csc
