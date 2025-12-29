@@ -11,6 +11,7 @@ from time import time
 import numpy as np
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
+import scipy.linalg
 import matplotlib.pyplot as plt
 import casadi as cas
 
@@ -21,6 +22,46 @@ from rd3g.core.base_casadi_game import CasadiGameConfig
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
+
+
+def check_inertia(D):
+    """ Check the inertia of block-diagonal matrix D.
+    Args:
+        D: block-diagonal matrix consisting of 1*1 and 2*2 blocks
+    Returns:
+        positive_eigenvalue_count
+        negative_eigenvalue_count
+        zero_eigenvalue_count
+    """
+    n = D.shape[0]
+    tol = 1e-5
+    i = 0
+    pos = 0
+    neg = 0
+    zero = 0
+
+    def count(pos, neg, zero, val):
+        if val > tol:
+            pos += 1
+        elif val < -tol:
+            neg += 1
+        else:
+            zero += 1
+        return pos, neg, zero
+
+    while i < n:
+        if i < n-1 and abs(D[i, i+1]) > tol:
+            # 2 by 2 block
+            eigvals = np.linalg.eigvalsh(D[i:i+2, i:i+2])
+            for val in eigvals:
+                pos, neg, zero = count(pos, neg, zero, val)
+            i += 2
+        else:
+            # 1 by 1 block
+            pos, neg, zero = count(pos, neg, zero, D[i, i])
+            i += 1
+    assert pos + neg + zero == n
+    return pos, neg, zero
 
 
 # NOTE: changing config requires re-run codegen, since configs are constants
@@ -201,7 +242,15 @@ class RD3GCasadi(BaseSolver):
         t0 = time()
         dy_np, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_np)[:4]
         dt = time() - t0
-        logger.info(f'Solving full system {dt}s')
+        residual = np.linalg.norm(normr)
+        istop_lut = ['', 'Direct Sol', "Least Square Sol"]
+        logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
+
+        # study the LDL decomposition
+        lu, d, perm = scipy.linalg.ldl(dr_dy_csc.toarray())
+        pos, neg, zero = check_inertia(d)
+        logger.info(f'Full-system Inertia: {pos, neg, zero}')
+
         # Check, does dy improve residual? do a line search --- Yes!
         dy = cas.DM(dy_np)
         # size of x, u, lamda, mu
@@ -225,10 +274,10 @@ class RD3GCasadi(BaseSolver):
                 step_size *= self.config.bc_b
             else:
                 break
-        plt.plot(step_size_vec, stepped_r_vec, '*-')
-        plt.plot(0, r0_norm, 'o')
-        plt.title('Full descent')
-        plt.show()
+        # plt.plot(step_size_vec, stepped_r_vec, '*-')
+        # plt.plot(0, r0_norm, 'o')
+        # plt.title('Full descent')
+        # plt.show()
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint, remove rows for h, also remove columns for mu
@@ -286,7 +335,6 @@ class RD3GCasadi(BaseSolver):
                 breakpoint()
         """
         # TODO set the relevant mu to 0
-
         reduced_r0 = r0_np[active_r_rows, :]
         reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
 
@@ -296,7 +344,22 @@ class RD3GCasadi(BaseSolver):
         t0 = time()
         reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(reduced_dr_dy_csc, -reduced_r0)[:4]
         dt = time() - t0
-        logger.info(f'Solving reduced system {dt}s')
+        residual = np.linalg.norm(normr)
+        logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
+        # Study the LDL decomposition
+        lu, d, perm = scipy.linalg.ldl(reduced_dr_dy_csc.toarray())
+        pos, neg, zero = check_inertia(d)
+        logger.info(f'Reduced-system Inertia: {pos, neg, zero}')
+        # Inertia checking for SOSC -> not enough pos, too many neg and zeros
+        # Primal variables - inactive lagrange multipliers (mu)
+        in_n = T*N*n + T*N*m
+        in_m = T*N*(n+N) - len(inactive_r_rows)  # f, h - inactive collision constraints
+        logger.info(f'Expected SOSC inertia {in_n,in_m,0}')
+
+        # Do we have linearly dependent constraints?
+
+        breakpoint()
+
         # Verify residual reduction with a line search
         # Recover full dy
         dy = np.zeros(dr_dy_csc.shape[1])
@@ -320,10 +383,10 @@ class RD3GCasadi(BaseSolver):
                 step_size *= self.config.bc_b
             else:
                 break
-        plt.plot(step_size_vec, stepped_r_vec, '*-')
-        plt.plot(0, r0_norm, 'o')
-        plt.title('Reduced descent')
-        plt.show()
+        # plt.plot(step_size_vec, stepped_r_vec, '*-')
+        # plt.plot(0, r0_norm, 'o')
+        # plt.title('Reduced descent')
+        # plt.show()
         # TODO try just keep the lowest r value, no need to reducing step
 
         new_x = x+step_size*cas.reshape(dx, N*n, T)
@@ -331,6 +394,32 @@ class RD3GCasadi(BaseSolver):
         new_lamda = lamda+step_size*cas.reshape(dlamda, N*n, T)
         new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
         logger.info(f'{r0_norm=}, {step_size=}, {r_norm=}')
+
+        # Where does the norm come from? -> mostly collision (h)
+        r_val_np = r_val.toarray()
+        r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
+        logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
+
+        # Did we remove active constraints? - > yes
+        inactive_residual = np.linalg.norm(r_val_np[inactive_r_rows, 0])
+        logger.info(f'{inactive_residual=}')
+
+        # Example? Check ORIGINAL x (active constraint is evaluated on original x)
+        # agent 0
+        i = 0
+        offset = n*T+m*T+n*T
+        h_agent_0 = r_val_np[offset:offset+T*N, 0]
+        new_x_np = np.array(x.toarray(), order='F').reshape((N, n, T), order='F')
+        h_vals = []
+        for j in range(self.N):
+            h_val_ij = [
+                self.h_val_casadi(cas.DM(new_x_np[i, :, k]), cas.DM(new_x_np[j, :, k]), *params_dm)
+                for k in range(self.T)
+            ]
+            h_vals.append(h_val_ij)
+        h_vals = np.array(h_vals)
+
+        breakpoint()
 
         return new_x, new_u, new_lamda, new_mu
 
@@ -496,8 +585,53 @@ class RD3GCasadi(BaseSolver):
             for k in range(1, self.T+1):
                 xk = cas.reshape(x[:, k-1], N, n)  # x[k] -> x_{k+1} due to index alignment
                 h_vals = [self.game.h(xk[i, :].T, xk[j, :].T) for j in range(self.N)]
+                h_vals[i] = 0  # ignore self-collision, keep this dummy entry to simplify indices
                 h_vals_pos = cas.fmax(cas.vertcat(*h_vals), 0)
                 assert h_vals_pos.size2() == 1
                 r_vec.append(h_vals_pos)  # T*N
 
         return cas.vertcat(*r_vec)
+
+    def constraint_components(self, dr_dy):
+        """ Re-organize the dr_dy hessian matrix to the following format
+        [H A.T
+         A 0 ]
+        Returns:
+            H, A
+        """
+
+    def residual_components(self, r):
+        """ Check the residual for each subcomponents
+        Args:
+            r: (dim, 1) residual vector, CasADi DM matrix
+        Returns:
+            each component in r
+        """
+        r = r.toarray()
+        T = self.T
+        N = self.N
+        n = self.n
+        m = self.m
+        offset = 0
+        dLLi_dxi = []
+        dLLi_dui = []
+        f = []
+        h = []
+        for i in range(N):
+            dLLi_dxi += list(r[offset:offset + n*T, 0])
+            offset += n*T
+
+            dLLi_dui += list(r[offset:offset + m*T, 0])
+            offset += m*T
+
+            f += list(r[offset:offset + n*T, 0])
+            offset += n*T
+
+            h += list(r[offset:offset + N*T, 0])
+            offset += N*T
+        assert offset == r.shape[0]
+        r_Lx = np.linalg.norm(dLLi_dxi)
+        r_Lu = np.linalg.norm(dLLi_dui)
+        r_f = np.linalg.norm(f)
+        r_h = np.linalg.norm(h)
+        return r_Lx, r_Lu, r_f, r_h
