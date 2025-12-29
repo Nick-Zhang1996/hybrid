@@ -286,7 +286,7 @@ class RD3GCasadi(BaseSolver):
         # Also, the corresponding multiplier mu dim(NN,T) row [N*i+j, k] can be removed
         # NOTE that the same applies for flipped i,j
         # TODO handle symmetry and keep sparseness
-        n_ri = 2*n*T + m*T + N*T
+        dLL_offset = N*T*(n+m)
         mu_in_y_offset = N*n*T + N*m*T + N*n*T
 
         H_val = np.array(self.H_val_casadi(x, *params_dm), order='F').reshape((N, N, T), order='F')
@@ -294,7 +294,7 @@ class RD3GCasadi(BaseSolver):
         inactive_r_rows = []
         inactive_y_rows = []
         for i, j, k in zip(*neg_h_mask):
-            inactive_r_rows.append(i*n_ri + 2*n*T + m*T + k*N + j)
+            inactive_r_rows.append(dLL_offset + i*T*(n + N) + T*n + k*N + j)
             inactive_y_rows.append(mu_in_y_offset + k*N*N + N*i+j)
             """
             # Check h_val is indeed negative
@@ -311,7 +311,7 @@ class RD3GCasadi(BaseSolver):
         for k in range(T):
             for i in range(N):
                 j = i
-                inactive_r_rows.append(i*n_ri + 2*n*T + m*T + k*N + j)
+                inactive_r_rows.append(dLL_offset + i*T*(n + N) + T*n + k*N + j)
                 inactive_y_rows.append(mu_in_y_offset + k*N*N + N*i+j)
                 """
                 # Verify that h(xi,xi) > 0, because an agent always collide with itself
@@ -357,8 +357,14 @@ class RD3GCasadi(BaseSolver):
         logger.info(f'Expected SOSC inertia {in_n,in_m,0}')
 
         # Do we have linearly dependent constraints?
+        H, A = self.hessian_components(reduced_dr_dy_csc)
+        H_pos, H_neg, H_zero = check_inertia(H.toarray())
+        # Lots of zero eigenvals
+        logger.info(f'H inertia {H_pos, H_neg, H_zero}')
 
-        breakpoint()
+        A_dense = A.toarray()
+        rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
+        logger.info(f'{A.shape=}, {rank=}')
 
         # Verify residual reduction with a line search
         # Recover full dy
@@ -395,31 +401,15 @@ class RD3GCasadi(BaseSolver):
         new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
         logger.info(f'{r0_norm=}, {step_size=}, {r_norm=}')
 
-        # Where does the norm come from? -> mostly collision (h)
+        # Where does the residual come from?
         r_val_np = r_val.toarray()
         r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
         logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
 
-        # Did we remove active constraints? - > yes
+        # Are inactive residual indeed inactive?
         inactive_residual = np.linalg.norm(r_val_np[inactive_r_rows, 0])
-        logger.info(f'{inactive_residual=}')
-
-        # Example? Check ORIGINAL x (active constraint is evaluated on original x)
-        # agent 0
-        i = 0
-        offset = n*T+m*T+n*T
-        h_agent_0 = r_val_np[offset:offset+T*N, 0]
-        new_x_np = np.array(x.toarray(), order='F').reshape((N, n, T), order='F')
-        h_vals = []
-        for j in range(self.N):
-            h_val_ij = [
-                self.h_val_casadi(cas.DM(new_x_np[i, :, k]), cas.DM(new_x_np[j, :, k]), *params_dm)
-                for k in range(self.T)
-            ]
-            h_vals.append(h_val_ij)
-        h_vals = np.array(h_vals)
-
-        breakpoint()
+        logger.debug(f'{inactive_residual=}')
+        assert inactive_residual < 1e-10
 
         return new_x, new_u, new_lamda, new_mu
 
@@ -565,6 +555,7 @@ class RD3GCasadi(BaseSolver):
             assert dLLi_dxi.size2() == 1
             assert dLLi_dui.size2() == 1
 
+        for i in range(N):
             # dynamics residual for f(x0,u0) = x1
             x0 = self.game.config.get_param('x0')
             u0 = cas.reshape(u[:, 0], N, m)
@@ -588,17 +579,32 @@ class RD3GCasadi(BaseSolver):
                 h_vals[i] = 0  # ignore self-collision, keep this dummy entry to simplify indices
                 h_vals_pos = cas.fmax(cas.vertcat(*h_vals), 0)
                 assert h_vals_pos.size2() == 1
-                r_vec.append(h_vals_pos)  # T*N
+                r_vec.append(h_vals_pos)  # T*N (entire loop)
 
         return cas.vertcat(*r_vec)
 
-    def constraint_components(self, dr_dy):
+    def hessian_components(self, dr_dy):
         """ Re-organize the dr_dy hessian matrix to the following format
         [H A.T
          A 0 ]
+        Args:
+            dr_dy: scipy.sparse.csc_matrix
         Returns:
             H, A
         """
+        T = self.T
+        N = self.N
+        n = self.n
+        m = self.m
+        primal_n = N*T*(n+m)  # primal variables
+        H = dr_dy[:primal_n, :primal_n]
+        A = dr_dy[primal_n:, :primal_n]
+        AT = dr_dy[:primal_n, primal_n:]
+        empty = dr_dy[primal_n:, primal_n:]
+        breakpoint()
+        assert (A-AT.T).nnz == 0
+        assert empty.nnz == 0
+        return H, A
 
     def residual_components(self, r):
         """ Check the residual for each subcomponents
@@ -620,13 +626,12 @@ class RD3GCasadi(BaseSolver):
         for i in range(N):
             dLLi_dxi += list(r[offset:offset + n*T, 0])
             offset += n*T
-
             dLLi_dui += list(r[offset:offset + m*T, 0])
             offset += m*T
 
+        for i in range(N):
             f += list(r[offset:offset + n*T, 0])
             offset += n*T
-
             h += list(r[offset:offset + N*T, 0])
             offset += N*T
         assert offset == r.shape[0]
