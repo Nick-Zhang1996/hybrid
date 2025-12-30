@@ -33,15 +33,25 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     collision_radius: float = 2.0
 
     x0: Any = None
-    """ Initial state for all agents, dim: (N,n)"""
+    """ Initial state for all agents, dim: (n,N)"""
     target_x_ref: Any = None
-    """ Target state for all agents, dim: (N,n)"""
+    """ Target state for all agents, dim: (n,N)"""
     J_Qr: Any = None
     """ Cost matrix for tracking reference state dim: (n,n)"""
     J_Q: Any = None
     """ Cost matrix for penalizing non-zero state dim: (n,n)"""
     J_R: Any = None
     """ Cost matrix for control effort dim: (m,m)"""
+
+    def __post_init__(self):
+        assert self.x0.shape == (self.n, self.N), (
+            'Incorrect self.x0 dimension, '
+            f'should be {(self.n, self.N)}, but got {self.x0.shape}')
+        assert self.target_x_ref.shape == (self.n, self.N)
+        assert self.J_Qr.shape == (self.n, self.n)
+        assert self.J_Q.shape == (self.n, self.n)
+        assert self.J_R.shape == (self.m, self.m)
+        return super().__post_init__()
 
 
 class CarMergeKinematicBicycleCasadi(BaseGame):
@@ -276,50 +286,51 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
     def F(self, x_k, u_k):
         """ Dynamics for all agents
         Args:
-            x_k: (N,n)
-            u_k: (N,m)
+            x_k: (n,N)
+            u_k: (m,N)
         Return:
-            x_k_next: (N,n)
+            x_k_next: (n,N)
         """
         x_k_next_vec = []
         for i in range(self.N):
             i_onehot = cas.SX.eye(self.N)[:, i]
-            x_k_next_vec.append(self.f(x_k[i, :].T, u_k[i, :].T, i_onehot))
-        retval = cas.horzcat(*x_k_next_vec).T
-        assert retval.shape == (self.N, self.n)
+            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
+        retval = cas.horzcat(*x_k_next_vec)
+        assert retval.shape == (self.n, self.N)
         return retval
 
     def rollout(self, x0, u):
         """ Rollout control to get state trajectory, casadi compatible
         Args:
-            x0: (N,n)
-            u: (N*m, T), u0..u_T-1
+            x0: (n,N)
+            u: (m*N, T), u0..u_T-1
         Return:
-            X: (N*n, T) x1..xT
+            X: (n*N, T) x1..xT
         """
-        assert u.shape == (self.N*self.m, self.T)
-        assert x0.shape == (self.N, self.n)
+        assert u.shape == (self.m*self.N, self.T)
+        assert x0.shape == (self.n, self.N)
 
-        x_k = cas.SX.sym('x_k_', (self.N*self.n))
-        u_k = cas.SX.sym('u_k_', (self.N*self.m))
-        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.N, self.n),
-                                  cas.reshape(u_k, self.N, self.m)))
+        x_k = cas.SX.sym('x_k_', (self.n*self.N))
+        u_k = cas.SX.sym('u_k_', (self.m*self.N))
+        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.n, self.N),
+                                  cas.reshape(u_k, self.m, self.N)))
         config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
         config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
         accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
         rollout_fun = accum_fun.mapaccum(self.T)
 
         X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
+        assert X.shape == (self.n*self.N, self.T)
         return X
 
     def J(self, x_k, u_k_i, i_onehot):
-        '''
-        stage cost for an agent, given x,u
-        x_k.shape (N,n) x_k_i
+        """
+        Stage cost for an agent, given x,u
+        x_k.shape (n,N) x_k_i
         u_k_i.shape (m,1) u_k_i
-        i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
-        '''
-        assert x_k.shape == (self.config.N, self.config.n)
+        i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
+        """
+        assert x_k.shape == (self.config.n, self.config.N)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
 
@@ -327,18 +338,19 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         J_Qr = self.config.get_param('J_Qr')
         J_Q = self.config.get_param('J_Q')
         J_R = self.config.get_param('J_R')
-        x_k_i = x_k.T @ i_onehot  # dim: n,1
-        dx = x_k_i - target_x_ref.T @ i_onehot
+        x_k_i = x_k @ i_onehot  # dim: n,1
+        dx = x_k_i - target_x_ref @ i_onehot
 
         val = dx.T @ J_Qr @ dx + \
             x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
         return val
 
     def Jfi(self, x_T, i_onehot):
+        """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
     def f(self, x_k_i, u_k_i, i_onehot):
-        ''' Dynamics function x_{t+1} = f(x_t,u,i)
+        """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
@@ -346,7 +358,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         Return:
             (n,1) The next state, progressed by self.dt
 
-        this problem has homogeneous agents, so [i] is irrelevant'''
+        this problem has homogeneous agents, so [i] is irrelevant"""
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
@@ -364,21 +376,23 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
     def h(self, x_i, x_j):
         """ Collision constraint for x_i, anx x_j agent, h <= 0
         Args:
-            x_i: (n,) State of i at time k
-            x_j: (n,) State of j at time k
+            x_i: (n,1) State of i at time k
+            x_j: (n,1) State of j at time k
 
         """
         # car distance larger than 1.2 normalized
+        assert x_i.shape == (self.n, 1)
+        assert x_j.shape == (self.n, 1)
         collision_radius = self.config.get_param('collision_radius')
-        val = -((x_i[0] - x_j[0]) / 1.0)**2 - (
-            x_i[1] - x_j[1])**2 + collision_radius**2
+        val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
+            x_i[1, 0] - x_j[1, 0])**2 + collision_radius**2
         return val
 
 
 def create_random_game(car_count=3, horizon=20):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
     np.random.seed(0)
-    default = CarMergeKinematicBicycleCasadiConfig()
+    default = CarMergeKinematicBicycleCasadiConfig
     T = horizon
     N: int = car_count
     n: int = 4
@@ -412,11 +426,11 @@ def create_random_game(car_count=3, horizon=20):
         v_merge_lane,
         np.zeros(merge_lane_n)
     ]).T
-    x0 = np.vstack([x0_main_lane, x0_merge_lane])
+    x0 = np.vstack([x0_main_lane, x0_merge_lane]).T
     target_y = [1] * (main_lane_n + merge_lane_n)
-    x_ref = np.zeros((N, n))
-    x_ref[:, 2] = 2.0  # target speed
-    x_ref[:, 1] = np.array(target_y)  # target y position
+    x_ref = np.zeros((n, N))
+    x_ref[2, :] = 2.0  # target speed
+    x_ref[1, :] = np.array(target_y)  # target y position
 
     config = CarMergeKinematicBicycleCasadiConfig(
         T=T,
