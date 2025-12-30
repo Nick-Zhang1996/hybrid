@@ -10,4 +10,7 @@ game = create_random_game(car_count=3, horizon=20)
 solver_config = RD3GCasadiConfig()
 solver = RD3GCasadi(solver_config, game)
 
-solver.solve()
+sol = solver.solve()
+print(f'{sol.elapsed_time = }, {sol.residual = }')
+
+solver.final()

@@ -323,6 +323,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         assert X.shape == (self.n*self.N, self.T)
         return X
 
+    # pylint: disable-next=arguments-renamed
     def J(self, x_k, u_k_i, i_onehot):
         """
         Stage cost for an agent, given x,u
@@ -345,10 +346,12 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
             x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
         return val
 
+    # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
+    # pylint: disable-next=arguments-renamed
     def f(self, x_k_i, u_k_i, i_onehot):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
@@ -391,7 +394,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
 def create_random_game(car_count=3, horizon=20):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
-    np.random.seed(0)
+    np.random.seed(1)
     default = CarMergeKinematicBicycleCasadiConfig
     T = horizon
     N: int = car_count

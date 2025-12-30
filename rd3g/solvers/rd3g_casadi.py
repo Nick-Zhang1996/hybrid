@@ -18,10 +18,23 @@ import casadi as cas
 from rd3g.utilities.util import dm_to_csc
 from rd3g.utilities.time_util import TimeUtil
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
-from rd3g.core.base_casadi_game import CasadiGameConfig
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
+
+
+def create_partial_identity(n, k):
+    """
+    Creates an n x n CSC matrix with the first k diagonal elements set to 1.
+    """
+    if k > n:
+        raise ValueError("k cannot be larger than n")
+    data = np.ones(k)
+    rows = np.arange(k)
+    cols = np.arange(k)
+    mat = scipy.sparse.csc_matrix((data, (rows, cols)), shape=(n, n))
+
+    return mat
 
 
 def check_inertia(D):
@@ -69,17 +82,40 @@ def check_inertia(D):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     tolerance: float = 5e-4
-    iterations: int = 30
+    iterations: int = 100
     # backtracking line search param
     bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
-    backtracking_max_iter: int = 20
+    backtracking_max_iter: int = 10
     # NOTE this is not implemented in cpp
     dynamics_residual_weight: float = 1.0
     # barrier function scaling schedule
     rho_0: float = 20.0
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
+    # Apply Levenberg-Marquardt Regularization
+    reg: float = 1e-7*0
+
+
+class LineSearchMaxIter(Exception):
+    """ Max iteration in line search is reached without a good step size"""
+
+
+class LineSearchSuccess(Exception):
+    """ Line search found a step size that gives adequate residual reduction """
+
+
+class SolverConvergedNE(Exception):
+    """ Solver converged to a NE, passing SOSC"""
+
+
+class SolverConvergedSaddle(Exception):
+    """ Solver converged to a saddle, not passing SOSC"""
+
+
+class SolverFailure(Exception):
+    """ Solver failed to converge """
+    # TODO add more reason
 
 
 class RD3GCasadi(BaseSolver):
@@ -112,7 +148,11 @@ class RD3GCasadi(BaseSolver):
         self.violations = None
 
         self.rho = self.config.rho_0
-        self.profiler = TimeUtil(False)
+        # Levenberg-Marquardt Regularization coeff
+        # When line search is stuck, larger coeff is used. Re-sets when line search succeeds.
+        self.reg = self.config.reg
+        self.profiler = TimeUtil(True)
+
         # logger.debug_enable()
         self.residual_vec = []
         self.validate()
@@ -204,8 +244,32 @@ class RD3GCasadi(BaseSolver):
         # defined for all h_k_i_j, but all values may not be used
         mu_ref = cas.DM.zeros((N*N, T))
 
-        for _ in range(self.config.iterations):
-            x_ref, u_ref, lambda_ref, mu_ref = self.step(x_ref, u_ref, lambda_ref, mu_ref)
+        i = 0
+        has_converged = False
+        is_optimal = False
+        t0 = time()
+        try:
+            for i in range(self.config.iterations):
+                x_ref, u_ref, lambda_ref, mu_ref, res = self.step(x_ref, u_ref, lambda_ref, mu_ref)
+            raise SolverFailure('Max iteration reached')
+        except SolverConvergedNE as e:
+            has_converged = True
+            is_optimal = True
+            logger.info(f'Stop after {i} iteration because {e}')
+        except SolverConvergedSaddle as e:
+            has_converged = True
+            is_optimal = False
+            logger.info(f'Stop after {i} iteration because {e}')
+        except SolverFailure as e:
+            logger.info(f'Stop after {i} iteration because {e}')
+
+        dt = time() - t0
+        return Solution(elapsed_time=dt,
+                        u=u_ref,
+                        x=x_ref,
+                        residual=res,
+                        has_converged=has_converged,
+                        is_optimal=is_optimal)
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
         """ Solver step function
@@ -215,8 +279,12 @@ class RD3GCasadi(BaseSolver):
             lamda: n*N,T
             mu: N*N,T
         Return:
-            x_ref, u_ref, lamda, mu, updated
+            x_ref, u_ref, lamda, mu: updated
+            res: residual
         """
+        p = self.profiler
+        p.s()
+        p.s('prep')
         N = self.N
         T = self.T
         n = self.n
@@ -229,55 +297,62 @@ class RD3GCasadi(BaseSolver):
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
+        p.e('prep')
 
+        p.s('Form KKT')
         r0_val = self.r_fun_casadi(x, u, lamda, mu, *params_dm)
         dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, *params_dm)
         r0_np = np.array(r0_val)
         r0_norm = np.linalg.norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
+        p.e('Form KKT')
 
-        # Naive method: solve sparse system directly
-        # r0 + dr_dy @ dy = 0
-        # solve for dy directly
-        t0 = time()
-        dy_np, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_np)[:4]
-        dt = time() - t0
-        residual = np.linalg.norm(normr)
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
-        logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
-
-        # study the LDL decomposition
-        lu, d, perm = scipy.linalg.ldl(dr_dy_csc.toarray())
-        pos, neg, zero = check_inertia(d)
-        logger.info(f'Full-system Inertia: {pos, neg, zero}')
-
-        # Check, does dy improve residual? do a line search --- Yes!
-        dy = cas.DM(dy_np)
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, N*N*T]
         offsets = list(accumulate(sizes))
-        dx, du, dlamda, dmu = cas.vertsplit(dy, offsets)
-        step_size = 1.0
-        step_size_vec = []
-        stepped_r_vec = []
-        for i in range(self.config.backtracking_max_iter):
-            r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
-                                      u+step_size*cas.reshape(du, m*N, T),
-                                      lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                      mu+step_size*cas.reshape(dmu, N*N, T),
-                                      int_param_dm, double_param_dm
-                                      )
-            r_norm = np.linalg.norm(r_val)
-            step_size_vec.append(step_size)
-            stepped_r_vec.append(r_norm)
-            if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
-                step_size *= self.config.bc_b
-            else:
-                break
-        # plt.plot(step_size_vec, stepped_r_vec, '*-')
-        # plt.plot(0, r0_norm, 'o')
-        # plt.title('Full descent')
-        # plt.show()
+        naive_method = False
+        if naive_method:
+            # Naive method: solve sparse system directly
+            # r0 + dr_dy @ dy = 0
+            # solve for dy directly
+            t0 = time()
+            dy_np, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_np)[:4]
+            dt = time() - t0
+            residual = np.linalg.norm(normr)
+            logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
+
+            # study the LDL decomposition
+            lu, d, perm = scipy.linalg.ldl(dr_dy_csc.toarray())
+            del lu
+            del perm
+            pos, neg, zero = check_inertia(d)
+            logger.info(f'Full-system Inertia: {pos, neg, zero}')
+
+            # Check, does dy improve residual? do a line search --- Yes!
+            dy = cas.DM(dy_np)
+            dx, du, dlamda, dmu = cas.vertsplit(dy, offsets)
+            step_size = 1.0
+            step_size_vec = []
+            stepped_r_vec = []
+            for i in range(self.config.backtracking_max_iter):
+                r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
+                                          u+step_size*cas.reshape(du, m*N, T),
+                                          lamda+step_size*cas.reshape(dlamda, n*N, T),
+                                          mu+step_size*cas.reshape(dmu, N*N, T),
+                                          int_param_dm, double_param_dm
+                                          )
+                r_norm = np.linalg.norm(r_val)
+                step_size_vec.append(step_size)
+                stepped_r_vec.append(r_norm)
+                if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
+                    step_size *= self.config.bc_b
+                else:
+                    break
+            # plt.plot(step_size_vec, stepped_r_vec, '*-')
+            # plt.plot(0, r0_norm, 'o')
+            # plt.title('Full descent')
+            # plt.show()
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint, remove rows for h, also remove columns for mu
@@ -288,6 +363,7 @@ class RD3GCasadi(BaseSolver):
         # TODO handle symmetry and keep sparseness
         dLL_f_offset = N*T*(2*n+m)
         mu_in_y_offset = n*N*T + m*N*T + n*N*T
+        p.s('Reduce KKT')
 
         H_val = np.array(self.H_val_casadi(x, *params_dm), order='F').reshape((N, N, T), order='F')
         neg_h_mask = np.array(H_val < 0).nonzero()
@@ -326,25 +402,42 @@ class RD3GCasadi(BaseSolver):
         # TODO set the relevant mu to 0
         reduced_r0 = r0_np[active_r_rows, :]
         reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
+        p.e('Reduce KKT')
 
         # Reduced method: solve sparse system directly
         # r0 + dr_dy @ dy = 0
+        # Apply Levenberg-Marquardt Regularization
+        # H = H + reg * I
+        primal_var_count = (n+m)*N*T
+        reduced_dr_dy_csc += create_partial_identity(reduced_dr_dy_csc.shape[0], primal_var_count)
+
         # Solve for reduced_dy
+        p.s('Solve KKT (LSQR)')
         t0 = time()
         reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(reduced_dr_dy_csc, -reduced_r0)[:4]
         dt = time() - t0
         residual = np.linalg.norm(normr)
         logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
+        p.e('Solve KKT (LSQR)')
         # Study the LDL decomposition
-        lu, d, perm = scipy.linalg.ldl(reduced_dr_dy_csc.toarray())
-        pos, neg, zero = check_inertia(d)
-        logger.info(f'Reduced-system Inertia: {pos, neg, zero}')
+        p.s('LDL Inertia check')
+        reduced_dr_dy_np = reduced_dr_dy_csc.toarray()
+        lu, d, perm = scipy.linalg.ldl(reduced_dr_dy_np)
+        kkt_inertia = check_inertia(d)
+        logger.info(f'Reduced-system Inertia: {kkt_inertia}')
         # Inertia checking for SOSC -> not enough pos, too many neg and zeros
         # Primal variables - inactive lagrange multipliers (mu)
         in_n = n*N*T + m*N*T  # Dimension of primal vars
         in_m = T*N*(n+N) - len(inactive_r_rows)  # f, h - inactive collision constraints
-        logger.info(f'Expected SOSC inertia {in_n,in_m,0}')
+        expected_inertia = (in_n, in_m, 0)
+        logger.info(f'Expected SOSC inertia {expected_inertia}')
+        if expected_inertia == kkt_inertia:
+            is_optimal = True
+        else:
+            is_optimal = False
+        p.e('LDL Inertia check')
 
+        p.s('Debug checking')
         # Do we have linearly dependent constraints?
         H, A = self.hessian_components(reduced_dr_dy_csc)
         H_pos, H_neg, H_zero = check_inertia(H.toarray())
@@ -355,41 +448,51 @@ class RD3GCasadi(BaseSolver):
         rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
         logger.info(f'{A.shape=}, {rank=}')
 
+        cond_num = np.linalg.cond(reduced_dr_dy_np)
+        print(f"Condition Number: {cond_num}")
+        p.e('Debug checking')
+
         # Verify residual reduction with a line search
         # Recover full dy
         dy = np.zeros(dr_dy_csc.shape[1])
         dy[active_y_rows] = reduced_dy
 
+        p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
         step_size = 1.0
         step_size_vec = []
         stepped_r_vec = []
-        for i in range(self.config.backtracking_max_iter):
-            r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
-                                      u+step_size*cas.reshape(du, m*N, T),
-                                      lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                      mu+step_size*cas.reshape(dmu, N*N, T),
-                                      int_param_dm, double_param_dm
-                                      )
-            r_norm = np.linalg.norm(r_val)
-            step_size_vec.append(step_size)
-            stepped_r_vec.append(r_norm)
-            if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
-                step_size *= self.config.bc_b
-            else:
-                break
-        # plt.plot(step_size_vec, stepped_r_vec, '*-')
-        # plt.plot(0, r0_norm, 'o')
-        # plt.title('Reduced descent')
-        # plt.show()
-        # TODO Use a merit function of form r_val + C * h_residual
+        try:
+            for i in range(self.config.backtracking_max_iter):
+                r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
+                                          u+step_size*cas.reshape(du, m*N, T),
+                                          lamda+step_size*cas.reshape(dlamda, n*N, T),
+                                          mu+step_size*cas.reshape(dmu, N*N, T),
+                                          int_param_dm, double_param_dm
+                                          )
+                r_norm = np.linalg.norm(r_val)
+                step_size_vec.append(step_size)
+                stepped_r_vec.append(r_norm)
+                if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
+                    step_size *= self.config.bc_b
+                else:
+                    raise LineSearchSuccess
+            raise LineSearchMaxIter
+        except LineSearchMaxIter:
+            self.reg *= 10
+        except LineSearchSuccess:
+            self.reg = self.config.reg
+        p.e('Line Search')
 
+        p.s('Cleanup')
         new_x = x+step_size*cas.reshape(dx, n*N, T)
         new_u = u+step_size*cas.reshape(du, m*N, T)
         new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
         new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
-        logger.info(f'{r0_norm=}, {step_size=}, {r_norm=}')
+        p.e('Cleanup')
+        logger.info(f'{r0_norm=}, {self.reg=}, {step_size=}, {r_norm=}')
 
+        p.s('More debug checking')
         # Where does the residual come from?
         r_val_np = r_val.toarray()
         r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
@@ -397,10 +500,32 @@ class RD3GCasadi(BaseSolver):
 
         # Are inactive residual indeed inactive?
         inactive_residual = np.linalg.norm(r_val_np[inactive_r_rows, 0])
-        logger.debug(f'{inactive_residual=}')
+        # logger.debug(f'{inactive_residual=}')
         assert inactive_residual < 1e-10
 
-        return new_x, new_u, new_lamda, new_mu
+        # Check the linearization is valid
+        r0_np = np.array(r0_val)
+        r_np = np.array(r_val)
+        expected_r = r0_val * (1-step_size)
+        diff = np.linalg.norm(expected_r - r_np)
+        logger.info(f'Diff in expected r {diff=}')
+
+        # plt.plot(step_size_vec, stepped_r_vec, '*-')
+        # plt.plot(0, r0_norm, 'o')
+        # plt.title('Reduced descent')
+        # plt.show()
+        # TODO Use a merit function of form r_val + C * h_residual
+        self.residual_vec.append(r0_norm)
+        p.e('More debug checking')
+        p.e()
+
+        if r_norm < self.config.tolerance:
+            if is_optimal:
+                raise SolverConvergedNE
+            else:
+                raise SolverConvergedSaddle
+
+        return new_x, new_u, new_lamda, new_mu, r_norm
 
     def final(self):
         self.profiler.summary()
@@ -477,8 +602,9 @@ class RD3GCasadi(BaseSolver):
         i_onehot = cas.SX.eye(self.N)[:, i]
         u0_i = cas.reshape(u[:, 0], m, N)[:, i]
         LLi_val += (self.game.J(x0, u0_i, i_onehot) +
-                    cas.reshape(lamda[:, 0], n, N)[:, i].T @ (self.game.f(x0[:, i], u0_i, i_onehot) -
-                                                              cas.reshape(x[:, 0], n, N)[:, i]))
+                    cas.reshape(lamda[:, 0], n, N)[:, i].T
+                    @ (self.game.f(x0[:, i], u0_i, i_onehot)
+                    - cas.reshape(x[:, 0], n, N)[:, i]))
         # x_T related terms
         x_T = cas.reshape(x[:, T-1], n, N)
         LLi_val += self.game.Jfi(x_T, i_onehot)
