@@ -394,7 +394,6 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
 def create_random_game(car_count=3, horizon=20):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
-    np.random.seed(1)
     default = CarMergeKinematicBicycleCasadiConfig
     T = horizon
     N: int = car_count

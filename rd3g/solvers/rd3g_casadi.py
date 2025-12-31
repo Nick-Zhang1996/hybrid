@@ -13,8 +13,9 @@ import numpy as np
 import casadi as cas
 import qdldl
 import scipy.sparse  # sparse matrix operations
-import scipy.sparse.linalg
+from scipy.sparse.linalg import lsqr
 import scipy.linalg
+from scipy.linalg import norm
 import matplotlib.pyplot as plt
 
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
@@ -24,6 +25,7 @@ from rd3g.utilities.util import dm_to_csc
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
+DEBUG = False
 
 
 def create_partial_identity(n, k):
@@ -80,7 +82,59 @@ def check_inertia(D):
     return pos, neg, zero
 
 
+def solve_linear(A, b, method):
+    """ Solve for x in Ax = b, give x, residual, and inertia of A
+    Args:
+        A: (n,n) csc_matrix
+        b: (N,1) csc_matrix
+    Return:
+        x: such that Ax-b is minimized
+        res: residual, |Ax-b|_2
+        inertia: (pos, neg, zero) number of positive, negative, zero eigenvals from LDL
+    """
+    if method == 'lsqr':
+        # Solve for reduced_dy
+        t0 = time()
+        x, istop, itn, normr = lsqr(A, b)[:4]
+        dt = time() - t0
+        residual = norm(normr)
+        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
+        logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
+
+        # Get inertia from LDL decomposition
+        A_np = A.toarray()
+        lu, d, perm = scipy.linalg.ldl(A_np)
+        kkt_inertia = check_inertia(d)
+        logger.info(f'Reduced-system Inertia: {kkt_inertia}')
+        return x, residual, kkt_inertia
+    elif method == 'qdldl':
+        t0 = time()
+        A_upper = scipy.sparse.triu(A, format='csc')
+        A_upper.eliminate_zeros()
+        A_upper.sort_indices()
+        A_upper.sum_duplicates()
+        solver = qdldl.Solver(A_upper, upper=True)
+        #  C = P @ A @ P.T, C = L @ D @ L.T
+        L_zero_diag, D_diag, P_vec = solver.factors()
+        qdldl_x = solver.solve(b)
+        pos = np.sum(D_diag > 0)
+        neg = np.sum(D_diag < 0)
+        qdldl_inertia = (pos, neg, len(D_diag) - pos - neg)
+        residual = norm(A @ qdldl_x - b)
+        dt = time() - t0
+        logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
+        return qdldl_x, residual, qdldl_inertia
+
+    if DEBUG:
+        # check qdldl dy against lsqr result
+        diff_norm = norm(qdldl_x - x)
+        x_norm = norm(x)
+        qdldl_x_norm = norm(qdldl_x)
+        logger.info(f'{diff_norm=}, {x_norm=}, {qdldl_x_norm=}')
+
 # NOTE: changing config requires re-run codegen, since configs are constants
+
+
 @dataclass(frozen=True)
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
@@ -239,6 +293,7 @@ class RD3GCasadi(BaseSolver):
         is_optimal = False
         t0 = time()
         for i in range(self.config.iterations):
+            logger.info(f'--- iter {i} ---')
             x_ref, u_ref, lambda_ref, mu_ref, res, has_converged, is_optimal = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
             if has_converged:
@@ -255,6 +310,7 @@ class RD3GCasadi(BaseSolver):
         logger.info(f'Stop after {i} iteration because {msg}')
 
         return Solution(elapsed_time=dt,
+                        iterations=i,
                         u=u_ref,
                         x=x_ref,
                         residual=res,
@@ -293,23 +349,23 @@ class RD3GCasadi(BaseSolver):
         r0_val = self.r_fun_casadi(x, u, lamda, mu, *params_dm)
         dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, *params_dm)
         r0_np = np.array(r0_val)
-        r0_norm = np.linalg.norm(r0_np)
+        r0_norm = norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
         p.e('Form KKT')
 
-        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, N*N*T]
         offsets = list(accumulate(sizes))
         naive_method = False
         if naive_method:
+            istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
             # Naive method: solve sparse system directly
             # r0 + dr_dy @ dy = 0
             # solve for dy directly
             t0 = time()
-            dy_np, istop, itn, normr = scipy.sparse.linalg.lsqr(dr_dy_csc, -r0_np)[:4]
+            dy_np, istop, itn, normr = lsqr(dr_dy_csc, -r0_np)[:4]
             dt = time() - t0
-            residual = np.linalg.norm(normr)
+            residual = norm(normr)
             logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
 
             # Study the LDL decomposition
@@ -332,7 +388,7 @@ class RD3GCasadi(BaseSolver):
                                           mu+step_size*cas.reshape(dmu, N*N, T),
                                           int_param_dm, double_param_dm
                                           )
-                r_norm = np.linalg.norm(r_val)
+                r_norm = norm(r_val)
                 step_size_vec.append(step_size)
                 stepped_r_vec.append(r_norm)
                 if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
@@ -407,64 +463,38 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         KKT += reg_matrix
 
-        # Solve for reduced_dy
-        p.s('Solve KKT (LSQR)')
-        t0 = time()
-        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(KKT, -KKT_residual)[:4]
-        dt = time() - t0
-        residual = np.linalg.norm(normr)
-        logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
-        p.e('Solve KKT (LSQR)')
-
-        # Study the LDL decomposition
-        p.s('LDL Inertia check')
-        KKT_np = KKT.toarray()
-        lu, d, perm = scipy.linalg.ldl(KKT_np)
-        kkt_inertia = check_inertia(d)
-        logger.info(f'Reduced-system Inertia: {kkt_inertia}')
+        p.s('Solve Linear')
+        reduced_dy, residual, kkt_inertia = solve_linear(KKT, -KKT_residual, method='qdldl')
+        p.e('Solve Linear')
 
         # Inertia checking for SOSC
         # Primal variables - inactive lagrange multipliers (mu)
         in_n = n*N*T + m*N*T  # Dimension of primal vars
         in_m = T*N*(n+N) - len(inactive_r_rows)  # f, h - inactive collision constraints
         expected_inertia = (in_n, in_m, 0)
-        logger.info(f'Expected SOSC inertia {expected_inertia}')
+        # logger.info(f'Expected SOSC inertia {expected_inertia}')
         if expected_inertia == kkt_inertia:
             is_optimal = True
         else:
             is_optimal = False
-        p.e('LDL Inertia check')
+            logger.info(f'Bad inertia: Expected {expected_inertia}, actual {kkt_inertia}')
 
-        p.s('Debug checking')
-        # Do we have linearly dependent constraints?
-        H, A = self.hessian_components(KKT)
-        H_pos, H_neg, H_zero = check_inertia(H.toarray())
-        # Lots of zero eigenvals
-        logger.info(f'H inertia {H_pos, H_neg, H_zero}')
+        if DEBUG:
+            p.s('Debug checking')
+            KKT_np = KKT.toarray()
+            # Do we have linearly dependent constraints?
+            H, A = self.hessian_components(KKT)
+            H_pos, H_neg, H_zero = check_inertia(H.toarray())
+            # Lots of zero eigenvals
+            logger.info(f'H inertia {H_pos, H_neg, H_zero}')
 
-        A_dense = A.toarray()
-        rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
-        logger.info(f'{A.shape=}, {rank=}')
+            A_dense = A.toarray()
+            rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
+            logger.info(f'{A.shape=}, {rank=}')
 
-        cond_num = np.linalg.cond(KKT_np)
-        print(f"Condition Number: {cond_num}")
-        p.e('Debug checking')
-
-        p.s('LDL Inertia check and solve (qdldl)')
-        KKT_upper = scipy.sparse.triu(KKT, format='csc')
-        KKT_upper.eliminate_zeros()
-        KKT_upper.sort_indices()
-        KKT_upper.sum_duplicates()
-        solver = qdldl.Solver(KKT_upper, upper=True)
-
-        qdldl_reduced_dy = solver.solve(-KKT_residual)
-        p.e('LDL Inertia check and solve (qdldl)')
-
-        # Check qdldl dy against lsqr result
-        dy_diff = np.linalg.norm(qdldl_reduced_dy - reduced_dy)
-        reduced_dy_norm = np.linalg.norm(reduced_dy)
-        qdldl_reduced_dy_norm = np.linalg.norm(qdldl_reduced_dy)
-        logger.info(f'{dy_diff=}, {reduced_dy_norm=}, {qdldl_reduced_dy_norm=}')
+            cond_num = np.linalg.cond(KKT_np)
+            print(f"Condition Number: {cond_num}")
+            p.e('Debug checking')
 
         # Verify residual reduction with a line search
         # Recover full dy
@@ -484,7 +514,7 @@ class RD3GCasadi(BaseSolver):
                                           mu+step_size*cas.reshape(dmu, N*N, T),
                                           int_param_dm, double_param_dm
                                           )
-                r_norm = np.linalg.norm(r_val)
+                r_norm = norm(r_val)
                 step_size_vec.append(step_size)
                 stepped_r_vec.append(r_norm)
                 if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
@@ -504,33 +534,34 @@ class RD3GCasadi(BaseSolver):
         new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
         new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
         p.e('Cleanup')
-        logger.info(f'{r0_norm=}, {self.reg=}, {step_size=}, {r_norm=}')
+        logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}')
 
         p.s('More debug checking')
-        # Where does the residual come from?
-        r_val_np = r_val.toarray()
-        r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
-        logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
+        if DEBUG:
+            # Where does the residual come from?
+            r_val_np = r_val.toarray()
+            r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
+            logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
 
-        # Are inactive residual indeed inactive?
-        inactive_residual = np.linalg.norm(r_val_np[inactive_r_rows, 0])
-        # logger.debug(f'{inactive_residual=}')
-        assert inactive_residual < 1e-10
+            # Are inactive residual indeed inactive?
+            inactive_residual = norm(r_val_np[inactive_r_rows, 0])
+            # logger.debug(f'{inactive_residual=}')
+            assert inactive_residual < 1e-10
 
-        # Check the linearization is valid
-        r0_np = np.array(r0_val)
-        r_np = np.array(r_val)
-        expected_r = r0_val * (1-step_size)
-        diff = np.linalg.norm(expected_r - r_np)
-        logger.info(f'Diff in expected r {diff=}')
+            # Check the linearization is valid
+            r0_np = np.array(r0_val)
+            r_np = np.array(r_val)
+            expected_r = r0_val * (1-step_size)
+            diff = norm(expected_r - r_np)
+            logger.info(f'Diff in expected r {diff=}')
 
-        # plt.plot(step_size_vec, stepped_r_vec, '*-')
-        # plt.plot(0, r0_norm, 'o')
-        # plt.title('Reduced descent')
-        # plt.show()
-        # TODO Use a merit function of form r_val + C * h_residual
+            # plt.plot(step_size_vec, stepped_r_vec, '*-')
+            # plt.plot(0, r0_norm, 'o')
+            # plt.title('Reduced descent')
+            # plt.show()
+            # TODO Use a merit function of form r_val + C * h_residual
+            p.e('More debug checking')
         self.residual_vec.append(r0_norm)
-        p.e('More debug checking')
         p.e()
 
         has_converged = r_norm < self.config.tolerance
@@ -732,9 +763,9 @@ class RD3GCasadi(BaseSolver):
         AT = dr_dy[:primal_n, primal_n:]
         empty = dr_dy[primal_n:, primal_n:]
         # diff = (H.T - H).toarray()
-        # assert np.linalg.norm(diff) < 1e-10
+        # assert norm(diff) < 1e-10
         # diff = (AT.T - A).toarray()
-        # assert np.linalg.norm(diff) < 1e-10
+        # assert norm(diff) < 1e-10
 
         assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         assert np.sum(np.abs((H-H.T).data)) < 1e-10
@@ -755,13 +786,13 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         offset = 0
-        r_Lx = np.linalg.norm(r[n*N*T, 0])
+        r_Lx = norm(r[n*N*T, 0])
         offset += n*N*T
-        r_Lu = np.linalg.norm(r[offset:offset+m*N*T])
+        r_Lu = norm(r[offset:offset+m*N*T])
         offset += m*N*T
-        r_f = np.linalg.norm(r[offset:offset+n*N*T])
+        r_f = norm(r[offset:offset+n*N*T])
         offset += n*N*T
-        r_h = np.linalg.norm(r[offset:offset+N*N*T])
+        r_h = norm(r[offset:offset+N*N*T])
         offset += N*N*T
         assert r.shape == (offset, 1)
         return r_Lx, r_Lu, r_f, r_h

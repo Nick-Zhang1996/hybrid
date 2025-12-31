@@ -15,6 +15,8 @@ class BaseSolverConfig():
 class Solution():
     """Solution to a Game, return type of BaseSolver"""
     elapsed_time: float = 0
+    """ Total iterations run """
+    iterations: int = 0
     u: Any = None
     """(T,N,m) Open-loop Nash policy"""
     x: Any = None
