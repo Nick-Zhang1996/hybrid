@@ -405,8 +405,13 @@ class RD3GCasadi(BaseSolver):
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
-        reduced_dr_dy_csc += self.reg * \
-            create_partial_identity(reduced_dr_dy_csc.shape[0], primal_var_count)
+        ind = np.arange(primal_var_count)
+        reg_matrix = scipy.sparse.eye(reduced_dr_dy_csc.shape[0], format="csc")
+        reg_matrix[ind, ind] = self.reg
+        # Apply constraint relaxation to allow AMD permutation in LDL
+        ind = np.arange(primal_var_count, reduced_dr_dy_csc.shape[0])
+        reg_matrix[ind, ind] = -self.reg
+        reduced_dr_dy_csc += reg_matrix
 
         # Solve for reduced_dy
         p.s('Solve KKT (LSQR)')
@@ -785,7 +790,8 @@ class RD3GCasadi(BaseSolver):
 
         assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         assert np.sum(np.abs((H-H.T).data)) < 1e-10
-        assert empty.nnz == 0
+        # Due to regularization, this is not empty
+        # assert empty.nnz == 0
         return H, A
 
     def residual_components(self, r):
