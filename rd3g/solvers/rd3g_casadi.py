@@ -3,21 +3,30 @@
 # NOTE since casadi use column-major memory layout, consider changing order of indexing
 # so most frequent slicing is on columns
 
+import sys
 import logging
 from dataclasses import dataclass
 from itertools import accumulate
 from time import time
+import pdb
 
 import numpy as np
+import casadi as cas
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
 import scipy.linalg
 import matplotlib.pyplot as plt
-import casadi as cas
 
-from rd3g.utilities.util import dm_to_csc
-from rd3g.utilities.time_util import TimeUtil
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
+from rd3g.utilities.time_util import TimeUtil
+from rd3g.utilities.util import dm_to_csc
+
+sys.path.append('/home/nick/dcsl/qdldl-python')
+if True:
+    # pylint:disable=import-error
+    import qdldl
+    print(qdldl.__file__)
+
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
@@ -94,7 +103,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
     # Apply Levenberg-Marquardt Regularization
-    reg: float = 1e-7*0
+    reg: float = 1e-4
 
 
 class LineSearchMaxIter(Exception):
@@ -103,19 +112,6 @@ class LineSearchMaxIter(Exception):
 
 class LineSearchSuccess(Exception):
     """ Line search found a step size that gives adequate residual reduction """
-
-
-class SolverConvergedNE(Exception):
-    """ Solver converged to a NE, passing SOSC"""
-
-
-class SolverConvergedSaddle(Exception):
-    """ Solver converged to a saddle, not passing SOSC"""
-
-
-class SolverFailure(Exception):
-    """ Solver failed to converge """
-    # TODO add more reason
 
 
 class RD3GCasadi(BaseSolver):
@@ -248,22 +244,22 @@ class RD3GCasadi(BaseSolver):
         has_converged = False
         is_optimal = False
         t0 = time()
-        try:
-            for i in range(self.config.iterations):
-                x_ref, u_ref, lambda_ref, mu_ref, res = self.step(x_ref, u_ref, lambda_ref, mu_ref)
-            raise SolverFailure('Max iteration reached')
-        except SolverConvergedNE as e:
-            has_converged = True
-            is_optimal = True
-            logger.info(f'Stop after {i} iteration because {e}')
-        except SolverConvergedSaddle as e:
-            has_converged = True
-            is_optimal = False
-            logger.info(f'Stop after {i} iteration because {e}')
-        except SolverFailure as e:
-            logger.info(f'Stop after {i} iteration because {e}')
-
+        for i in range(self.config.iterations):
+            x_ref, u_ref, lambda_ref, mu_ref, res, has_converged, is_optimal = self.step(
+                x_ref, u_ref, lambda_ref, mu_ref)
+            if has_converged:
+                break
         dt = time() - t0
+        msg = ''
+        if has_converged and is_optimal:
+            msg = 'Converged to NE'
+        elif has_converged and not is_optimal:
+            msg = 'Converged to saddle point'
+        else:
+            msg = 'Max Iteration reached'
+
+        logger.info(f'Stop after {i} iteration because {msg}')
+
         return Solution(elapsed_time=dt,
                         u=u_ref,
                         x=x_ref,
@@ -322,7 +318,7 @@ class RD3GCasadi(BaseSolver):
             residual = np.linalg.norm(normr)
             logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
 
-            # study the LDL decomposition
+            # Study the LDL decomposition
             lu, d, perm = scipy.linalg.ldl(dr_dy_csc.toarray())
             del lu
             del perm
@@ -409,7 +405,8 @@ class RD3GCasadi(BaseSolver):
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
-        reduced_dr_dy_csc += create_partial_identity(reduced_dr_dy_csc.shape[0], primal_var_count)
+        reduced_dr_dy_csc += self.reg * \
+            create_partial_identity(reduced_dr_dy_csc.shape[0], primal_var_count)
 
         # Solve for reduced_dy
         p.s('Solve KKT (LSQR)')
@@ -451,6 +448,70 @@ class RD3GCasadi(BaseSolver):
         cond_num = np.linalg.cond(reduced_dr_dy_np)
         print(f"Condition Number: {cond_num}")
         p.e('Debug checking')
+
+        p.s('LDL Inertia check and solve (qdldl)')
+        KKT = reduced_dr_dy_csc
+        # ensure KKT is symmetric
+        assert np.linalg.norm((KKT - KKT.T).toarray()) < 1e-10
+        KKT_upper = scipy.sparse.triu(KKT, format='csc')
+        KKT_upper.eliminate_zeros()  # Remove explicit zeros
+        KKT_upper.sort_indices()
+        KKT_upper.sum_duplicates()
+        KKT_upper.data = KKT_upper.data.astype(np.float64)
+        KKT_upper.indices = KKT_upper.indices.astype(np.int64)
+        KKT_upper.indptr = KKT_upper.indptr.astype(np.int64)
+
+        for i in range(KKT_upper.shape[0]):
+            # any column empty?
+            col_norm = np.linalg.norm(KKT_upper[:, 0].toarray())
+            if col_norm < 1e-6:
+                breakpoint()
+            row_norm = np.linalg.norm(KKT_upper[0, :].toarray())
+            if row_norm < 1e-6:
+                breakpoint()
+        if not KKT_upper.indptr.flags['C_CONTIGUOUS']:
+            print("WARNING: indptr is still not contiguous!")
+        if not KKT_upper.indices.flags['C_CONTIGUOUS']:
+            print("WARNING: indices is still not contiguous!")
+        from rd3g.solvers.permutation import mPinv, permute_sparse_symmetric, symperm
+        A_perm = permute_sparse_symmetric(KKT_upper, mPinv, upper_triangular_only=True)
+        w = np.zeros(KKT_upper.shape[0], dtype=np.int64)
+        C = symperm(KKT_upper, mPinv, None, w)
+
+        print(A_perm.indptr[:10])
+        A_perm.sum_duplicates()
+        A_perm.eliminate_zeros()
+        for i in range(A_perm.shape[0]):
+            if A_perm.indptr[i] == A_perm.indptr[i+1]:
+                print(f'A_perm Not proper upper triangular, {i}')
+                # breakpoint()
+        print(C.indptr[:10])  # this agrees with qdldl's symperm, same output
+
+        for i in range(C.shape[0]):
+            if C.indptr[i] == C.indptr[i+1]:
+                print(f'C Not proper upper triangular, {i}')
+                # breakpoint()
+        # Check C, is it upper triangular?  yes
+        C_upper = scipy.sparse.triu(C, format='csc')
+        assert np.linalg.norm((C_upper - C).toarray()) < 1e-10
+        # does it have identical norm as A_upper? - Yes
+        assert np.linalg.norm((A_perm - C).toarray()) < 1e-10
+        # A_perm and C are identical, however, A is upper triangular while C is not
+
+        # Check a specific row/column swap
+        # Do it naively, construct matrix P
+        Pinv = np.zeros(C.shape)
+        for i in range(len(mPinv)):
+            Pinv[i, mPinv[i]] = 1
+        C_naive = scipy.sparse.triu(scipy.sparse.csc_matrix(Pinv.T @ KKT @ Pinv), format='csc')
+        assert np.linalg.norm((C_upper - C_naive).toarray()) < 1e-10
+
+        pdb.set_trace()
+        solver = qdldl.Solver(KKT_upper, upper=True)
+        pdb.set_trace()
+
+        dy = solver.solve(-reduced_r0)
+        p.e('LDL Inertia check and solve (qdldl)')
 
         # Verify residual reduction with a line search
         # Recover full dy
@@ -519,13 +580,9 @@ class RD3GCasadi(BaseSolver):
         p.e('More debug checking')
         p.e()
 
-        if r_norm < self.config.tolerance:
-            if is_optimal:
-                raise SolverConvergedNE
-            else:
-                raise SolverConvergedSaddle
+        has_converged = r_norm < self.config.tolerance
 
-        return new_x, new_u, new_lamda, new_mu, r_norm
+        return new_x, new_u, new_lamda, new_mu, r_norm, has_converged, is_optimal
 
     def final(self):
         self.profiler.summary()
