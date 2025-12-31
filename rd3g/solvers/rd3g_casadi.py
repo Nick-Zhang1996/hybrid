@@ -8,10 +8,10 @@ import logging
 from dataclasses import dataclass
 from itertools import accumulate
 from time import time
-import pdb
 
 import numpy as np
 import casadi as cas
+import qdldl
 import scipy.sparse  # sparse matrix operations
 import scipy.sparse.linalg
 import scipy.linalg
@@ -20,12 +20,6 @@ import matplotlib.pyplot as plt
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
 from rd3g.utilities.time_util import TimeUtil
 from rd3g.utilities.util import dm_to_csc
-
-sys.path.append('/home/nick/dcsl/qdldl-python')
-if True:
-    # pylint:disable=import-error
-    import qdldl
-    print(qdldl.__file__)
 
 
 logger = logging.getLogger('RD3G_CasADi')
@@ -396,8 +390,8 @@ class RD3GCasadi(BaseSolver):
         active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
 
         # TODO set the relevant mu to 0
-        reduced_r0 = r0_np[active_r_rows, :]
-        reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
+        KKT_residual = reduced_r0 = r0_np[active_r_rows, :]
+        KKT = reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
         p.e('Reduce KKT')
 
         # Reduced method: solve sparse system directly
@@ -406,28 +400,30 @@ class RD3GCasadi(BaseSolver):
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
         ind = np.arange(primal_var_count)
-        reg_matrix = scipy.sparse.eye(reduced_dr_dy_csc.shape[0], format="csc")
+        reg_matrix = scipy.sparse.eye(KKT.shape[0], format="csc")
         reg_matrix[ind, ind] = self.reg
         # Apply constraint relaxation to allow AMD permutation in LDL
-        ind = np.arange(primal_var_count, reduced_dr_dy_csc.shape[0])
+        ind = np.arange(primal_var_count, KKT.shape[0])
         reg_matrix[ind, ind] = -self.reg
-        reduced_dr_dy_csc += reg_matrix
+        KKT += reg_matrix
 
         # Solve for reduced_dy
         p.s('Solve KKT (LSQR)')
         t0 = time()
-        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(reduced_dr_dy_csc, -reduced_r0)[:4]
+        reduced_dy, istop, itn, normr = scipy.sparse.linalg.lsqr(KKT, -KKT_residual)[:4]
         dt = time() - t0
         residual = np.linalg.norm(normr)
         logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
         p.e('Solve KKT (LSQR)')
+
         # Study the LDL decomposition
         p.s('LDL Inertia check')
-        reduced_dr_dy_np = reduced_dr_dy_csc.toarray()
-        lu, d, perm = scipy.linalg.ldl(reduced_dr_dy_np)
+        KKT_np = KKT.toarray()
+        lu, d, perm = scipy.linalg.ldl(KKT_np)
         kkt_inertia = check_inertia(d)
         logger.info(f'Reduced-system Inertia: {kkt_inertia}')
-        # Inertia checking for SOSC -> not enough pos, too many neg and zeros
+
+        # Inertia checking for SOSC
         # Primal variables - inactive lagrange multipliers (mu)
         in_n = n*N*T + m*N*T  # Dimension of primal vars
         in_m = T*N*(n+N) - len(inactive_r_rows)  # f, h - inactive collision constraints
@@ -441,7 +437,7 @@ class RD3GCasadi(BaseSolver):
 
         p.s('Debug checking')
         # Do we have linearly dependent constraints?
-        H, A = self.hessian_components(reduced_dr_dy_csc)
+        H, A = self.hessian_components(KKT)
         H_pos, H_neg, H_zero = check_inertia(H.toarray())
         # Lots of zero eigenvals
         logger.info(f'H inertia {H_pos, H_neg, H_zero}')
@@ -450,73 +446,25 @@ class RD3GCasadi(BaseSolver):
         rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
         logger.info(f'{A.shape=}, {rank=}')
 
-        cond_num = np.linalg.cond(reduced_dr_dy_np)
+        cond_num = np.linalg.cond(KKT_np)
         print(f"Condition Number: {cond_num}")
         p.e('Debug checking')
 
         p.s('LDL Inertia check and solve (qdldl)')
-        KKT = reduced_dr_dy_csc
-        # ensure KKT is symmetric
-        assert np.linalg.norm((KKT - KKT.T).toarray()) < 1e-10
         KKT_upper = scipy.sparse.triu(KKT, format='csc')
-        KKT_upper.eliminate_zeros()  # Remove explicit zeros
+        KKT_upper.eliminate_zeros()
         KKT_upper.sort_indices()
         KKT_upper.sum_duplicates()
-        KKT_upper.data = KKT_upper.data.astype(np.float64)
-        KKT_upper.indices = KKT_upper.indices.astype(np.int64)
-        KKT_upper.indptr = KKT_upper.indptr.astype(np.int64)
-
-        for i in range(KKT_upper.shape[0]):
-            # any column empty?
-            col_norm = np.linalg.norm(KKT_upper[:, 0].toarray())
-            if col_norm < 1e-6:
-                breakpoint()
-            row_norm = np.linalg.norm(KKT_upper[0, :].toarray())
-            if row_norm < 1e-6:
-                breakpoint()
-        if not KKT_upper.indptr.flags['C_CONTIGUOUS']:
-            print("WARNING: indptr is still not contiguous!")
-        if not KKT_upper.indices.flags['C_CONTIGUOUS']:
-            print("WARNING: indices is still not contiguous!")
-        from rd3g.solvers.permutation import mPinv, permute_sparse_symmetric, symperm
-        A_perm = permute_sparse_symmetric(KKT_upper, mPinv, upper_triangular_only=True)
-        w = np.zeros(KKT_upper.shape[0], dtype=np.int64)
-        C = symperm(KKT_upper, mPinv, None, w)
-
-        print(A_perm.indptr[:10])
-        A_perm.sum_duplicates()
-        A_perm.eliminate_zeros()
-        for i in range(A_perm.shape[0]):
-            if A_perm.indptr[i] == A_perm.indptr[i+1]:
-                print(f'A_perm Not proper upper triangular, {i}')
-                # breakpoint()
-        print(C.indptr[:10])  # this agrees with qdldl's symperm, same output
-
-        for i in range(C.shape[0]):
-            if C.indptr[i] == C.indptr[i+1]:
-                print(f'C Not proper upper triangular, {i}')
-                # breakpoint()
-        # Check C, is it upper triangular?  yes
-        C_upper = scipy.sparse.triu(C, format='csc')
-        assert np.linalg.norm((C_upper - C).toarray()) < 1e-10
-        # does it have identical norm as A_upper? - Yes
-        assert np.linalg.norm((A_perm - C).toarray()) < 1e-10
-        # A_perm and C are identical, however, A is upper triangular while C is not
-
-        # Check a specific row/column swap
-        # Do it naively, construct matrix P
-        Pinv = np.zeros(C.shape)
-        for i in range(len(mPinv)):
-            Pinv[i, mPinv[i]] = 1
-        C_naive = scipy.sparse.triu(scipy.sparse.csc_matrix(Pinv.T @ KKT @ Pinv), format='csc')
-        assert np.linalg.norm((C_upper - C_naive).toarray()) < 1e-10
-
-        pdb.set_trace()
         solver = qdldl.Solver(KKT_upper, upper=True)
-        pdb.set_trace()
 
-        dy = solver.solve(-reduced_r0)
+        qdldl_reduced_dy = solver.solve(-KKT_residual)
         p.e('LDL Inertia check and solve (qdldl)')
+
+        # Check qdldl dy against lsqr result
+        dy_diff = np.linalg.norm(qdldl_reduced_dy - reduced_dy)
+        reduced_dy_norm = np.linalg.norm(reduced_dy)
+        qdldl_reduced_dy_norm = np.linalg.norm(qdldl_reduced_dy)
+        logger.info(f'{dy_diff=}, {reduced_dy_norm=}, {qdldl_reduced_dy_norm=}')
 
         # Verify residual reduction with a line search
         # Recover full dy
