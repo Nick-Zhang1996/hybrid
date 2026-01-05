@@ -25,7 +25,8 @@ for i in range(1):
     converge_vec.append(sol.has_converged)
     optimal_vec.append(sol.is_optimal)
     dt_vec.append(sol.elapsed_time)
-    logger.info(f'{i=}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f}')
+    logger.info(
+        f'{i=}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.is_optimal=}')
 
     if i % 10 == 9:
         convergence_rate = np.mean(converge_vec)

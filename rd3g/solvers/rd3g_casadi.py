@@ -367,49 +367,6 @@ class RD3GCasadi(BaseSolver):
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
-        naive_method = False
-        if naive_method:
-            istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
-            # Naive method: solve sparse system directly
-            # r0 + dr_dy @ dy = 0
-            # solve for dy directly
-            t0 = time()
-            dy_np, istop, itn, normr = lsqr(dr_dy_csc, -r0_np)[:4]
-            dt = time() - t0
-            residual = norm(normr)
-            logger.info(f'Full stop:{istop_lut[istop]}, {dt=}s {itn=}, {residual=}')
-
-            # Study the LDL decomposition
-            lu, d, perm = scipy.linalg.ldl(dr_dy_csc.toarray())
-            del lu
-            del perm
-            pos, neg, zero = check_inertia(d)
-            logger.info(f'Full-system Inertia: {pos, neg, zero}')
-
-            # Check, does dy improve residual? do a line search --- Yes!
-            dy = cas.DM(dy_np)
-            dx, du, dlamda, dmu = cas.vertsplit(dy, offsets)
-            step_size = 1.0
-            step_size_vec = []
-            stepped_r_vec = []
-            for _ in range(self.config.backtracking_max_iter):
-                r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
-                                          u+step_size*cas.reshape(du, m*N, T),
-                                          lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                          mu+step_size*cas.reshape(dmu, n_hi*N),
-                                          int_param_dm, double_param_dm
-                                          )
-                r_norm = norm(r_val)
-                step_size_vec.append(step_size)
-                stepped_r_vec.append(r_norm)
-                if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
-                    step_size *= self.config.bc_b
-                else:
-                    break
-            # plt.plot(step_size_vec, stepped_r_vec, '*-')
-            # plt.plot(0, r0_norm, 'o')
-            # plt.title('Full descent')
-            # plt.show()
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint
