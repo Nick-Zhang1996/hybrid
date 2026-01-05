@@ -29,6 +29,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     N: int = 3
     n: int = 4
     m: int = 2
+    n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
     track_width: float = 2.2
     collision_radius: float = 2.0
 
@@ -73,6 +74,8 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
     def __init__(self, config: CarMergeKinematicBicycleCasadiConfig):
         super().__init__(config)
 
+        # n_hi is a new concept
+        self.n_hi = config.n_hi
         # bounds for visualization
         self.visual_x_lim = [-2.5, 2.5]
         self.visual_y_lim = [-2, 30]
@@ -376,11 +379,43 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         val = x_k_i + dx * dt
         return val
 
-    def h(self, x_i, x_j):
+    def h(self, x, u):
+        """ Construct the inequality constraint function. 
+        h() is a mapping from (x,u) to all constraints. 
+        Args:
+            x: (n*N,T), states, casadi.SX symbolic variable
+            u: (m*N,T), controls, casadi.SX symbolic variable
+        Returns:
+            h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
+        """
+        h_vec = []
+        for i in range(self.N):
+            hi_vec = []
+            # Collision constraint collison_h(xi, xj) N*T
+            for k in range(1, self.T+1):
+                # collision residual for h > 0
+                # x[k] -> x_{k+1} due to index alignment
+                xk = cas.reshape(x[:, k-1], self.n, self.N)
+                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
+                # ignore self-collision, but keep this dummy constraint to simplify index counting
+                h_vals[i] = 0
+                h_vals = cas.vertcat(*h_vals)
+                assert h_vals.shape == (self.N, 1)
+                hi_vec.append(h_vals)  # N, agent i vs everyone (N)
+            # Additional constraints for agent i, None here
+            h_vec.append(cas.vertcat(*hi_vec))  # N*T
+
+        h_vec = cas.horzcat(*h_vec)
+        assert h_vec.shape == (self.n_hi, self.N)
+        return h_vec
+
+    def collision_h(self, x_i, x_j):
         """ Collision constraint for x_i, anx x_j agent, h <= 0
         Args:
             x_i: (n,1) State of i at time k
             x_j: (n,1) State of j at time k
+        Return:
+            h_val: (1,1), h_val <= 0 means no collision
 
         """
         # car distance larger than 1.2 normalized
@@ -440,6 +475,7 @@ def create_random_game(car_count=3, horizon=20):
         N=N,
         n=n,
         m=m,
+        n_hi=N*T,  # Collision constraint only
         track_width=default.track_width,
         collision_radius=default.collision_radius,
         x0=x0,

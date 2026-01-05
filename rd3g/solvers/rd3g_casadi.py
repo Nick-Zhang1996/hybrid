@@ -3,7 +3,6 @@
 # NOTE since casadi use column-major memory layout, consider changing order of indexing
 # so most frequent slicing is on columns
 
-import sys
 import logging
 from dataclasses import dataclass
 from itertools import accumulate
@@ -25,7 +24,7 @@ from rd3g.utilities.util import dm_to_csc
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
-DEBUG = False
+DEBUG = True
 
 
 def create_partial_identity(n, k):
@@ -104,6 +103,8 @@ def solve_linear(A, b, method):
         # Get inertia from LDL decomposition
         A_np = A.toarray()
         lu, d, perm = scipy.linalg.ldl(A_np)
+        del lu
+        del perm
         kkt_inertia = check_inertia(d)
         logger.info(f'Reduced-system Inertia: {kkt_inertia}')
         return x, residual, kkt_inertia
@@ -116,6 +117,8 @@ def solve_linear(A, b, method):
         solver = qdldl.Solver(A_upper, upper=True)
         #  C = P @ A @ P.T, C = L @ D @ L.T
         L_zero_diag, D_diag, P_vec = solver.factors()
+        del L_zero_diag
+        del P_vec
         qdldl_x = solver.solve(b)
         pos = np.sum(D_diag > 0)
         neg = np.sum(D_diag < 0)
@@ -186,6 +189,7 @@ class RD3GCasadi(BaseSolver):
         self.dt = self.game.config.dt
         self.n = self.game.config.n
         self.m = self.game.config.m
+        self.n_hi = self.game.config.n_hi
         self.x0 = self.game.config.x0
 
         self.guess = np.zeros((self.m, self.N, self.T))
@@ -222,6 +226,7 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         T = self.T
+        n_hi = self.n_hi
         gc = self.game.config
 
         # NOTE: casadi only works with 2D matrices, we combine n,N into first dimension
@@ -231,9 +236,13 @@ class RD3GCasadi(BaseSolver):
         # This results in a slice that's continuous in memory
         x = cas.SX.sym('x', n*N, T)
         u = cas.SX.sym('u', m*N, T)
+        # Lagrang multiplier for equality constraints, we only have dynamics constraint
         lamda = cas.SX.sym('lamda', n*N, T)
-        # For agent i's collision against j, cas.reshape(mu[:,k], N,N)[j,i]
-        mu = cas.SX.sym('mu', N*N, T)
+        # Lagrange multiplier for inequality constraints
+        # h() dim: n_hi, N is organized by agents, collision constraints first
+        # For agent i's collision against j, cas.reshape(mu, n_hi,N)[j,i]
+        # For agent i's k-th non-collision constraint, cas.reshape(mu, n_hi,N)[N+k,i]
+        mu = cas.SX.sym('mu', n_hi*N, 1)
         x0 = cas.SX.sym('x0', n, N)
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
 
@@ -243,22 +252,23 @@ class RD3GCasadi(BaseSolver):
         # get_n_fun = cas.Function('get_n', [], [self.n])
         # get_m_fun = cas.Function('get_m', [], [self.m])
 
-        r = self.r(*args)
-        self.r_fun_casadi = cas.Function('r', args+config_params, [r])
+        r_val = self.r(*args)
+        self.r_fun_casadi = cas.Function('r', args+config_params, [r_val])
 
-        dr_dy = cas.jacobian(r, y)
+        dr_dy = cas.jacobian(r_val, y)
         self.dr_dy_fun_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
 
         X = self.game.rollout(x0, u)
         self.rollout_fun_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
-        H_val = self.get_h_val(x)
-        self.H_val_casadi = cas.Function('H', [x]+config_params, [H_val])
+        h_val = self.game.h(x, u)
+        self.h_val_casadi = cas.Function('h', [x, u]+config_params, [h_val])
 
+        # TODO Some games may not have collision constraints, fail silently
         xki = cas.SX.sym('xki', n, 1)
         xkj = cas.SX.sym('xkj', n, 1)
-        h_val = self.game.h(xki, xkj)
-        self.h_val_casadi = cas.Function('h', [xki, xkj]+config_params, [h_val])
+        col_h_val = self.game.collision_h(xki, xkj)
+        self.col_h_val_casadi = cas.Function('collision_h', [xki, xkj]+config_params, [col_h_val])
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
@@ -270,9 +280,10 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n = self.n
         m = self.m
-        # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(N,N,T)
+        n_hi = self.n_hi
+        # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
         logger.debug(
-            f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+(T*N*N)}'
+            f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
         )
 
         u_ref = np.zeros((m*N, T), order='F')
@@ -285,8 +296,7 @@ class RD3GCasadi(BaseSolver):
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         lambda_ref = cas.DM.zeros((n*N, T))
-        # defined for all h_k_i_j, but all values may not be used
-        mu_ref = cas.DM.zeros((N*N, T))
+        mu_ref = cas.DM.zeros((n_hi*N, 1))
 
         i = 0
         has_converged = False
@@ -323,7 +333,7 @@ class RD3GCasadi(BaseSolver):
             x_ref: n*N,T, casadi.DM
             u_ref: m*N,T
             lamda: n*N,T
-            mu: N*N,T
+            mu: n_hi*N, 1
         Return:
             x_ref, u_ref, lamda, mu: updated
             res: residual
@@ -335,6 +345,7 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n = self.n
         m = self.m
+        n_hi = self.n_hi
         gc = self.game.config
         x = x_ref
         u = u_ref
@@ -354,7 +365,7 @@ class RD3GCasadi(BaseSolver):
         p.e('Form KKT')
 
         # size of x, u, lamda, mu
-        sizes = [0, n*N*T, m*N*T, n*N*T, N*N*T]
+        sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
         naive_method = False
         if naive_method:
@@ -381,11 +392,11 @@ class RD3GCasadi(BaseSolver):
             step_size = 1.0
             step_size_vec = []
             stepped_r_vec = []
-            for i in range(self.config.backtracking_max_iter):
+            for _ in range(self.config.backtracking_max_iter):
                 r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
                                           u+step_size*cas.reshape(du, m*N, T),
                                           lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                          mu+step_size*cas.reshape(dmu, N*N, T),
+                                          mu+step_size*cas.reshape(dmu, n_hi*N),
                                           int_param_dm, double_param_dm
                                           )
                 r_norm = norm(r_val)
@@ -401,57 +412,36 @@ class RD3GCasadi(BaseSolver):
             # plt.show()
 
         # Remove inactive constraints and their multiplier
-        # h < 0 -> inactive cosntraint, remove rows for h, also remove columns for mu
-        # r consists of all agent's residual concatenated, EACH agent has n_ri = 2nT + mT + NT rows
-        # If h(i,j,k) < 0, then r[i*n_ri + 2nT + k*N + j] = 0 and can be removed
-        # Also, the corresponding multiplier mu dim(NN,T) row [N*i+j, k] can be removed
-        # NOTE that the same applies for flipped i,j
-        # TODO handle symmetry and keep sparseness
-        dLL_f_offset = N*T*(2*n+m)
-        mu_in_y_offset = n*N*T + m*N*T + n*N*T
+        # h < 0 -> inactive cosntraint
+        #   remove them from residual to reduce dimension, also remove corresponding columns in mu
+        # Starting index of first h() in residual
+        h_in_r_offset = n*N*T + m*N*T + n*N*T  # dLLi_dx, dLLi_du, dynamics constraint
+        # Starting index of mu, multiplier for h()
+        mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
         p.s('Reduce KKT')
 
-        H_val = np.array(self.H_val_casadi(x, *params_dm), order='F').reshape((N, N, T), order='F')
-        neg_h_mask = np.array(H_val < 0).nonzero()
+        h_val = np.array(self.h_val_casadi(x, u, *params_dm), order='F').flatten(order='F')
+        neg_h_mask = np.array(h_val < 0).nonzero()[0]
         inactive_r_rows = []
         inactive_y_rows = []
-        for i, j, k in zip(*neg_h_mask):
-            inactive_r_rows.append(dLL_f_offset + k*N*N + i*N + j)
-            inactive_y_rows.append(mu_in_y_offset + k*N*N + i*N + j)
-            # Check h_val is indeed negative
-            # print(f'adding {i,j,k}, -> {inactive_r_rows[-1]}')
-            # xk = np.array(x_ref[:, k], order='F').reshape((n, N), order='F')
-            # h_val = self.h_val_casadi(cas.DM(xk[:, i]), cas.DM(xk[:, j]), *params_dm)
-            # if (h_val > 0):
-            #     print(i, j, k)
-            #     breakpoint()
-            # assert h_val < 0
+        for idx in neg_h_mask:
+            inactive_r_rows.append(h_in_r_offset + idx)
+            inactive_y_rows.append(mu_in_y_offset + idx)
 
-        # set all self-collision to be inactive
-        for k in range(T):
-            for i in range(N):
-                j = i
-                inactive_r_rows.append(dLL_f_offset + k*N*N + i*N + j)
-                inactive_y_rows.append(mu_in_y_offset + k*N*N + i*N + j)
-                # Verify that h(xi,xi) > 0, because an agent always collide with itself
-                # print(f'adding {i,j,k}, -> {inactive_r_rows[-1]}')
-                # xk = np.array(x_ref[:, k], order='F').reshape(n, N)
-                # h_val = self.h_val_casadi(cas.DM(xk[:, i]), cas.DM(xk[:, j]), *params_dm)
-                # assert h_val >= 0
         # Remove zero rows & columns in the linear system
         all_r_indices = np.arange(dr_dy_csc.shape[0])
         all_y_indices = np.arange(dr_dy_csc.shape[1])
-        # Get the "complement" (the indices you want to keep)
         active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
         active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
 
-        # TODO set the relevant mu to 0
-        KKT_residual = reduced_r0 = r0_np[active_r_rows, :]
-        KKT = reduced_dr_dy_csc = dr_dy_csc[active_r_rows, :][:, active_y_rows]
+        # TODO set the relevant mu to 0 to satisfy strict complementarity
+        KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
+        KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
         p.e('Reduce KKT')
 
-        # Reduced method: solve sparse system directly
-        # r0 + dr_dy @ dy = 0
+        # solve sparse system
+        # Full: r0 + dr_dy @ dy = 0
+        # Reduced: KKT_residual + KKT @ reduced_dy = 0
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
@@ -468,9 +458,8 @@ class RD3GCasadi(BaseSolver):
         p.e('Solve Linear')
 
         # Inertia checking for SOSC
-        # Primal variables - inactive lagrange multipliers (mu)
-        in_n = n*N*T + m*N*T  # Dimension of primal vars
-        in_m = T*N*(n+N) - len(inactive_r_rows)  # f, h - inactive collision constraints
+        in_n = n*N*T + m*N*T  # Primal vars
+        in_m = T*N*n + n_hi*N - len(inactive_r_rows)  # Active multipliers
         expected_inertia = (in_n, in_m, 0)
         # logger.info(f'Expected SOSC inertia {expected_inertia}')
         if expected_inertia == kkt_inertia:
@@ -481,11 +470,12 @@ class RD3GCasadi(BaseSolver):
 
         if DEBUG:
             p.s('Debug checking')
+            H, A = self.hessian_components(dr_dy_csc)
+
             KKT_np = KKT.toarray()
             # Do we have linearly dependent constraints?
             H, A = self.hessian_components(KKT)
             H_pos, H_neg, H_zero = check_inertia(H.toarray())
-            # Lots of zero eigenvals
             logger.info(f'H inertia {H_pos, H_neg, H_zero}')
 
             A_dense = A.toarray()
@@ -493,7 +483,7 @@ class RD3GCasadi(BaseSolver):
             logger.info(f'{A.shape=}, {rank=}')
 
             cond_num = np.linalg.cond(KKT_np)
-            print(f"Condition Number: {cond_num}")
+            print(f"KKT matrix condition Number: {cond_num}")
             p.e('Debug checking')
 
         # Verify residual reduction with a line search
@@ -507,11 +497,11 @@ class RD3GCasadi(BaseSolver):
         step_size_vec = []
         stepped_r_vec = []
         try:
-            for i in range(self.config.backtracking_max_iter):
+            for _ in range(self.config.backtracking_max_iter):
                 r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
                                           u+step_size*cas.reshape(du, m*N, T),
                                           lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                          mu+step_size*cas.reshape(dmu, N*N, T),
+                                          mu+step_size*cas.reshape(dmu, n_hi*N, 1),
                                           int_param_dm, double_param_dm
                                           )
                 r_norm = norm(r_val)
@@ -532,7 +522,7 @@ class RD3GCasadi(BaseSolver):
         new_x = x+step_size*cas.reshape(dx, n*N, T)
         new_u = u+step_size*cas.reshape(du, m*N, T)
         new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
-        new_mu = mu+step_size*cas.reshape(dmu, N*N, T)
+        new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
         p.e('Cleanup')
         logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}')
 
@@ -579,14 +569,14 @@ class RD3GCasadi(BaseSolver):
     # ----- derivatives and other generic math functions ----
     # NOTE revised for casadi
 
-    def L(self, x_k, u_k_i, x_k1_i, lamda_k, mu_k, i):
-        ''' Lagrangian for agent i
+    def L(self, x_k, u_k_i, x_k1_i, lamda_k, mu_i, i):
+        ''' Lagrangian for agent i at time k, excluding inequality constraints
         Args:
             x_k: (n,N) state vector at step k
             u_k_i: (m,1) control vector for agent i at step k
             x_k1_i: (n,1) state vector for agent i at step k+1
             lamda_k: (n,N) Multiplier for dynamics constraint
-            mu_k: (N,N), symmetric?,  multiplier for positive h
+            mu_i: (n_hi, 1),  (unused) multiplier for inequality constraint h()
             i: agent index i
         Return:
             val: scalar value of lagrangian
@@ -594,36 +584,29 @@ class RD3GCasadi(BaseSolver):
         N = self.N
         n = self.n
         m = self.m
+        n_hi = self.n_hi
         assert x_k.shape == (n, N)
         assert u_k_i.shape == (m, 1)
         assert x_k1_i.shape == (n, 1)
         assert lamda_k.shape == (n, N)
-        assert mu_k.shape == (N, N)
-        # feasibility for h>0
-        h_vals = cas.vertcat(*[self.game.h(x_k[:, i], x_k[:, j]) for j in range(self.N)])
-        # NOTE add fmax here for safety, it may not be needed if
-        # mu_k has structural 00 where h_vals < 0
-        # we only want to sum h_val > 0
-        mu_h_plus_vals = cas.dot(mu_k[:, i], cas.fmax(h_vals, 0))
-
-        # barrier for h < 0
-        h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(h_vals, -1e-100)))
+        assert mu_i.shape == (n_hi, 1)
 
         i_onehot = cas.SX.eye(self.N)[:, i]
         # NOTE it may be better to store lamda_k_T to take advantage of col-major storage
         dynamics_val = lamda_k[:, i].T @ (self.game.f(x_k[:, i], u_k_i, i_onehot) - x_k1_i)
-        val = self.game.J(x_k, u_k_i, i_onehot) + mu_h_plus_vals + h_neg_barrier_vals + dynamics_val
+        val = self.game.J(x_k, u_k_i, i_onehot) + dynamics_val
         assert val.shape == (1, 1)
         return val
 
-    def LLi(self, x, u, lamda, mu, i):
+    def LLi(self, x, u, lamda, mu, i, hi_vals):
         ''' Lagrangian for agent i across all time steps
         Args:
             x: (n*N,T) Agent states
             u: (m*N,T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
-            mu: (N*N, T) Multiplier for positive h
+            mu: (n_hi*N, 1) Multiplier for positive h
             i: agent index
+            hi_vals: (n_hi, 1) h() values for agent i
         Return:
             val: scalar value of Lagrangian
         '''
@@ -631,51 +614,39 @@ class RD3GCasadi(BaseSolver):
         N = self.N
         m = self.m
         n = self.n
+        n_hi = self.n_hi
         LLi_val = sum([self.L(cas.reshape(x[:, k - 1], n, N),
                               cas.reshape(u[:, k], m, N)[:, i],
                               cas.reshape(x[:, k], n, N)[:, i],
                               cas.reshape(lamda[:, k], n, N),
-                              cas.reshape(mu[:, k - 1], N, N),
+                              cas.reshape(mu, n_hi, N)[:, i],
                               i)
                       for k in range(1, T)])
+
+        # feasibility for h>0
+        # NOTE add fmax here for safety,
+        # we only want to sum h_val > 0
+        # TODO set corresponding mu for inactive constraints to 0 for strict complementarity
+        mu_i = cas.reshape(mu, n_hi, N)[:, i]
+        mu_h_plus_vals = cas.dot(mu_i, cas.fmax(hi_vals, 0))
+        # barrier for h < 0
+        h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(hi_vals, -1e-100)))
+        LLi_val += mu_h_plus_vals + h_neg_barrier_vals
+
         x0 = self.game.config.get_param('x0')
         # x0 related terms
+        lamda_0_i = cas.reshape(lamda[:, 0], n, N)[:, i]  # k=0
         i_onehot = cas.SX.eye(self.N)[:, i]
         u0_i = cas.reshape(u[:, 0], m, N)[:, i]
         LLi_val += (self.game.J(x0, u0_i, i_onehot) +
-                    cas.reshape(lamda[:, 0], n, N)[:, i].T
-                    @ (self.game.f(x0[:, i], u0_i, i_onehot)
+                    cas.dot(lamda_0_i, self.game.f(x0[:, i], u0_i, i_onehot)
                     - cas.reshape(x[:, 0], n, N)[:, i]))
         # x_T related terms
         x_T = cas.reshape(x[:, T-1], n, N)
         LLi_val += self.game.Jfi(x_T, i_onehot)
-        h_vals = cas.vertcat(*[self.game.h(x_T[:, i], x_T[:, j]) for j in range(self.N)])
-        mu_h_plus = cas.dot(cas.reshape(mu[:, T-1], N, N)[:, i], cas.fmax(h_vals, 0))
-        h_neg = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(h_vals, -1e-100)))
 
-        LLi_val += mu_h_plus + h_neg
         assert LLi_val.shape == (1, 1)
         return LLi_val
-
-    def get_h_val(self, x):
-        """
-        Args:
-            x: (n*N,T) Agent states
-        Return:
-            h_val: (N*N, T)
-        """
-        # TODO this is a symmetric matrix
-        h_k_vals = []
-        for k in range(self.T):
-            x_k = cas.reshape(x[:, k], self.n, self.N)
-            h_k_i_vals = []
-            for i in range(self.N):
-                h_k_i = cas.vertcat(*[self.game.h(x_k[:, i], x_k[:, j]) for j in range(self.N)])
-                h_k_i_vals.append(h_k_i)
-            h_k_vals.append(cas.vertcat(*h_k_i_vals).T)
-        h_val = cas.vertcat(*h_k_vals).T
-        assert h_val.shape == (self.N*self.N, self.T)
-        return h_val
 
     def r(self, x, u, lamda, mu):
         ''' Residual for the game
@@ -683,31 +654,35 @@ class RD3GCasadi(BaseSolver):
             x: (n*N,T) Agent states
             u: (m*N,T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
-            mu: (N*N, T) Multiplier for positive h
+            mu: (n_hi*N,1) Multiplier for positive h
         Return:
-            val: (nNT+mNT+nNT+NNT, 1) column vector of residual r
+            val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
         '''
         T = self.T
         N = self.N
         n = self.n
         m = self.m
+        n_hi = self.n_hi
         # elements are column vectors
         r_vec = []
         eye = cas.SX.eye(self.N)
+        h_val = self.game.h(x, u)
 
         # dLLi_dx n*N*T
         for k in range(T):
             for i in range(N):
+                hi_val = h_val[:, i]
                 xki = cas.reshape(x[:, k], n, N)[:, i]
-                dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i), xki).T
+                dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val), xki).T
                 r_vec.append(dLLi_dxki)  # n
                 assert dLLi_dxki.shape == (n, 1)
 
         # dLLi_du m*N*T
         for k in range(T):
             for i in range(N):
+                hi_val = h_val[:, i]
                 uki = cas.reshape(u[:, k], m, N)[:, i]
-                dLLi_duki = cas.jacobian(self.LLi(x, u, lamda, mu, i), uki).T
+                dLLi_duki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val), uki).T
                 r_vec.append(dLLi_duki)  # m
                 assert dLLi_duki.shape == (m, 1)
 
@@ -731,18 +706,13 @@ class RD3GCasadi(BaseSolver):
                 assert fk.shape == (n, 1)
                 r_vec.append(fk)  # n
 
-        # Constraint residual for h(xi, xj) N*N*T
-        for k in range(1, self.T+1):
-            for i in range(N):
-                # collision residual for h > 0
-                xk = cas.reshape(x[:, k-1], n, N)  # x[k] -> x_{k+1} due to index alignment
-                h_vals = [self.game.h(xk[:, i], xk[:, j]) for j in range(self.N)]
-                h_vals[i] = 0  # ignore self-collision, keep this dummy entry to simplify indices
-                h_vals_pos = cas.fmax(cas.vertcat(*h_vals), 0)
-                assert h_vals_pos.shape == (N, 1)
-                r_vec.append(h_vals_pos)  # N
+        # Inequality constraint residual , n_hi*N
+        h_pos = cas.fmax(self.game.h(x, u), 0)
+        r_vec.append(cas.vec(h_pos))
 
-        return cas.vertcat(*r_vec)
+        retval = cas.vertcat(*r_vec)
+        assert retval.shape == (n*N*T+m*N*T+n*N*T+n_hi*N, 1)
+        return retval
 
     def hessian_components(self, dr_dy):
         """ Re-organize the dr_dy hessian matrix to the following format
@@ -761,14 +731,20 @@ class RD3GCasadi(BaseSolver):
         H = dr_dy[:primal_n, :primal_n]
         A = dr_dy[primal_n:, :primal_n]
         AT = dr_dy[:primal_n, primal_n:]
-        empty = dr_dy[primal_n:, primal_n:]
+        # empty = dr_dy[primal_n:, primal_n:]
         # diff = (H.T - H).toarray()
         # assert norm(diff) < 1e-10
         # diff = (AT.T - A).toarray()
         # assert norm(diff) < 1e-10
 
-        assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         assert np.sum(np.abs((H-H.T).data)) < 1e-10
+        # Do the dynamics constrain agree?
+        diff = (A-AT.T).toarray()[:n*N*T, :]
+        assert np.sum(np.abs(diff)) < 1e-10
+
+        diff = (A-AT.T).toarray()[n*N*T:, :]
+
+        assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         # Due to regularization, this is not empty
         # assert empty.nnz == 0
         return H, A
@@ -784,6 +760,7 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         N = self.N
         n = self.n
+        n_hi = self.n_hi
         m = self.m
         offset = 0
         r_Lx = norm(r[n*N*T, 0])
@@ -792,7 +769,7 @@ class RD3GCasadi(BaseSolver):
         offset += m*N*T
         r_f = norm(r[offset:offset+n*N*T])
         offset += n*N*T
-        r_h = norm(r[offset:offset+N*N*T])
-        offset += N*N*T
+        r_h = norm(r[offset:offset+n_hi*N])
+        offset += n_hi*N
         assert r.shape == (offset, 1)
         return r_Lx, r_Lu, r_f, r_h
