@@ -22,7 +22,7 @@ from rd3g.utilities.time_util import TimeUtil
 from rd3g.utilities.util import dm_to_csc
 
 
-logger = logging.getLogger('RD3G_CasADi')
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 DEBUG = False
 
@@ -111,30 +111,33 @@ def solve_linear(A, b, method, profiler):
         return x, residual, kkt_inertia
     elif method == 'qdldl':
         t0 = time()
-        p.s('   pre-process')
+        p.s('pre-process')
         A_upper = scipy.sparse.triu(A, format='csc')
         A_upper.eliminate_zeros()
         A_upper.sort_indices()
         A_upper.sum_duplicates()
-        p.e('   pre-process')
-        p.s('   structural factorization')
+        p.e('pre-process')
+        p.s('structural factorization')
         solver = qdldl.Solver(A_upper, upper=True)
-        p.e('   structural factorization')
+        p.e('structural factorization')
         #  C = P @ A @ P.T, C = L @ D @ L.T
-        p.s('   retrieve factorization')
+        p.s('retrieve factorization')
         L_zero_diag, D_diag, P_vec = solver.factors()
         del L_zero_diag
         del P_vec
-        p.e('   retrieve factorization')
-        p.s('   numerical solution')
+        p.e('retrieve factorization')
+        p.s('numerical solution')
         qdldl_x = solver.solve(b)
-        p.e('   numerical solution')
+        p.e('numerical solution')
         pos = np.sum(D_diag > 0)
         neg = np.sum(D_diag < 0)
         qdldl_inertia = (pos, neg, len(D_diag) - pos - neg)
-        p.s('   post-processing')
-        residual = norm(A @ qdldl_x - b)  # 30 % of total time!
-        p.e('   post-processing')
+        p.s('post-processing')
+        # residual = norm(A @ qdldl_x - b)  # 30 % of total time!, use csc_matrix
+        b_csc = scipy.sparse.csc_matrix(b.reshape(-1, 1))
+        qdldl_x_csc = scipy.sparse.csc_matrix(qdldl_x.reshape(-1, 1))
+        residual = scipy.sparse.linalg.norm(A @ qdldl_x_csc - b_csc)
+        p.e('post-processing')
         dt = time() - t0
         logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
@@ -521,7 +524,7 @@ class RD3GCasadi(BaseSolver):
             # plt.title('Reduced descent')
             # plt.show()
             # TODO Use a merit function of form r_val + C * h_residual
-            p.e('More debug checking')
+        p.e('More debug checking')
         self.residual_vec.append(r0_norm)
         p.e()
 
