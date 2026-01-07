@@ -16,12 +16,14 @@ logger.setLevel(logging.INFO)
 converge_vec = []
 optimal_vec = []
 dt_vec = []
-for i in range(1):
+# for i in range(1):
+for i in [2]:
     np.random.seed(i)
-    game = create_random_game(car_count=5, horizon=20)
+    game = create_random_game(car_count=5, horizon=40)
     solver_config = RD3GCasadiConfig()
     solver = RD3GCasadi(solver_config, game)  # takes 3 seconds
     sol = solver.solve()
+    solver.final()
     converge_vec.append(sol.has_converged)
     optimal_vec.append(sol.is_optimal)
     dt_vec.append(sol.elapsed_time)

@@ -24,7 +24,7 @@ from rd3g.utilities.util import dm_to_csc
 
 logger = logging.getLogger('RD3G_CasADi')
 logger.setLevel(logging.DEBUG)
-DEBUG = True
+DEBUG = False
 
 
 def create_partial_identity(n, k):
@@ -81,7 +81,7 @@ def check_inertia(D):
     return pos, neg, zero
 
 
-def solve_linear(A, b, method):
+def solve_linear(A, b, method, profiler):
     """ Solve for x in Ax = b, give x, residual, and inertia of A
     Args:
         A: (n,n) csc_matrix
@@ -91,6 +91,7 @@ def solve_linear(A, b, method):
         res: residual, |Ax-b|_2
         inertia: (pos, neg, zero) number of positive, negative, zero eigenvals from LDL
     """
+    p = profiler
     if method == 'lsqr':
         # Solve for reduced_dy
         t0 = time()
@@ -110,20 +111,30 @@ def solve_linear(A, b, method):
         return x, residual, kkt_inertia
     elif method == 'qdldl':
         t0 = time()
+        p.s('   pre-process')
         A_upper = scipy.sparse.triu(A, format='csc')
         A_upper.eliminate_zeros()
         A_upper.sort_indices()
         A_upper.sum_duplicates()
+        p.e('   pre-process')
+        p.s('   structural factorization')
         solver = qdldl.Solver(A_upper, upper=True)
+        p.e('   structural factorization')
         #  C = P @ A @ P.T, C = L @ D @ L.T
+        p.s('   retrieve factorization')
         L_zero_diag, D_diag, P_vec = solver.factors()
         del L_zero_diag
         del P_vec
+        p.e('   retrieve factorization')
+        p.s('   numerical solution')
         qdldl_x = solver.solve(b)
+        p.e('   numerical solution')
         pos = np.sum(D_diag > 0)
         neg = np.sum(D_diag < 0)
         qdldl_inertia = (pos, neg, len(D_diag) - pos - neg)
-        residual = norm(A @ qdldl_x - b)
+        p.s('   post-processing')
+        residual = norm(A @ qdldl_x - b)  # 30 % of total time!
+        p.e('   post-processing')
         dt = time() - t0
         logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
@@ -207,6 +218,8 @@ class RD3GCasadi(BaseSolver):
 
         # CasADi objects
         self.construct_gradient_fun()
+        if DEBUG:
+            logger.warning("DEBUG is ON, more prints, significantly slower")
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -411,7 +424,8 @@ class RD3GCasadi(BaseSolver):
         KKT += reg_matrix
 
         p.s('Solve Linear')
-        reduced_dy, residual, kkt_inertia = solve_linear(KKT, -KKT_residual, method='qdldl')
+        reduced_dy, residual, kkt_inertia = solve_linear(
+            KKT, -KKT_residual, method='qdldl', profiler=p)
         p.e('Solve Linear')
 
         # Inertia checking for SOSC
@@ -440,7 +454,7 @@ class RD3GCasadi(BaseSolver):
             logger.info(f'{A.shape=}, {rank=}')
 
             cond_num = np.linalg.cond(KKT_np)
-            print(f"KKT matrix condition Number: {cond_num}")
+            logger.debug(f"KKT matrix condition Number: {cond_num}")
             p.e('Debug checking')
 
         # Verify residual reduction with a line search

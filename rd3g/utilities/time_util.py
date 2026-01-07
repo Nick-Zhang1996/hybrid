@@ -1,42 +1,49 @@
 # for quick and dirty code profiling
 from time import time
 
+# TODO: handle nested sections gracefully
+# TODO: handle unexpected stops gracefully
+
 
 class TimeUtil:
+    """ Wall-clock runtime profiler"""
+
     def __init__(self, enable=False):
         self.enabled = enable
-        # sectional time start time
-        self.s_start = {}
-        # average runtime, this is updated when a global section ends
-        self.s_avg = {}
-        # cumulative time consumption in one global section
-        self.cul = {}
 
-        # global section count, this will be used as exe count for all sections
-        self.g_count = 0
+        self.start_ts = None
+        self.end_ts = None
+        self.total_runtime = 0.0
+        self.total_count = 0
+        self.child_sections: dict[str, TimeUtil] = {}
 
-        # repetition in one global scope
-        self.s_rep_count = {}
-
-        # global time counting
-        self.g_start = None
-        self.g_end = None
-        self.g_duration_avg = None
-        self.g_sample_count = 0
-        # tracked variables
-        self.tracked = {}
-        self.tracked_count = {}
+        """ dict: Tracked variable name -> mean value """
+        self.tracked: dict[str, float] = {}
+        """ Tracked variable count """
+        self.tracked_count: dict[str, int] = {}
 
     def global_start(self):
         if not self.enabled:
             return
-        self.g_start = time()
+        self.start_ts = time()
+        return
+
+    def start(self, name=None):
+        if not self.enabled:
+            return
+        if name is None:
+            return self.global_start()
+
+        if self.start_ts is not None:
+            # A parent context is present
+
         return
 
     def global_end(self):
         if not self.enabled:
             return
-        self.g_end = time()
+        self.end_ts = time()
+
         duration = self.g_end-self.g_start
 
         if (self.g_duration_avg is None):
@@ -67,15 +74,6 @@ class TimeUtil:
         else:
             self.tracked[name] = var
             self.tracked_count[name] = 1
-        return
-
-    def start(self, name=None):
-        if not self.enabled:
-            return
-        if name is None:
-            return self.global_start()
-
-        self.s_start[name] = time()
         return
 
     def end(self, name=None):
