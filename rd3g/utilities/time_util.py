@@ -19,7 +19,7 @@ class TimeUtil:
         self.total_runtime = 0.0
         self.total_count = 0
         self.total_duration = 0.0
-        self.child_sections: dict[str, TimeUtil] = defaultdict(TimeUtil)
+        self.child_sections: dict[str, TimeUtil] = {}
 
         """ dict: Tracked variable name -> mean value """
         self.tracked: dict[str, float] = defaultdict(float)
@@ -41,7 +41,10 @@ class TimeUtil:
             return self.global_start()
         if self.current_subsession is None:
             self.current_subsession = name
-            return self.child_sections[name].s()
+            if not name in self.child_sections:
+                self.child_sections[name] = TimeUtil(enable=True)
+            self.child_sections[name].s()
+
         else:
             return self.child_sections[self.current_subsession].s(name)
 
@@ -50,20 +53,23 @@ class TimeUtil:
             return
         if name is None:
             if self.current_subsession is not None:
-                logger.warning(f' end() is called before end({self.current_subsession}),'
-                               'missed call? check all logic paths')
+                logger.error(f' end() is called before end({self.current_subsession}),'
+                             'missed call? check all logic paths')
                 self.end(self.current_subsession)
 
             return self.global_end()
 
         if self.current_subsession is None:
-            logger.warning('e() or end() called before s(), timing is corrupt')
+            logger.error('e() or end() called before s(), timing is corrupt')
 
         if self.current_subsession == name:
             self.child_sections[name].e()
             self.current_subsession = None
         else:
-            self.child_sections[self.current_subsession].e(name)
+            try:
+                self.child_sections[self.current_subsession].e(name)
+            except KeyError:
+                logger.error(f'end({name}) is called but no matching start({name}) is called')
 
     def global_end(self):
         if not self.enabled:
