@@ -4,9 +4,6 @@ import logging
 from time import time
 from collections import defaultdict
 
-# TODO: handle nested sections gracefully
-# TODO: handle unexpected stops gracefully
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -52,6 +49,11 @@ class TimeUtil:
         if not self.enabled:
             return
         if name is None:
+            if self.current_subsession is not None:
+                logger.warning(f' end() is called before end({self.current_subsession}),'
+                               'missed call? check all logic paths')
+                self.end(self.current_subsession)
+
             return self.global_end()
 
         if self.current_subsession is None:
