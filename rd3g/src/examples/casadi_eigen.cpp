@@ -95,7 +95,7 @@ void casadi_eigen(){
     dr_dy(wb.args.data(), wb.res.data(), wb.iw.data(), wb.w.data(), 0); // 0.034ms
   }
 
-  Eigen::MappedSparseMatrix<double, Eigen::ColMajor, casadi_int> dr_dy_res(
+  Eigen::Map<Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>> dr_dy_res(
     dr_dy_res_sp.size1(), dr_dy_res_sp.size2(), dr_dy_res_sp.nnz(),
     const_cast<casadi_int*>(dr_dy_res_sp.colind()),
     const_cast<casadi_int*>(dr_dy_res_sp.row()),

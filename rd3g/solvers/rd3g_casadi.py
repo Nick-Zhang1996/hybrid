@@ -220,7 +220,7 @@ class RD3GCasadi(BaseSolver):
         self.validate()
 
         # CasADi objects
-        self.construct_gradient_fun()
+        self.construct_casadi_fun()
         if DEBUG:
             logger.warning("DEBUG is ON, more prints, significantly slower")
 
@@ -236,7 +236,7 @@ class RD3GCasadi(BaseSolver):
         assert isinstance(self.N, int) and self.N > 0
         return
 
-    def construct_gradient_fun(self):
+    def construct_casadi_fun(self):
         """ Construct functions based on CasADi autodiff"""
         N = self.N
         n = self.n
