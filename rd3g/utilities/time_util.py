@@ -101,6 +101,9 @@ class TimeUtil:
         """
         if not self.enabled:
             return
+        if len(self.child_sections) == 0:
+            logger.info('No timed block defined')
+            return
 
         # A long enough field width
         fw = 30

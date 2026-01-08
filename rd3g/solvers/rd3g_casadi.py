@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
 from rd3g.utilities.time_util import TimeUtil
-from rd3g.utilities.util import dm_to_csc
+from rd3g.utilities.util import BASEDIR
+from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ def solve_linear(A, b, method, profiler):
         A_upper.sum_duplicates()
         p.e('pre-process')
         p.s('structural factorization')
+        # pylint:disable-next=c-extension-no-member
         solver = qdldl.Solver(A_upper, upper=True)
         p.e('structural factorization')
         #  C = P @ A @ P.T, C = L @ D @ L.T
@@ -195,7 +197,8 @@ class RD3GCasadi(BaseSolver):
 
     """
 
-    def __init__(self, config: RD3GCasadiConfig, game):
+    def __init__(self, config: RD3GCasadiConfig, game, cpp_only=False):
+        """ cpp_only: if True, skip constructing casadi function construction """
         BaseSolver.__init__(self, config, game)
 
         self.N = self.game.config.N
@@ -219,10 +222,14 @@ class RD3GCasadi(BaseSolver):
         self.residual_vec = []
         self.validate()
 
-        # CasADi objects
-        self.construct_casadi_fun()
+        # Construct CasADi objects, ~3 seconds
+        # Leave this for users, since if cpp backend is loaded this won't be needed
+        if not cpp_only:
+            self.construct_casadi_fun()
         if DEBUG:
             logger.warning("DEBUG is ON, more prints, significantly slower")
+
+        self.cpp_solver = None
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
@@ -244,6 +251,7 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n_hi = self.n_hi
         gc = self.game.config
+        logger.info('Constructing CasADi functions... ')
 
         # NOTE: casadi only works with 2D matrices, we combine n,N into first dimension
         # Slicing columns is more efficient in casadi, therefore we put T in the column dimension
@@ -265,31 +273,108 @@ class RD3GCasadi(BaseSolver):
         args = [x, u, lamda, mu]
         y = cas.vertcat(*[cas.vec(val) for val in args])
 
-        # get_n_fun = cas.Function('get_n', [], [self.n])
-        # get_m_fun = cas.Function('get_m', [], [self.m])
+        self.get_n_fun = cas.Function('get_n', [], [self.n])
+        self.get_m_fun = cas.Function('get_m', [], [self.m])
 
         r_val = self.r(*args)
-        self.r_fun_casadi = cas.Function('r', args+config_params, [r_val])
+        self.r_casadi = cas.Function('r', args+config_params, [r_val])
 
         dr_dy = cas.jacobian(r_val, y)
-        self.dr_dy_fun_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
+        self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
 
         X = self.game.rollout(x0, u)
-        self.rollout_fun_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
+        self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
         h_val = self.game.h(x, u)
-        self.h_val_casadi = cas.Function('h', [x, u]+config_params, [h_val])
+        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val])
 
         # TODO Some games may not have collision constraints, fail silently
         xki = cas.SX.sym('xki', n, 1)
         xkj = cas.SX.sym('xkj', n, 1)
         col_h_val = self.game.collision_h(xki, xkj)
-        self.col_h_val_casadi = cas.Function('collision_h', [xki, xkj]+config_params, [col_h_val])
+        self.collision_h_casadi = cas.Function('collision_h', [xki, xkj]+config_params, [col_h_val])
+        logger.info('Constructing CasADi functions... Done')
 
     def init(self):
         """Setup solver parameters that changes between iterations, call this
         funtion to reset the solver."""
         raise NotImplementedError
+
+    def init_cpp_backend(self):
+        """ Load CPP solver"""
+        # pylint:disable-next=import-outside-toplevel
+        from rd3g.src.build.lib import rd3g_casadi
+        # The source code need to be generated and compiled before the following code can be run
+
+        # Load compiled solver, compare results
+        # Example for sending matrices to/from casadi
+        game = self.game
+        module_name = game.__module__.rsplit('.', maxsplit=1)[-1]
+        solver_config = self.config
+
+        try:
+            # pylint:disable-next=c-extension-no-member
+            self.cpp_solver = rd3g_casadi.Rd3gCasadi(
+                game.config.N,
+                game.config.T,
+                game.config.dt,
+                solver_config.rho_0,
+                solver_config.rho_b,
+                solver_config.bc_a,
+                solver_config.bc_b,
+                solver_config.tolerance,
+                solver_config.backtracking_max_iter,
+                solver_config.iterations,
+                True,
+                BASEDIR,
+                module_name
+            )
+        except RuntimeError as e:
+            if 'Cannot load shared library' in str(e):
+                logger.error('CasADi Failed to load dll, make sure its compiled')
+            raise
+
+    def solve_cpp_backend(self):
+        if self.cpp_solver is None:
+            logger.error('Call init_cpp_backend() first')
+            raise RuntimeError
+
+        u_ref = np.zeros((self.m*self.N, self.T), order='F')
+        self.cpp_solver.solve(self.x0, u_ref,
+                              self.game.config.get_int_param_np(),
+                              self.game.config.get_double_param_np())
+        res = self.cpp_solver.debug_get_full_KKT()
+        cpp_full_KKT = scipy.sparse.csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+
+        # Create full_KKT in python, verify consistency
+        gc = self.game.config
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
+        params_dm = [int_param_dm, double_param_dm]
+
+        x = self.rollout_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
+        # NOTE to convert to np array
+        # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        n_hi = self.n_hi
+        u = cas.DM(u_ref)
+        lamda = cas.DM.zeros((n*N, T))
+        mu = cas.DM.zeros((n_hi*N, 1))
+
+        # r0_val = self.r_casadi(x, u, lamda, mu, *params_dm)
+        # r0_np = np.array(r0_val)
+        # r0_norm = norm(r0_np)
+        dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
+        py_full_KKT = dm_to_csc(dr_dy_val)
+        diff = scipy.sparse.linalg.norm(cpp_full_KKT - py_full_KKT)
+        print(diff)
+        return None
 
     def solve(self):
         N = self.N
@@ -308,7 +393,7 @@ class RD3GCasadi(BaseSolver):
         gc = self.game.config
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
-        x_ref = self.rollout_fun_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
+        x_ref = self.rollout_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         lambda_ref = cas.DM.zeros((n*N, T))
@@ -373,8 +458,8 @@ class RD3GCasadi(BaseSolver):
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val = self.r_fun_casadi(x, u, lamda, mu, *params_dm)
-        dr_dy_val = self.dr_dy_fun_casadi(x, u, lamda, mu, *params_dm)
+        r0_val = self.r_casadi(x, u, lamda, mu, *params_dm)
+        dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
         r0_np = np.array(r0_val)
         r0_norm = norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
@@ -393,7 +478,7 @@ class RD3GCasadi(BaseSolver):
         mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
         p.s('Reduce KKT')
 
-        h_val = np.array(self.h_val_casadi(x, u, *params_dm), order='F').flatten(order='F')
+        h_val = np.array(self.h_casadi(x, u, *params_dm), order='F').flatten(order='F')
         neg_h_mask = np.array(h_val < 0).nonzero()[0]
         inactive_r_rows = []
         inactive_y_rows = []
@@ -430,6 +515,7 @@ class RD3GCasadi(BaseSolver):
         reduced_dy, residual, kkt_inertia = solve_linear(
             KKT, -KKT_residual, method='qdldl', profiler=p)
         p.e('Solve Linear')
+        del residual
 
         # Inertia checking for SOSC
         in_n = n*N*T + m*N*T  # Primal vars
@@ -472,12 +558,12 @@ class RD3GCasadi(BaseSolver):
         stepped_r_vec = []
         try:
             for _ in range(self.config.backtracking_max_iter):
-                r_val = self.r_fun_casadi(x+step_size*cas.reshape(dx, n*N, T),
-                                          u+step_size*cas.reshape(du, m*N, T),
-                                          lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                          mu+step_size*cas.reshape(dmu, n_hi*N, 1),
-                                          int_param_dm, double_param_dm
-                                          )
+                r_val = self.r_casadi(x+step_size*cas.reshape(dx, n*N, T),
+                                      u+step_size*cas.reshape(du, m*N, T),
+                                      lamda+step_size*cas.reshape(dlamda, n*N, T),
+                                      mu+step_size*cas.reshape(dmu, n_hi*N, 1),
+                                      int_param_dm, double_param_dm
+                                      )
                 r_norm = norm(r_val)
                 step_size_vec.append(step_size)
                 stepped_r_vec.append(r_norm)

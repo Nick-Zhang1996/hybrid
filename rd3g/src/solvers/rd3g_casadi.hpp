@@ -39,8 +39,8 @@ using std::endl;
 using std::max;
 using std::min;
 // SpMatrix was taken
-using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor>;
-using MappedSparseMatrix = Eigen::Map<Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>>;
+using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>;
+using MappedSparseMatrix = Eigen::Map<SpMatrix>;
 
 namespace fs = std::filesystem;
 
@@ -128,6 +128,8 @@ protected:
   cas::Function rollout_;
   cas::Function h_;
   cas::Function collision_h_;
+
+  SpMatrix debug_full_KKT_;
 
 public:
   // TODO cleanup constructor arguments, remove useless or redundant ones
@@ -301,7 +303,7 @@ public:
     r_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
 
-    Eigen::Map<MatrixXd> full_r0(full_r0_buffer.data(), full_r0_sp.size1(), full_r0_sp.size2());
+    auto full_r0 = get_mapped_spmatrix(full_r0_sp, full_r0_buffer.data());
 
     // full_KKT = dr_dy(x, u, lamda, mu, int_param, double_param)
     // Same input as r() call
@@ -321,9 +323,25 @@ public:
     dr_dy_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
 
-    Eigen::Map<MatrixXd> full_KKT(full_r0_buffer.data(), full_r0_sp.size1(), full_r0_sp.size2());
+    // TODO return full_KKT to ensure consistency
+    auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
+
+    debug_full_KKT_ = full_KKT;
 
     return {false, false, 1.0};
 
   }
+
+  SparseMatrixResult debug_get_full_KKT()
+  {
+    casadi::Sparsity res_sp = dr_dy_.sparsity_out(0); // full_KKT_sparsity
+    SparseMatrixResult res;
+    res.shape = res_sp.size();
+    res.data.assign(debug_full_KKT_.valuePtr(), debug_full_KKT_.valuePtr() + debug_full_KKT_.nonZeros());
+    res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
+    res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
+    return res;
+  }
+
+
 };

@@ -23,5 +23,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
   py::class_<ClassName>(m, "Rd3gCasadi")
     .def(py::init<int, int, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar,
                 int, int,bool, std::string, std::string>())
-    .def("casadi_dr_dy", &ClassName::casadi_dr_dy);
+    .def("dr_dy", &ClassName::casadi_dr_dy)
+    .def("solve", &ClassName::solve)
+    .def("step", &ClassName::step)
+    .def("debug_get_full_KKT", &ClassName::debug_get_full_KKT);
 };

@@ -5,8 +5,6 @@ import inspect
 import functools
 
 import numpy as np
-from casadi import *
-from scipy.sparse import csc_matrix, csc_array
 
 # root folder of repo.
 BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,7 +32,7 @@ def cpp_capable(py_function):
 
 def print_current_memory_usage(text=''):
     ''' Use the /proc/self/status file '''
-    with open("/proc/self/status", "r") as file:
+    with open("/proc/self/status", "r", encoding='utf-8') as file:
         # Read the file line by line
         for line in file:
             # Look for the line that starts with 'VmSize:'
@@ -192,79 +190,3 @@ class PrintObject:
             return
         # light blue
         print('\033[96m', self.prefix(), *message, '\033[0m')
-
-
-def casadi_generate_code(solver):
-    """ Generate CasADi C code for a solver and game with its specific config.
-    CasADi expects fixed dimension, so the exact game config needs to be given.
-    Each tuple of (GameType, N,T) requres a different source file.
-    Changing solver configuration MAY require re-compilation. (TBD)
-    TODO should part of this logic be in the solver?
-    Args:
-        solver: Solver instance, with solver.game set
-    Returns:
-        r_fun: CasADi Function of r(x, u, lamda, mu, int_param, double_param)
-        dr_dy_fun: CasADi Function of dr_dy(x, u, lamda, mu, int_param, double_param)
-    """
-    game = solver.game
-    config = game.config
-    N = game.config.N
-    n = game.config.n
-    m = game.config.m
-    T = game.config.T
-
-    x = SX.sym('x', N*n, T)
-    u = SX.sym('u', N*m, T)
-    lamda = SX.sym('lamda', N*n, T)
-    mu = SX.sym('mu', N*N, T)
-    config_params = [game.config.get_int_param_sx(), game.config.get_double_param_sx()]
-
-    args = [x, u, lamda, mu]
-    y = vertcat(*[vec(val) for val in args])
-
-    get_n_fun = Function('get_n', [], [config.n])
-    get_m_fun = Function('get_m', [], [config.m])
-
-    r = solver.r(*args)
-    r_fun = Function('r', args+config_params, [r])
-
-    dr_dy = jacobian(r, y)
-    dr_dy_fun = Function('dr_dy', args+config_params, [dr_dy])
-
-    # Switch working directory
-    codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'games', 'casadi_codegen')
-    if not os.path.exists(codegen_dir):
-        os.makedirs(codegen_dir)
-    old_cwd = os.getcwd()
-    os.chdir(codegen_dir)
-
-    # Generate source code
-    module_name = game.__module__.split('.')[-1]
-    cg = CodeGenerator(f'{module_name}_N{config.N}_T{config.T}.c',
-                       {'with_header': True})
-    cg.add(r_fun)
-    cg.add(dr_dy_fun)
-    cg.add(get_n_fun)
-    cg.add(get_m_fun)
-    cg.generate()
-
-    os.chdir(old_cwd)
-    return r_fun, dr_dy_fun
-
-
-def dm_to_csc(dm, array=False):
-    """ Convert a CasADi DM sparse matrix to scipy csc_matris
-    Args:
-        dm: DM object, 
-        array: if True, return csc array, otherwise return csc matrix
-    """
-    data = dm.nonzeros()        # The numerical values
-    indices = dm.sparsity().row()  # The row indices
-    indptr = dm.sparsity().colind()  # The column pointers
-    shape = dm.size()           # (rows, cols)
-
-    if (array):
-        csc = csc_array((data, indices, indptr), shape=shape)
-    else:
-        csc = csc_matrix((data, indices, indptr), shape=shape)
-    return csc

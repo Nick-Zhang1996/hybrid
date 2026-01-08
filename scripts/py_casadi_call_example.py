@@ -10,11 +10,13 @@ from casadi import DM
 import numpy as np
 from scipy.sparse import csc_matrix
 
-from rd3g.utilities.util import BASEDIR, casadi_generate_code
+from rd3g.utilities.util import BASEDIR
+from rd3g.utilities.casadi_util import generate_code
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 from rd3g.src.build.lib import rd3g_casadi
+
 
 if __name__ == "__main__":
     # CasADi expects fixed dimension, so the exact game config needs to be given apriori
@@ -23,7 +25,7 @@ if __name__ == "__main__":
     game = create_random_game(car_count=3, horizon=20)
     solver_config = RD3GCasadiConfig()
     solver = RD3GCasadi(solver_config, game)
-    r_fun, dr_dy_fun = casadi_generate_code(solver)
+    generate_code(solver)
 
     # The generated source code need to be compiled before the following code can be run
 
@@ -51,16 +53,17 @@ if __name__ == "__main__":
     n = game.config.n
     m = game.config.m
     T = game.config.T
+    n_hi = game.config.n_hi
 
     x = np.zeros((N*n, T))
     u = np.zeros((N*m, T))
     lamda = np.zeros((N*n, T))
-    mu = np.zeros((N*N, T))
+    mu = np.zeros((n_hi*N, 1))
     t0 = time()
     # Call compiled casadi function, with numpy arrays
-    res = cpp_solver.casadi_dr_dy(x, u, lamda, mu,
-                                  game.config.get_int_param_np(),
-                                  game.config.get_double_param_np())
+    res = cpp_solver.dr_dy(x, u, lamda, mu,
+                           game.config.get_int_param_np(),
+                           game.config.get_double_param_np())
 
     # Construct sparse and dense matrix from returned value
     matrix_sp = csc_matrix(
@@ -79,7 +82,7 @@ if __name__ == "__main__":
     int_param_dm = DM(game.config.get_int_param_np())
     double_param_dm = DM(game.config.get_double_param_np())
     t0 = time()
-    py_retval = dr_dy_fun(x, u, lamda, mu, int_param_dm, double_param_dm)
+    py_retval = solver.dr_dy_casadi(x, u, lamda, mu, int_param_dm, double_param_dm)
     dt = time() - t0
     print(f'py dr_dy = {dt=}')  # 1000x -> 0.19s
     # Check results
