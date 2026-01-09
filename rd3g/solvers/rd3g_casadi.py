@@ -317,6 +317,7 @@ class RD3GCasadi(BaseSolver):
             self.cpp_solver = rd3g_casadi.Rd3gCasadi(
                 game.config.N,
                 game.config.T,
+                game.config.n_hi,
                 game.config.dt,
                 solver_config.rho_0,
                 solver_config.rho_b,
@@ -356,34 +357,6 @@ class RD3GCasadi(BaseSolver):
             (res.data, res.row, res.colind),
             shape=res.shape
         )
-
-        # Create full_KKT in python, verify consistency
-
-        x = self.rollout_casadi(self.x0, u_ref, *params_dm)
-        # NOTE to convert to np array
-        # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        n_hi = self.n_hi
-        u = cas.DM(u_ref)
-        lamda = cas.DM.zeros((n*N, T))
-        mu = cas.DM.zeros((n_hi*N, 1))
-
-        # TODO check rollout vs casadi rollout
-        py_x = x
-
-        # r0_val = self.r_casadi(x, u, lamda, mu, *params_dm)
-        # r0_np = np.array(r0_val)
-        # r0_norm = norm(r0_np)
-        dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
-        py_full_KKT = dm_to_csc(dr_dy_val)
-        full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - py_full_KKT)
-        # indices and indptr are identical, data() is not
-        # breakpoint()
-        print(f'{full_KKT_diff=}')
-        return None
 
     def solve(self):
         N = self.N
