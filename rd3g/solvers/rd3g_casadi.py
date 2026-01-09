@@ -209,7 +209,7 @@ class RD3GCasadi(BaseSolver):
         self.n_hi = self.game.config.n_hi
         self.x0 = self.game.config.x0
 
-        self.guess = np.zeros((self.m, self.N, self.T))
+        self.guess = np.zeros((self.m, self.N, self.T), order='F')
         self.violations = None
 
         self.rho = self.config.rho_0
@@ -339,10 +339,18 @@ class RD3GCasadi(BaseSolver):
             logger.error('Call init_cpp_backend() first')
             raise RuntimeError
 
+        gc = self.game.config
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        params_dm = [cas.DM(val) for val in params_np]
+
         u_ref = np.zeros((self.m*self.N, self.T), order='F')
-        self.cpp_solver.solve(self.x0, u_ref,
-                              self.game.config.get_int_param_np(),
-                              self.game.config.get_double_param_np())
+        assert np.isfortran(self.x0)
+        assert np.isfortran(u_ref)
+        # FIXME x0 is in params_np and also passed explicitly here
+        # explicit x0 is used for generating initial trajectory, param x0 is used in L function
+        # Although they are identical, there should be a single source of truth.
+        # Maybe write a function get_x0_from_params() to handle the slicing safely?
+        self.cpp_solver.solve(self.x0, u_ref, *params_np)
         res = self.cpp_solver.debug_get_full_KKT()
         cpp_full_KKT = scipy.sparse.csc_matrix(
             (res.data, res.row, res.colind),
@@ -350,12 +358,8 @@ class RD3GCasadi(BaseSolver):
         )
 
         # Create full_KKT in python, verify consistency
-        gc = self.game.config
-        int_param_dm = cas.DM(gc.get_int_param_np())
-        double_param_dm = cas.DM(gc.get_double_param_np())
-        params_dm = [int_param_dm, double_param_dm]
 
-        x = self.rollout_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
+        x = self.rollout_casadi(self.x0, u_ref, *params_dm)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         N = self.N
@@ -367,13 +371,18 @@ class RD3GCasadi(BaseSolver):
         lamda = cas.DM.zeros((n*N, T))
         mu = cas.DM.zeros((n_hi*N, 1))
 
+        # TODO check rollout vs casadi rollout
+        py_x = x
+
         # r0_val = self.r_casadi(x, u, lamda, mu, *params_dm)
         # r0_np = np.array(r0_val)
         # r0_norm = norm(r0_np)
         dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
         py_full_KKT = dm_to_csc(dr_dy_val)
-        diff = scipy.sparse.linalg.norm(cpp_full_KKT - py_full_KKT)
-        print(diff)
+        full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - py_full_KKT)
+        # indices and indptr are identical, data() is not
+        # breakpoint()
+        print(f'{full_KKT_diff=}')
         return None
 
     def solve(self):

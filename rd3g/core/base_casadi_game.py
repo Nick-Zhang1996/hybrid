@@ -48,9 +48,9 @@ class CasadiGameConfig(BaseGameConfig):
             val = getattr(self, _field.name)
             if isinstance(val, np.ndarray):
                 if val.dtype == float:
-                    double_param_list.append(val.T.flatten())  # .T to convert to column major
+                    double_param_list.append(val.flatten(order='F'))
                 elif val.dtype == int:
-                    int_param_list.append(val.T.flatten())
+                    int_param_list.append(val.flatten(order='F'))
                 else:
                     logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
             elif isinstance(val, float):

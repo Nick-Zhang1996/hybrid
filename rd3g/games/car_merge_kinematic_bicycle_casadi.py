@@ -478,10 +478,10 @@ def create_random_game(car_count=3, horizon=20):
         n_hi=N*T,  # Collision constraint only
         track_width=default.track_width,
         collision_radius=default.collision_radius,
-        x0=x0,
-        target_x_ref=x_ref,
-        J_Qr=J_Qr,
-        J_Q=J_Q,
-        J_R=J_R
+        x0=x0.copy(order='F'),
+        target_x_ref=x_ref.copy(order='F'),
+        J_Qr=J_Qr.copy(order='F'),
+        J_Q=J_Q.copy(order='F'),
+        J_R=J_R.copy(order='F')
     )
     return CarMergeKinematicBicycleCasadi(config)

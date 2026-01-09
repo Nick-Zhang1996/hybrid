@@ -164,9 +164,24 @@ public:
 
     wb_ = get_max_buffer({r_, dr_dy_, rollout_, h_, collision_h_, get_n, get_m});
 
-    n_ = get_n(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
-    m_ = get_m(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
-    std::cout << "Rd3gCasadi Initialized" << std::endl;
+    std::vector<double> n_buffer(get_n.sparsity_out(0).nnz());
+    wb_.res[0] = n_buffer.data();
+    get_n(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    wb_.res[0] = nullptr;
+    assert (get_n.n_out() == 1);
+    std::cout << "n_buffer len" << n_buffer.size() << std::endl;
+    n_ = n_buffer[0];
+
+    std::vector<double> m_buffer(get_m.sparsity_out(0).nnz());
+    wb_.res[0] = m_buffer.data();
+    get_m(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    wb_.res[0] = nullptr;
+    assert (get_m.n_out() == 1);
+    std::cout << "m_buffer len" << m_buffer.size() << std::endl;
+    m_ = m_buffer[0];
+
+    std::cout << "RD3G CasADi " << ss.str() 
+    << " initialized, n= " << n_ << " m= "<<  m_ << std::endl;
   }
 
   void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
@@ -243,6 +258,18 @@ public:
     rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr; // Avoid accidentally overwriting the buffer
     Eigen::Map<MatrixXd> x(x_buffer.data(), x_sp.size1(), x_sp.size2());
+    std::cout << "x_buffer = " << x_buffer << std::endl;
+    std::cout << "x.size = " << x_sp.size1() << " by " << x_sp.size2() << std::endl;
+
+    std::cout << "(solve) x = " << std::endl;
+    for (int k=0; k<T_; k++)
+    {
+      auto x_k = x.col(k).reshaped(n_,N_);
+      for (int i=0; i<N_; i++)
+      {
+        std::cout << "k=" << k << " i=" << i << " x= " << x_k.col(i) << std::endl;
+      }
+    }
 
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();
@@ -252,6 +279,7 @@ public:
 
     for (int iter=0; iter<max_iterations_; iter++){
       step(x, u, lamda, mu, int_param, double_param);
+      break; // FIXME
     }
 
   }
@@ -325,6 +353,20 @@ public:
 
     // TODO return full_KKT to ensure consistency
     auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
+
+    // DEBUG
+    /*
+    std::cout << "x" << std::endl;
+    for (int k=0; k<T_; k++)
+    {
+      for (int i=0; i<n_*N_; i++)
+      {
+        std::cout << x(i,k);
+
+      }
+      std::cout << std::endl;
+    }
+    */
 
     debug_full_KKT_ = full_KKT;
 
