@@ -26,5 +26,6 @@ PYBIND11_MODULE(rd3g_casadi, m) {
     .def("dr_dy", &ClassName::casadi_dr_dy)
     .def("solve", &ClassName::solve)
     .def("step", &ClassName::step)
-    .def("debug_get_full_KKT", &ClassName::debug_get_full_KKT);
+    .def("debug_get_full_KKT", &ClassName::debug_get_full_KKT)
+    .def("debug_get_reduced_KKT", &ClassName::debug_get_reduced_KKT);
 };

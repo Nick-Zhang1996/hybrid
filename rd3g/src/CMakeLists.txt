@@ -9,9 +9,9 @@ project(residual_game)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O2")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O2 -fPIC")
 # When we really want speed
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -Ofast -fno-math-errno -ffast-math -march=native -mfma")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -Ofast -fPIC -fno-math-errno -ffast-math -march=native -mfma")
 
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 message("CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
@@ -48,6 +48,16 @@ if(NOT CASADI_LIB)
     message(FATAL_ERROR "Could not find libcasadi.so in ${CASADI_ROOT}. The pip package might be missing shared libraries.")
 endif()
 
+# Get spdlog for logging
+include(FetchContent)
+FetchContent_Declare(
+  spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG        v1.12.0)
+FetchContent_MakeAvailable(spdlog)
+find_package(spdlog REQUIRED)
+
+
 # ---- pybind targets, for games with implementation in c++ directly ----
 add_subdirectory(pybind11)
 pybind11_add_module(unstructured_driving games/unstructured_driving.cpp)
@@ -75,3 +85,4 @@ target_link_libraries(casadi_eigen ${CASADI_LIB})
 pybind11_add_module(rd3g_casadi solvers/rd3g_casadi.cpp)
 target_include_directories(rd3g_casadi PUBLIC ${CASADI_INCLUDE_DIR})
 target_link_libraries(rd3g_casadi PRIVATE ${CASADI_LIB})
+target_link_libraries(rd3g_casadi PRIVATE spdlog::spdlog)

@@ -1,10 +1,6 @@
 // RD3G solver compatible with casadi codegen
 #pragma once
-// #define EIGEN_RUNTIME_NO_MALLOC
-// Eigen::internal::set_is_malloc_allowed(false);
-#include <Eigen/Core>
-#include <Eigen/LU>
-#include <Eigen/SparseCore>
+
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -15,9 +11,22 @@
 #include <filesystem> // c++ 17
 #include <dlfcn.h>
 
+#define SPDLOG_HEADER_ONLY
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/ostr.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
+
+// #define EIGEN_RUNTIME_NO_MALLOC
+// Eigen::internal::set_is_malloc_allowed(false);
+#include <Eigen/Core>
+#include <Eigen/LU>
+#include <Eigen/SparseCore>
+#include <Eigen/SparseCholesky>
+
 
 // sparse solvers
 #include <Eigen/OrderingMethods>
@@ -39,6 +48,7 @@ using std::endl;
 using std::max;
 using std::min;
 // SpMatrix was taken
+using Vector = Eigen::VectorXd;
 using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>;
 using MappedSparseMatrix = Eigen::Map<SpMatrix>;
 
@@ -116,6 +126,8 @@ protected:
   mutable Profiler<false> profiler_;
   bool verbose_;
 
+  std::shared_ptr<spdlog::logger> logger_;
+
   // CasADi work buffer
   FuncWorkBuffer wb_;
 
@@ -126,6 +138,7 @@ protected:
   cas::Function collision_h_;
 
   SpMatrix debug_full_KKT_;
+  SpMatrix debug_reduced_KKT_;
 
 public:
   // TODO cleanup constructor arguments, remove useless or redundant ones
@@ -141,6 +154,12 @@ public:
         bc_b_{bc_b}, tolerance_{tolerance},
         backtracking_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
         max_iterations_{max_iter}, verbose_(verbose) {
+
+
+    logger_ = spdlog::stdout_color_mt("rd3g_casadi_cpp");
+    spdlog::set_level(spdlog::level::debug); 
+    // Set custom format: [Time] [Logger] [Level] Message
+    spdlog::set_pattern("[%H:%M:%S.%e] [%n] [%^%l%$] %v");
 
     // Load CasADi dll for given game following naming convention,
     // game (module name), N, T -> this determines a unique dll name.
@@ -164,7 +183,6 @@ public:
     get_n(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
     assert (get_n.n_out() == 1);
-    std::cout << "n_buffer len" << n_buffer.size() << std::endl;
     n_ = n_buffer[0];
 
     std::vector<double> m_buffer(get_m.sparsity_out(0).nnz());
@@ -172,11 +190,9 @@ public:
     get_m(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
     assert (get_m.n_out() == 1);
-    std::cout << "m_buffer len" << m_buffer.size() << std::endl;
     m_ = m_buffer[0];
 
-    std::cout << "RD3G CasADi " << ss.str() 
-    << " initialized, n= " << n_ << " m= "<<  m_ << std::endl;
+    logger_->debug("RD3G CasADi initialized, n={}, m={}", n_, m_);
   }
 
   void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
@@ -248,7 +264,7 @@ public:
     }
 
     for (int i=h_in_r_offset; i<full_r0.rows(); i++){
-      if (full_r0.coeff(i,0) > 0.0){
+      if (full_r0.coeff(i,0) >= 0.0){
         old_to_new_idx[i] = reduced_r_dim++;
         active_h_indices.push_back(i-h_in_r_offset);
       }
@@ -266,7 +282,7 @@ public:
 
     // Construct reduced_KKT
     std::vector<Eigen::Triplet<Scalar>> triplets;
-    triplets.reserve(full_KKT.nonZeros());
+    triplets.reserve(full_KKT.rows());
     for (int j = 0; j < full_KKT.outerSize(); j++) {
       for (SpMatrix::InnerIterator it(full_KKT, j); it; ++it){
         // Removing h and its corresponding mu (multiplier) together means removing
@@ -293,8 +309,8 @@ public:
   //   res: residual, norm(Ax-b)
   //   inertia: tuple(positive eigenval, negative eigenval, zero eigenval)
   std::tuple<SpMatrix, Scalar, std::tuple<int,int,int>>
-  solve_linear_system(const SpMatrix& A, const SpMatrix& b, std::str method){
-    if (method == 'lscg'){
+  solve_linear_system(const SpMatrix& A, const SpMatrix& b, std::string method){
+    if (method == "lscg"){
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
       solver.setTolerance(1e-5);
       // solve r0 + Dr* dy = 0 least square
@@ -316,9 +332,54 @@ public:
       // TODO should we use dense matrix for x?
       return {x.sparseView(), static_cast<Scalar>(solver.error()), {-1,-1,-1}};
     }
-    else if (method == 'ldl'){
+    else if (method == "ldl"){
+      // SimplicialLDLT is a direct sparse solver for P*A*P' = L*D*L'
+      // Note: Unlike qdldl Eigen defaults to reading the LOWER triangular part.
+      // If somehow using upper,
+      // change this to: Eigen::SimplicialLDLT<SpMatrix, Eigen::Upper> solver;
+      Eigen::SimplicialLDLT<SpMatrix> solver;
+      
+      // A must be symmetric, symbolic LDL decomposition
+      // Consider reusing this, if A's structure doesn't change
+      logger_->debug("Symbolic LDL decomp...");
+      assert ((A-A.T).norm() < 1e-6);
+      solver.compute(A);
+
+      if(solver.info() != Eigen::Success) {
+          // TODO use logging
+          std::cerr << "LDL decomposition failed" << std::endl;
+          throw std::runtime_error("LDL decomposition failed");
+      }
+
+      // Solve System (A * x = b)
+      // This automatically handles the permutations (P) internally
+      logger_->debug("Solving...");
+      Eigen::VectorXd x = solver.solve(b);
+
+      // Get diagonal of matrix D from L*D*L'
+      // TODO does Eigen give 2 by 2 blocks?
+      Eigen::VectorXd D = solver.vectorD();
+      
+      int pos = 0;
+      int neg = 0;
+      int zero = 0;
+      
+      // Iterate through D to count signs
+      logger_->debug("Checking inertia...");
+      const double epsilon = 1e-8;
+      for (int i = 0; i < D.size(); ++i) {
+          if (D[i] > epsilon) pos++;
+          else if (D[i] < -epsilon) neg++;
+          else zero++;
+      }
+      auto inertia = std::make_tuple(pos, neg, zero);
+
+      const Scalar residual = (A * x - b).norm();
+
+      return {x.sparseView(), residual, inertia};
 
     }
+    throw std::runtime_error("Unknown method type: " + method);
 
   }
 
@@ -373,7 +434,6 @@ public:
 
     for (int iter=0; iter<max_iterations_; iter++){
       step(x, u, lamda, mu, int_param, double_param);
-      break; // FIXME
     }
 
   }
@@ -401,6 +461,7 @@ public:
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
+    logger_->debug("Getting r0 and KKT matrix...");
     // full_r0 = r(x, u, lamda, mu, int_param, double_param)
     wb_.args[0] = static_cast<double*>(x.data());
     wb_.args[1] = static_cast<double*>(u.data());
@@ -447,14 +508,47 @@ public:
     auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
 
     // Apply active set method, skim down full_r0 and full_KKT
+    logger_->debug("Reduce KKT system...");
     SpMatrix reduced_KKT;
     SpMatrix reduced_r0;
     // TODO maybe there's a more useful index? like new_to_old
     std::vector<int> active_h_indices;
     std::tie(reduced_KKT, reduced_r0, active_h_indices) = reduce_KKT_system(full_KKT, full_r0);
+    assert (reduced_KKT.rows() == reduced_KKT.cols());
     // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
+    debug_reduced_KKT_ = reduced_KKT;
+    // TODO check results consistency
+    // TODO maybe use dense matrix for solution
+    Vector reduced_dy;
+    Scalar residual;
+    std::tuple<int,int,int> inertia;
 
-    // Solve for new var
+    const Scalar reg = 1e-4; // TODO pass this in from config
+
+    // Apply Levenberg-Marquardt Regularization
+    logger_->debug("Apply Regularization...");
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(reduced_KKT.rows());
+    // Primal Variables: Add +reg to diagonal
+    const int primal_var_count = (n_+m_)*N_*T_;
+    for (int i = 0; i < primal_var_count; ++i) {
+        triplets.emplace_back(i, i, reg);
+    }
+    // Dual Variables (Constraints): Add -reg to diagonal
+    for (int i = primal_var_count; i < reduced_KKT.rows(); ++i) {
+        triplets.emplace_back(i, i, -reg);
+    }
+    Eigen::SparseMatrix<double> reg_matrix(reduced_KKT.rows(), reduced_KKT.cols());
+    reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
+    reduced_KKT += reg_matrix;
+
+    logger_->debug("Solve linear system ...");
+    std::tie(reduced_dy, residual, inertia) = solve_linear_system(reduced_KKT, -reduced_r0, "ldl");
+    logger_->debug("Done");
+    auto [pos, neg, zero] = inertia;
+    std::cout << "inertia: " << pos << "," << neg << "," << zero << std::endl;
+    // Line Search, regularization bloating
+
 
     debug_full_KKT_ = full_KKT;
 
@@ -463,14 +557,22 @@ public:
   }
 
   SparseMatrixResult debug_get_full_KKT() {
-    casadi::Sparsity res_sp = dr_dy_.sparsity_out(0); // full_KKT_sparsity
+    return get_spr(debug_full_KKT_);
+  }
+
+  SparseMatrixResult debug_get_reduced_KKT() {
+    return get_spr(debug_reduced_KKT_);
+  }
+
+  SparseMatrixResult get_spr(const SpMatrix& mtx) {
     SparseMatrixResult res;
-    res.shape = res_sp.size();
-    res.data.assign(debug_full_KKT_.valuePtr(), debug_full_KKT_.valuePtr() + debug_full_KKT_.nonZeros());
-    res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
-    res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
+    res.shape = {mtx.rows(), mtx.cols()};
+    res.data.assign(mtx.valuePtr(), mtx.valuePtr() + mtx.nonZeros());
+    res.row.assign(mtx.innerIndexPtr(), mtx.innerIndexPtr() + mtx.nonZeros());
+    res.colind.assign(mtx.outerIndexPtr(), mtx.outerIndexPtr() + mtx.outerSize() + 1);
     return res;
   }
+
 
 
 };

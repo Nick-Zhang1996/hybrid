@@ -351,12 +351,37 @@ class RD3GCasadi(BaseSolver):
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
         # Although they are identical, there should be a single source of truth.
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
+        t0 = time()
+        # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
         self.cpp_solver.solve(self.x0, u_ref, *params_np)
+        dt = time()-t0
+        logger.info(f"cpp: {dt=}")
         res = self.cpp_solver.debug_get_full_KKT()
         cpp_full_KKT = scipy.sparse.csc_matrix(
             (res.data, res.row, res.colind),
             shape=res.shape
+        )  # verified consistency
+
+        res = self.cpp_solver.debug_get_reduced_KKT()
+        cpp_reduced_KKT = scipy.sparse.csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
         )
+
+        t0 = time()
+        self.solve()
+        dt = time() - t0
+        logger.info(f"py: {dt=}")
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        h_in_r_offset = n*N*T + m*N*T + n*N*T
+
+        breakpoint()
+        full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - self.debug_full_KKT)
+        reduced_KKT_diff = scipy.sparse.linalg.norm(cpp_reduced_KKT - self.debug_reduced_KKT)
+        print(full_KKT_diff, reduced_KKT_diff)
 
     def solve(self):
         N = self.N
@@ -445,6 +470,7 @@ class RD3GCasadi(BaseSolver):
         r0_np = np.array(r0_val)
         r0_norm = norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
+        self.debug_full_KKT = dr_dy_csc
         p.e('Form KKT')
 
         # size of x, u, lamda, mu
@@ -478,6 +504,9 @@ class RD3GCasadi(BaseSolver):
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
         p.e('Reduce KKT')
+        self.debug_active_h_indices = np.array(h_val >= 0).nonzero()[0]
+        self.debug_negative_h_indices = neg_h_mask
+        self.debug_reduced_KKT = KKT
 
         # solve sparse system
         # Full: r0 + dr_dy @ dy = 0

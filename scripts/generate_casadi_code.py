@@ -21,4 +21,4 @@ def codegen(car_count, horizon):
 
 if __name__ == "__main__":
     codegen(5, 40)
-    codegen(3, 20)
+    # codegen(3, 20)
