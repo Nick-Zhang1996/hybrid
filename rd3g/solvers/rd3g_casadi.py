@@ -276,17 +276,17 @@ class RD3GCasadi(BaseSolver):
         self.get_n_fun = cas.Function('get_n', [], [self.n])
         self.get_m_fun = cas.Function('get_m', [], [self.m])
 
-        r_val = self.r(*args)
-        self.r_casadi = cas.Function('r', args+config_params, [r_val])
+        h_val = self.game.h(x, u)
+        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val])
+
+        r_val, h_val = self.r(*args)
+        self.r_casadi = cas.Function('r', args+config_params, [r_val, h_val])
 
         dr_dy = cas.jacobian(r_val, y)
         self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
 
         X = self.game.rollout(x0, u)
         self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
-
-        h_val = self.game.h(x, u)
-        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val])
 
         # TODO Some games may not have collision constraints, fail silently
         xki = cas.SX.sym('xki', n, 1)
@@ -368,6 +368,12 @@ class RD3GCasadi(BaseSolver):
             shape=res.shape
         )
 
+        res = self.cpp_solver.debug_get_full_r0()
+        cpp_full_r0 = scipy.sparse.csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+
         t0 = time()
         self.solve()
         dt = time() - t0
@@ -381,7 +387,8 @@ class RD3GCasadi(BaseSolver):
         breakpoint()
         full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - self.debug_full_KKT)
         reduced_KKT_diff = scipy.sparse.linalg.norm(cpp_reduced_KKT - self.debug_reduced_KKT)
-        print(full_KKT_diff, reduced_KKT_diff)
+        full_r0_diff = scipy.linalg.norm(cpp_full_r0 - self.debug_full_r0)
+        print(full_KKT_diff, reduced_KKT_diff, full_r0_diff)
 
     def solve(self):
         N = self.N
@@ -414,6 +421,7 @@ class RD3GCasadi(BaseSolver):
             logger.info(f'--- iter {i} ---')
             x_ref, u_ref, lambda_ref, mu_ref, res, has_converged, is_optimal = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
+            break  # FIXME
             if has_converged:
                 break
         dt = time() - t0
@@ -465,12 +473,11 @@ class RD3GCasadi(BaseSolver):
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val = self.r_casadi(x, u, lamda, mu, *params_dm)
+        r0_val, h_val = self.r_casadi(x, u, lamda, mu, *params_dm)
         dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
         r0_np = np.array(r0_val)
         r0_norm = norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
-        self.debug_full_KKT = dr_dy_csc
         p.e('Form KKT')
 
         # size of x, u, lamda, mu
@@ -486,8 +493,8 @@ class RD3GCasadi(BaseSolver):
         mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
         p.s('Reduce KKT')
 
-        h_val = np.array(self.h_casadi(x, u, *params_dm), order='F').flatten(order='F')
-        neg_h_mask = np.array(h_val < 0).nonzero()[0]
+        h_val_np = np.array(h_val, order='F').flatten(order='F')
+        neg_h_mask = (h_val_np < 0).nonzero()[0]
         inactive_r_rows = []
         inactive_y_rows = []
         for idx in neg_h_mask:
@@ -504,9 +511,11 @@ class RD3GCasadi(BaseSolver):
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
         p.e('Reduce KKT')
-        self.debug_active_h_indices = np.array(h_val >= 0).nonzero()[0]
+        self.debug_full_KKT = dr_dy_csc
+        self.debug_active_h_indices = (h_val_np >= 0).nonzero()[0]
         self.debug_negative_h_indices = neg_h_mask
         self.debug_reduced_KKT = KKT
+        self.debug_full_r0 = r0_np
 
         # solve sparse system
         # Full: r0 + dr_dy @ dy = 0
@@ -569,12 +578,16 @@ class RD3GCasadi(BaseSolver):
         stepped_r_vec = []
         try:
             for _ in range(self.config.backtracking_max_iter):
-                r_val = self.r_casadi(x+step_size*cas.reshape(dx, n*N, T),
-                                      u+step_size*cas.reshape(du, m*N, T),
-                                      lamda+step_size*cas.reshape(dlamda, n*N, T),
-                                      mu+step_size*cas.reshape(dmu, n_hi*N, 1),
-                                      int_param_dm, double_param_dm
-                                      )
+                new_x = x+step_size*cas.reshape(dx, n*N, T)
+                new_u = u+step_size*cas.reshape(du, m*N, T)
+                new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
+                new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
+                r_val, h_val = self.r_casadi(new_x,
+                                             new_u,
+                                             new_lamda,
+                                             new_mu,
+                                             int_param_dm, double_param_dm
+                                             )
                 r_norm = norm(r_val)
                 step_size_vec.append(step_size)
                 stepped_r_vec.append(r_norm)
@@ -589,12 +602,6 @@ class RD3GCasadi(BaseSolver):
             self.reg = self.config.reg
         p.e('Line Search')
 
-        p.s('Cleanup')
-        new_x = x+step_size*cas.reshape(dx, n*N, T)
-        new_u = u+step_size*cas.reshape(du, m*N, T)
-        new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
-        new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
-        p.e('Cleanup')
         logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}')
 
         p.s('More debug checking')
@@ -727,7 +734,8 @@ class RD3GCasadi(BaseSolver):
             lamda: (n*N, T) Multiplier for dynamics constraint
             mu: (n_hi*N,1) Multiplier for positive h
         Return:
-            val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
+            r_val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
+            h_val: (n_hi, N) Result of h(x,u), which is needed for active set on constraints
         '''
         T = self.T
         N = self.N
@@ -778,12 +786,13 @@ class RD3GCasadi(BaseSolver):
                 r_vec.append(fk)  # n
 
         # Inequality constraint residual , n_hi*N
-        h_pos = cas.fmax(self.game.h(x, u), 0)
+        h_pos = cas.fmax(h_val, 0)
         r_vec.append(cas.vec(h_pos))
 
-        retval = cas.vertcat(*r_vec)
-        assert retval.shape == (n*N*T+m*N*T+n*N*T+n_hi*N, 1)
-        return retval
+        r_val = cas.vertcat(*r_vec)
+        assert r_val.shape == (n*N*T+m*N*T+n*N*T+n_hi*N, 1)
+        assert h_val.shape == (n_hi, N)
+        return r_val, h_val
 
     def hessian_components(self, dr_dy):
         """ Re-organize the dr_dy hessian matrix to the following format

@@ -139,6 +139,7 @@ protected:
 
   SpMatrix debug_full_KKT_;
   SpMatrix debug_reduced_KKT_;
+  SpMatrix debug_full_r0_;
 
 public:
   // TODO cleanup constructor arguments, remove useless or redundant ones
@@ -239,18 +240,21 @@ public:
     return res;
   }
 
-  // Identify h<=0 from full_r0, remove corresponding rows from full_r0 and full_KKT.
-  // Also remove corresponding multiplier for h<=0 by removing columns in full_KKT
+  // Given [h_val], 
+  // remove rows corresponding to h<0 (inactive constraints) full_r0
+  // Remove rows for h<0, and cols for corresponding mu (multiplier) from full_KKT.
   // Returns:
   //      reduced_KKT:
   //      reduced_r0:
   //      active_h_indices:
   std::tuple<SpMatrix, SpMatrix, std::vector<int>>
-  reduce_KKT_system(const SpMatrix& full_KKT, const SpMatrix& full_r0) {
+  reduce_KKT_system(const SpMatrix& full_KKT, const SpMatrix& full_r0, const MatrixXd& h_val) {
     // Starting index of first h() in residual
     // Skipping through dLLi_dx, dLLi_du, dynamics constraint
     // Also starting index of mu, multiplier for h(), in y
     const int h_in_r_offset = n_*N_*T_ + m_*N_*T_ + n_*N_*T_;  
+    assert (h_val.rows() == n_hi_ * N_);
+    assert (h_val.cols() == 1);
 
     // Maps rows in full_r0 to reduced_r0, -1 means delete
     std::vector<int> old_to_new_idx(full_r0.rows(), -1);
@@ -263,8 +267,9 @@ public:
       old_to_new_idx[i] = reduced_r_dim++;
     }
 
+    assert (h_val.rows() == full_r0.rows() - h_in_r_offset);
     for (int i=h_in_r_offset; i<full_r0.rows(); i++){
-      if (full_r0.coeff(i,0) >= 0.0){
+      if (h_val(i-h_in_r_offset,0) >= 0.0){
         old_to_new_idx[i] = reduced_r_dim++;
         active_h_indices.push_back(i-h_in_r_offset);
       }
@@ -342,7 +347,7 @@ public:
       // A must be symmetric, symbolic LDL decomposition
       // Consider reusing this, if A's structure doesn't change
       logger_->debug("Symbolic LDL decomp...");
-      assert ((A-A.T).norm() < 1e-6);
+      assert ((A-A.transpose()).norm() < 1e-6);
       solver.compute(A);
 
       if(solver.info() != Eigen::Success) {
@@ -434,6 +439,7 @@ public:
 
     for (int iter=0; iter<max_iterations_; iter++){
       step(x, u, lamda, mu, int_param, double_param);
+      break;
     }
 
   }
@@ -457,12 +463,12 @@ public:
     // skim down H, dy, remove inactive constraints, dual variables
     // Solve for dy
 
-    // Call r(), dr_dy() to get full_r0 and full_KKT
+    // Call h_val(), r(), dr_dy() to get full_r0 and full_KKT
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
     logger_->debug("Getting r0 and KKT matrix...");
-    // full_r0 = r(x, u, lamda, mu, int_param, double_param)
+    // full_r0 = r(x, u, lamda, mu, h_val, int_param, double_param)
     wb_.args[0] = static_cast<double*>(x.data());
     wb_.args[1] = static_cast<double*>(u.data());
     wb_.args[2] = static_cast<double*>(lamda.data());
@@ -480,12 +486,21 @@ public:
     casadi::Sparsity full_r0_sp = r_.sparsity_out(0);
     std::vector<double> full_r0_buffer(full_r0_sp.nnz());
     wb_.res[0] = full_r0_buffer.data();
-    assert (r_.n_out() == 1);
+
+    casadi::Sparsity h_val_sp = r_.sparsity_out(1);
+    std::vector<double> h_val_buffer(h_val_sp.nnz());
+    wb_.res[1] = h_val_buffer.data();
+
+    assert (r_.n_out() == 2);
 
     r_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
+    wb_.res[1] = nullptr;
 
     auto full_r0 = get_mapped_spmatrix(full_r0_sp, full_r0_buffer.data());
+    assert (h_val.is_dense());
+    // auto h_val = get_mapped_spmatrix(h_val_sp, h_val_buffer.data());
+    Eigen::Map<MatrixXd> h_val(h_val_buffer.data(), h_val_sp.size1(), h_val_sp.size2());
 
     // full_KKT = dr_dy(x, u, lamda, mu, int_param, double_param)
     // Same input as r() call
@@ -513,10 +528,19 @@ public:
     SpMatrix reduced_r0;
     // TODO maybe there's a more useful index? like new_to_old
     std::vector<int> active_h_indices;
-    std::tie(reduced_KKT, reduced_r0, active_h_indices) = reduce_KKT_system(full_KKT, full_r0);
+    // Can't use r0 directly, can't differentiate between an inactive h<0 vs a tight h=0
+    // since both are 0 in r
+    std::tie(reduced_KKT, reduced_r0, active_h_indices) = 
+          reduce_KKT_system(full_KKT, full_r0, h_val.reshaped());
     assert (reduced_KKT.rows() == reduced_KKT.cols());
     // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
     debug_reduced_KKT_ = reduced_KKT;
+    std::cout << "active_h_indices = [";
+    for (int i=0; i<active_h_indices.size(); i++){
+      std::cout << active_h_indices[i] << ", " ;
+    }
+    std::cout << "]" << std::endl;
+
     // TODO check results consistency
     // TODO maybe use dense matrix for solution
     Vector reduced_dy;
@@ -551,6 +575,7 @@ public:
 
 
     debug_full_KKT_ = full_KKT;
+    debug_full_r0_ = full_r0;
 
     return {false, false, 1.0};
 
@@ -562,6 +587,10 @@ public:
 
   SparseMatrixResult debug_get_reduced_KKT() {
     return get_spr(debug_reduced_KKT_);
+  }
+
+  SparseMatrixResult debug_get_full_r0() {
+    return get_spr(debug_full_r0_);
   }
 
   SparseMatrixResult get_spr(const SpMatrix& mtx) {

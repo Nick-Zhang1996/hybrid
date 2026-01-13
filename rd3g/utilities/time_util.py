@@ -101,7 +101,7 @@ class TimeUtil:
         """
         if not self.enabled:
             return
-        if len(self.child_sections) == 0:
+        if len(self.child_sections) == 0 and prefix == '':
             logger.info('No timed block defined')
             return
 

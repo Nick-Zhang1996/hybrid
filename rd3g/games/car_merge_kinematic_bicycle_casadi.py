@@ -398,7 +398,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
                 xk = cas.reshape(x[:, k-1], self.n, self.N)
                 h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
-                h_vals[i] = 0
+                h_vals[i] = -1
                 h_vals = cas.vertcat(*h_vals)
                 assert h_vals.shape == (self.N, 1)
                 hi_vec.append(h_vals)  # N, agent i vs everyone (N)
