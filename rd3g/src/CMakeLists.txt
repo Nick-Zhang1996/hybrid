@@ -9,9 +9,10 @@ project(residual_game)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+# Normal debug-friendly build
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -fPIC")
-# When we really want speed
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -Ofast -fPIC -fno-math-errno -ffast-math -march=native -mfma")
+# For release when we want performance
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -Ofast -fPIC -fno-math-errno -ffast-math -march=native -mfma")
 
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 message("CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")

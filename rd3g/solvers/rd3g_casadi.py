@@ -158,7 +158,7 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     tolerance: float = 5e-4
-    iterations: int = 100
+    iterations: int = 10
     # backtracking line search param
     bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
@@ -323,6 +323,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.rho_b,
                 solver_config.bc_a,
                 solver_config.bc_b,
+                solver_config.reg,
                 solver_config.tolerance,
                 solver_config.backtracking_max_iter,
                 solver_config.iterations,
@@ -353,7 +354,8 @@ class RD3GCasadi(BaseSolver):
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
         t0 = time()
         # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
-        self.cpp_solver.solve(self.x0, u_ref, *params_np)
+        retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
+        x, u, lamda, mu, residual, has_converged, is_optimal, msg = retval
         dt = time()-t0
         logger.info(f"cpp: {dt=}")
         res = self.cpp_solver.debug_get_full_KKT()
@@ -384,11 +386,10 @@ class RD3GCasadi(BaseSolver):
         m = self.m
         h_in_r_offset = n*N*T + m*N*T + n*N*T
 
-        breakpoint()
-        full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - self.debug_full_KKT)
-        reduced_KKT_diff = scipy.sparse.linalg.norm(cpp_reduced_KKT - self.debug_reduced_KKT)
-        full_r0_diff = scipy.linalg.norm(cpp_full_r0 - self.debug_full_r0)
-        print(full_KKT_diff, reduced_KKT_diff, full_r0_diff)
+        # full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - self.debug_full_KKT)
+        # reduced_KKT_diff = scipy.sparse.linalg.norm(cpp_reduced_KKT - self.debug_reduced_KKT)
+        # full_r0_diff = scipy.linalg.norm(cpp_full_r0 - self.debug_full_r0)
+        # print(full_KKT_diff, reduced_KKT_diff, full_r0_diff)
 
     def solve(self):
         N = self.N
@@ -421,7 +422,6 @@ class RD3GCasadi(BaseSolver):
             logger.info(f'--- iter {i} ---')
             x_ref, u_ref, lambda_ref, mu_ref, res, has_converged, is_optimal = self.step(
                 x_ref, u_ref, lambda_ref, mu_ref)
-            break  # FIXME
             if has_converged:
                 break
         dt = time() - t0
@@ -598,6 +598,7 @@ class RD3GCasadi(BaseSolver):
             raise LineSearchMaxIter
         except LineSearchMaxIter:
             self.reg *= 10
+            logger.debug(f"Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
             self.reg = self.config.reg
         p.e('Line Search')

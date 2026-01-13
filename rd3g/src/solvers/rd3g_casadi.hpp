@@ -80,7 +80,6 @@ FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec) {
   {
     size_t sz_arg_, sz_res_, sz_iw_, sz_w_;
     fun.sz_work(sz_arg_, sz_res_, sz_iw_, sz_w_);
-    //std::cout << sz_arg_ << " " << sz_res_ << " " << sz_iw_ << " " << sz_w_ << std::endl;
     sz_arg = sz_arg > sz_arg_ ? sz_arg : sz_arg_;
     sz_res = sz_res > sz_res_ ? sz_res : sz_res_;
     sz_iw = sz_iw > sz_iw_ ? sz_iw : sz_iw_;
@@ -117,9 +116,9 @@ class Rd3gCasadi {
 
 protected:
   int n_, m_, N_, T_, n_hi_;
-  Scalar dt_, rho_, rho_b_, bc_a_, bc_b_;
+  Scalar dt_, rho_, rho_b_, bc_a_, bc_b_,reg0_, reg_;
   Scalar tolerance_;
-  int backtracking_max_iter_;
+  int line_search_max_iter_;
   int max_iterations_;
   // dim: N*n
   MatrixXd x0_;
@@ -146,14 +145,16 @@ public:
 
   // NOTE n,m may need to be template variables for performance
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar rho,
-               const Scalar rho_b, const Scalar bc_a, const Scalar bc_b,
+               const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
                const Scalar tolerance, const int backtracking_max_iter,
                const int max_iter, const bool verbose,
                const std::string base_dir,
                const std::string casadi_module_name)
-      : N_{N}, T_{T}, n_hi_{n_hi}, dt_{dt}, rho_{rho}, rho_b_{rho_b}, bc_a_{bc_a},
-        bc_b_{bc_b}, tolerance_{tolerance},
-        backtracking_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
+      : N_{N}, T_{T}, n_hi_{n_hi}, dt_{dt}, 
+        rho_{rho}, rho_b_{rho_b}, bc_a_{bc_a},bc_b_{bc_b},
+        reg0_{reg},reg_{reg},
+        tolerance_{tolerance},
+        line_search_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
         max_iterations_{max_iter}, verbose_(verbose) {
 
 
@@ -247,7 +248,7 @@ public:
   //      reduced_KKT:
   //      reduced_r0:
   //      active_h_indices:
-  std::tuple<SpMatrix, SpMatrix, std::vector<int>>
+  std::tuple<SpMatrix, MatrixXd, std::vector<int>>
   reduce_KKT_system(const SpMatrix& full_KKT, const SpMatrix& full_r0, const MatrixXd& h_val) {
     // Starting index of first h() in residual
     // Skipping through dLLi_dx, dLLi_du, dynamics constraint
@@ -276,12 +277,12 @@ public:
     }
 
     // Construct reduced_r0
-    SpMatrix reduced_r0(reduced_r_dim, 1);
-    reduced_r0.reserve(reduced_r_dim);
+    // TODO should this be sparse?
+    MatrixXd reduced_r0(reduced_r_dim, 1);
 
     for (int i=0; i<full_r0.rows(); i++){
       if (old_to_new_idx[i] != -1) {
-        reduced_r0.insert(old_to_new_idx[i], 0) = full_r0.coeff(i,0);
+        reduced_r0(old_to_new_idx[i], 0) = full_r0.coeff(i,0);
       }
     }
 
@@ -314,14 +315,13 @@ public:
   //   res: residual, norm(Ax-b)
   //   inertia: tuple(positive eigenval, negative eigenval, zero eigenval)
   std::tuple<SpMatrix, Scalar, std::tuple<int,int,int>>
-  solve_linear_system(const SpMatrix& A, const SpMatrix& b, std::string method){
+  solve_linear_system(const SpMatrix& A, const MatrixXd& b, std::string method){
     if (method == "lscg"){
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
       solver.setTolerance(1e-5);
       // solve r0 + Dr* dy = 0 least square
       solver.compute(A);
       // solver.compute(Dr.sparseView());
-      // cout << "compute" << endl;
 
       if (solver.info() != Eigen::Success) {
         throw std::runtime_error(" solver initialization failed");
@@ -331,7 +331,7 @@ public:
       MatrixXd x = solver.solve(b);
       if (solver.info() != Eigen::Success) {
         // TODO use logging
-        std::cout << "LSCG solver failed " << std::endl;
+        logger_->info("LSCG solver failed ");
       }
       // NOTE this is relative error |Ax-b|/|Ax|, make sure it's consistent elsewhere
       // TODO should we use dense matrix for x?
@@ -346,7 +346,7 @@ public:
       
       // A must be symmetric, symbolic LDL decomposition
       // Consider reusing this, if A's structure doesn't change
-      logger_->debug("Symbolic LDL decomp...");
+      // logger_->debug("Symbolic LDL decomp...");
       assert ((A-A.transpose()).norm() < 1e-6);
       solver.compute(A);
 
@@ -358,7 +358,7 @@ public:
 
       // Solve System (A * x = b)
       // This automatically handles the permutations (P) internally
-      logger_->debug("Solving...");
+      // logger_->debug("Solving...");
       Eigen::VectorXd x = solver.solve(b);
 
       // Get diagonal of matrix D from L*D*L'
@@ -370,7 +370,7 @@ public:
       int zero = 0;
       
       // Iterate through D to count signs
-      logger_->debug("Checking inertia...");
+      // logger_->debug("Checking inertia...");
       const double epsilon = 1e-8;
       for (int i = 0; i < D.size(); ++i) {
           if (D[i] > epsilon) pos++;
@@ -390,7 +390,18 @@ public:
 
 
 
-  void solve(py::array_t<double> x0,
+  // Solve dynamic game
+  // Returns:
+  // x
+  // u
+  // lamda
+  // mu
+  // residual
+  // has_converged
+  // is_optimal
+  // msg
+  std::tuple<MatrixXd, MatrixXd, MatrixXd, MatrixXd, Scalar, bool, bool, std::string>
+  solve(py::array_t<double> x0,
                       py::array_t<double> u_guess,
                       py::array_t<double> int_param,
                       py::array_t<double> double_param) {
@@ -418,33 +429,30 @@ public:
     rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr; // Avoid accidentally overwriting the buffer
     Eigen::Map<MatrixXd> x(x_buffer.data(), x_sp.size1(), x_sp.size2());
-    // std::cout << "x_buffer = " << x_buffer << std::endl;
-    // std::cout << "x.size = " << x_sp.size1() << " by " << x_sp.size2() << std::endl;
-
-    // std::cout << "(solve) x = " << std::endl;
-    // for (int k=0; k<T_; k++)
-    // {
-    //   auto x_k = x.col(k).reshaped(n_,N_);
-    //   for (int i=0; i<N_; i++)
-    //   {
-    //     std::cout << "k=" << k << " i=" << i << " x= " << x_k.col(i) << std::endl;
-    //   }
-    // }
 
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();
 
     MatrixXd lamda = MatrixXd::Zero(N_*n_, T_);
     MatrixXd mu = MatrixXd::Zero(N_*N_, T_);
+    bool has_converged = false;
+    bool is_optimal = false;
+    Scalar residual = 1e10;
 
     for (int iter=0; iter<max_iterations_; iter++){
-      step(x, u, lamda, mu, int_param, double_param);
-      break;
+      std::tie(has_converged, is_optimal, residual) = step(x, u, lamda, mu, int_param, double_param);
+      logger_->info("has_converged={}, is_optimal={}, residual={:.5f}", has_converged, is_optimal, residual);
+      if (has_converged){
+        break;
+      }
     }
+  // Return: x,  u,  lamda,  mu,  residual, has_converged,  is_optimal,  msg
+  std::string msg{"no info"};
+  return {x, u, lamda, mu, residual, has_converged,  is_optimal, msg};
 
   }
 
-  // Take one Newton step, modify x,u,lamda,mu in place
+  // Take one Newton step, modify x,u,lamda,mu IN PLACE
   // x_ref: n*N,T
   // u_ref: m*N,T
   // lamda: n*N,T
@@ -467,7 +475,7 @@ public:
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
-    logger_->debug("Getting r0 and KKT matrix...");
+    // logger_->debug("Getting r0 and KKT matrix...");
     // full_r0 = r(x, u, lamda, mu, h_val, int_param, double_param)
     wb_.args[0] = static_cast<double*>(x.data());
     wb_.args[1] = static_cast<double*>(u.data());
@@ -483,7 +491,9 @@ public:
     assert (r_.sparsity_in(4).is_dense());
     assert (r_.sparsity_in(5).is_dense());
 
+
     casadi::Sparsity full_r0_sp = r_.sparsity_out(0);
+    assert (full_r0_sp.is_dense());
     std::vector<double> full_r0_buffer(full_r0_sp.nnz());
     wb_.res[0] = full_r0_buffer.data();
 
@@ -498,7 +508,8 @@ public:
     wb_.res[1] = nullptr;
 
     auto full_r0 = get_mapped_spmatrix(full_r0_sp, full_r0_buffer.data());
-    assert (h_val.is_dense());
+    Scalar r0_norm = full_r0.norm();
+    assert (h_val_sp.is_dense());
     // auto h_val = get_mapped_spmatrix(h_val_sp, h_val_buffer.data());
     Eigen::Map<MatrixXd> h_val(h_val_buffer.data(), h_val_sp.size1(), h_val_sp.size2());
 
@@ -523,9 +534,9 @@ public:
     auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
 
     // Apply active set method, skim down full_r0 and full_KKT
-    logger_->debug("Reduce KKT system...");
+    // logger_->debug("Reduce KKT system...");
     SpMatrix reduced_KKT;
-    SpMatrix reduced_r0;
+    MatrixXd reduced_r0;
     // TODO maybe there's a more useful index? like new_to_old
     std::vector<int> active_h_indices;
     // Can't use r0 directly, can't differentiate between an inactive h<0 vs a tight h=0
@@ -534,50 +545,130 @@ public:
           reduce_KKT_system(full_KKT, full_r0, h_val.reshaped());
     assert (reduced_KKT.rows() == reduced_KKT.cols());
     // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
-    debug_reduced_KKT_ = reduced_KKT;
-    std::cout << "active_h_indices = [";
-    for (int i=0; i<active_h_indices.size(); i++){
-      std::cout << active_h_indices[i] << ", " ;
-    }
-    std::cout << "]" << std::endl;
 
-    // TODO check results consistency
     // TODO maybe use dense matrix for solution
     Vector reduced_dy;
     Scalar residual;
     std::tuple<int,int,int> inertia;
 
-    const Scalar reg = 1e-4; // TODO pass this in from config
-
     // Apply Levenberg-Marquardt Regularization
-    logger_->debug("Apply Regularization...");
+    // logger_->debug("Apply Regularization...");
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(reduced_KKT.rows());
     // Primal Variables: Add +reg to diagonal
     const int primal_var_count = (n_+m_)*N_*T_;
     for (int i = 0; i < primal_var_count; ++i) {
-        triplets.emplace_back(i, i, reg);
+        triplets.emplace_back(i, i, reg_);
     }
     // Dual Variables (Constraints): Add -reg to diagonal
     for (int i = primal_var_count; i < reduced_KKT.rows(); ++i) {
-        triplets.emplace_back(i, i, -reg);
+        triplets.emplace_back(i, i, -reg_);
     }
     Eigen::SparseMatrix<double> reg_matrix(reduced_KKT.rows(), reduced_KKT.cols());
     reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
     reduced_KKT += reg_matrix;
 
-    logger_->debug("Solve linear system ...");
+    // logger_->debug("Solve linear system ...");
     std::tie(reduced_dy, residual, inertia) = solve_linear_system(reduced_KKT, -reduced_r0, "ldl");
-    logger_->debug("Done");
+    const int mu_in_y_offset = n_*N_*T_ + m_*N_*T_ + n_*N_*T_;  
+    assert (reduced_dy.rows() == mu_in_y_offset + active_h_indices.size());
+    // logger_->debug("Done");
     auto [pos, neg, zero] = inertia;
-    std::cout << "inertia: " << pos << "," << neg << "," << zero << std::endl;
+    logger_->debug("reduced_KKT inertia ({},{},{})", pos, neg, zero);
+    const int in_n = n_*N_*T_ + m_*N_*T_;
+    int in_m = T_*N_*n_ + active_h_indices.size();  // Active ineq constraints/multipliers
+    std::tuple<int,int,int> expected_inertia(in_n, in_m, 0);
+    logger_->debug("expected inertia ({},{},{})", in_n, in_m, 0);
+    bool is_optimal = (inertia == expected_inertia);
+
+    // Reconstruct full_dy from reduced_dy
+    MatrixXd full_dy = MatrixXd::Zero(full_KKT.cols(),1);
+    full_dy.block(0,0,mu_in_y_offset,1) = reduced_dy.block(0,0,mu_in_y_offset,1);
+    for (int i=0; i < active_h_indices.size(); i++){
+      full_dy(mu_in_y_offset+active_h_indices[i],0) = reduced_dy(mu_in_y_offset+i,0);
+    }
+    // FIXME why are they different???
+    logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(),2));
+    logger_->debug("reduced_dy sq_norm {:.5f}", pow(reduced_dy.norm(),2));
+
     // Line Search, regularization bloating
+    Scalar step = 1.0;
+    MatrixXd new_x(n_*N_, T_);
+    MatrixXd new_u(m_*N_, T_);
+    MatrixXd new_lamda(n_*N_, T_);
+    MatrixXd new_mu(n_hi_*N_, 1);
+    int ls_iter;
+    Scalar new_r_norm = -1;
+    for (ls_iter=0; ls_iter<line_search_max_iter_; ls_iter++){
+      // check r(y+step_size*dy).norm()
+      // Construct new x,u,lamda,mu
+      int offset = 0;
+      const int x_dim = n_*N_*T_;
+      new_x = x + step * full_dy.block(0,0,x_dim,1).reshaped(n_*N_, T_);
+      offset += x_dim;
+      const int y_dim = m_*N_*T_;
+      new_u = u + step * full_dy.block(offset,0,y_dim,1).reshaped(m_*N_, T_);
+      offset += y_dim;
+      const int lamda_dim = n_*N_*T_;
+      new_lamda = lamda + step * full_dy.block(offset,0,lamda_dim,1).reshaped(n_*N_, T_);
+      offset += lamda_dim;
+      const int mu_dim = n_hi_*N_; // mu is column vector
+      new_mu = mu + step * full_dy.block(offset,0,mu_dim,1).reshaped(mu_dim, 1);
 
+      logger_->debug("new_x norm {:.5f}", new_x.norm());
+      wb_.args[0] = static_cast<double*>(new_x.data());
+      wb_.args[1] = static_cast<double*>(new_u.data());
+      wb_.args[2] = static_cast<double*>(new_lamda.data());
+      wb_.args[3] = static_cast<double*>(new_mu.data());
+      wb_.args[4] = static_cast<double*>(int_param_val.ptr);
+      wb_.args[5] = static_cast<double*>(double_param_val.ptr);
+      assert (r_.sparsity_in(0).is_dense());
+      assert (r_.sparsity_in(1).is_dense());
+      assert (r_.sparsity_in(2).is_dense());
+      assert (r_.sparsity_in(3).is_dense());
+      assert (r_.sparsity_in(4).is_dense());
+      assert (r_.sparsity_in(5).is_dense());
+      assert (r_.n_in() == 6);
 
+      std::vector<double> new_r_buffer(full_r0_sp.nnz());
+      wb_.res[0] = new_r_buffer.data();
+      wb_.res[1] = nullptr; // Discard h_val output
+      assert (r_.n_out() == 2);
+
+      r_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+      wb_.res[0] = nullptr;
+
+      auto new_r = get_mapped_spmatrix(full_r0_sp, new_r_buffer.data());
+      new_r_norm = new_r.norm();
+      logger_->debug("Line Search {}, new_r_norm {:.5f}",ls_iter, new_r_norm);
+      if (new_r_norm > (1 - bc_a_ * step) * r0_norm){
+        step *= bc_b_;
+      } else {
+        break;
+      }
+    }
+    if (ls_iter == line_search_max_iter_){
+      reg_ = min(reg_*10.0, 0.1);
+      logger_->debug("Line Search no progress, inflating reg to {:.5f}", reg_);
+    } else {
+      reg_ = reg0_;
+    }
+    logger_->debug("Line search stopped after {}/{} iterations", ls_iter, line_search_max_iter_);
+    logger_->debug("Step size = {:.5f}",step);
+
+    x = new_x;
+    u = new_u;
+    lamda = new_lamda;
+    mu = new_mu;
+
+    // DEBUG
+    debug_reduced_KKT_ = reduced_KKT;
     debug_full_KKT_ = full_KKT;
     debug_full_r0_ = full_r0;
+    bool has_converged = new_r_norm < tolerance_;
 
-    return {false, false, 1.0};
+    // Returns (has_converged, is_optimal, residual)
+    return {has_converged, is_optimal, new_r_norm};
 
   }
 
