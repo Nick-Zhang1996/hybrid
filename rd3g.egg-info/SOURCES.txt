@@ -6,5 +6,7 @@ rd3g.egg-info/SOURCES.txt
 rd3g.egg-info/dependency_links.txt
 rd3g.egg-info/requires.txt
 rd3g.egg-info/top_level.txt
+tests/test_casadi.py
 tests/test_cpp_solver.py
 tests/test_jax.py
+tests/test_toy_jax.py

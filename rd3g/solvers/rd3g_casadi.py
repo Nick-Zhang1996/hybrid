@@ -343,7 +343,6 @@ class RD3GCasadi(BaseSolver):
 
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        params_dm = [cas.DM(val) for val in params_np]
 
         u_ref = np.zeros((self.m*self.N, self.T), order='F')
         assert np.isfortran(self.x0)
@@ -355,41 +354,20 @@ class RD3GCasadi(BaseSolver):
         t0 = time()
         # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
         retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
-        x, u, lamda, mu, residual, has_converged, is_optimal, msg = retval
+        x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
         dt = time()-t0
+        del lamda
+        del mu
+        del msg
         logger.info(f"cpp: {dt=}")
-        res = self.cpp_solver.debug_get_full_KKT()
-        cpp_full_KKT = scipy.sparse.csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )  # verified consistency
 
-        res = self.cpp_solver.debug_get_reduced_KKT()
-        cpp_reduced_KKT = scipy.sparse.csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-
-        res = self.cpp_solver.debug_get_full_r0()
-        cpp_full_r0 = scipy.sparse.csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-
-        t0 = time()
-        self.solve()
-        dt = time() - t0
-        logger.info(f"py: {dt=}")
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        h_in_r_offset = n*N*T + m*N*T + n*N*T
-
-        # full_KKT_diff = scipy.sparse.linalg.norm(cpp_full_KKT - self.debug_full_KKT)
-        # reduced_KKT_diff = scipy.sparse.linalg.norm(cpp_reduced_KKT - self.debug_reduced_KKT)
-        # full_r0_diff = scipy.linalg.norm(cpp_full_r0 - self.debug_full_r0)
-        # print(full_KKT_diff, reduced_KKT_diff, full_r0_diff)
+        return Solution(elapsed_time=dt,
+                        iterations=i,
+                        u=u,
+                        x=x,
+                        residual=residual,
+                        has_converged=has_converged,
+                        is_optimal=is_optimal)
 
     def solve(self):
         N = self.N
@@ -511,11 +489,6 @@ class RD3GCasadi(BaseSolver):
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
         p.e('Reduce KKT')
-        self.debug_full_KKT = dr_dy_csc
-        self.debug_active_h_indices = (h_val_np >= 0).nonzero()[0]
-        self.debug_negative_h_indices = neg_h_mask
-        self.debug_reduced_KKT = KKT
-        self.debug_full_r0 = r0_np
 
         # solve sparse system
         # Full: r0 + dr_dy @ dy = 0

@@ -1,5 +1,4 @@
 """ Benchmark game with RD3G CasADi """
-from time import time
 import logging
 import numpy as np
 
@@ -25,7 +24,7 @@ for i in range(100):
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()
 
-    solver.final()
+    # solver.final()
     converge_vec.append(sol.has_converged)
     optimal_vec.append(sol.is_optimal)
     dt_vec.append(sol.elapsed_time)

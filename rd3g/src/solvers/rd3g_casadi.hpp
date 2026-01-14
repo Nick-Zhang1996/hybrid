@@ -158,7 +158,12 @@ public:
         max_iterations_{max_iter}, verbose_(verbose) {
 
 
-    logger_ = spdlog::stdout_color_mt("rd3g_casadi_cpp");
+    
+    const std::string logger_name{"rd3g_casadi_cpp"};
+    logger_ = spdlog::get(logger_name);
+    if (!logger_){
+      logger_ = spdlog::stdout_color_mt(logger_name);
+    }
     spdlog::set_level(spdlog::level::debug); 
     // Set custom format: [Time] [Logger] [Level] Message
     spdlog::set_pattern("[%H:%M:%S.%e] [%n] [%^%l%$] %v");
@@ -399,8 +404,9 @@ public:
   // residual
   // has_converged
   // is_optimal
+  // iterations
   // msg
-  std::tuple<MatrixXd, MatrixXd, MatrixXd, MatrixXd, Scalar, bool, bool, std::string>
+  std::tuple<MatrixXd, MatrixXd, MatrixXd, MatrixXd, Scalar, bool, bool, int, std::string>
   solve(py::array_t<double> x0,
                       py::array_t<double> u_guess,
                       py::array_t<double> int_param,
@@ -439,16 +445,17 @@ public:
     bool is_optimal = false;
     Scalar residual = 1e10;
 
-    for (int iter=0; iter<max_iterations_; iter++){
+    int iter;
+    for (iter=0; iter<max_iterations_; iter++){
       std::tie(has_converged, is_optimal, residual) = step(x, u, lamda, mu, int_param, double_param);
       logger_->info("has_converged={}, is_optimal={}, residual={:.5f}", has_converged, is_optimal, residual);
       if (has_converged){
         break;
       }
     }
-  // Return: x,  u,  lamda,  mu,  residual, has_converged,  is_optimal,  msg
+  // Return: x,  u,  lamda,  mu,  residual, has_converged,  is_optimal, iterations,  msg
   std::string msg{"no info"};
-  return {x, u, lamda, mu, residual, has_converged,  is_optimal, msg};
+  return {x, u, lamda, mu, residual, has_converged,  is_optimal, iter, msg};
 
   }
 
