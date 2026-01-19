@@ -112,6 +112,7 @@ inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double* data)
   return retval;
 }
 
+
 class Rd3gCasadi {
 
 protected:
@@ -123,7 +124,7 @@ protected:
   // dim: N*n
   MatrixXd x0_;
   mutable Profiler<false> profiler_;
-  bool verbose_;
+  int verbose_; // 0:error, 1:warning, 2:info, 3:debug
 
   std::shared_ptr<spdlog::logger> logger_;
 
@@ -147,7 +148,7 @@ public:
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar rho,
                const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
                const Scalar tolerance, const int backtracking_max_iter,
-               const int max_iter, const bool verbose,
+               const int max_iter, const int verbose,
                const std::string base_dir,
                const std::string casadi_module_name)
       : N_{N}, T_{T}, n_hi_{n_hi}, dt_{dt}, 
@@ -164,7 +165,23 @@ public:
     if (!logger_){
       logger_ = spdlog::stdout_color_mt(logger_name);
     }
-    spdlog::set_level(spdlog::level::debug); 
+
+    // 0:error, 1:warning, 2:info, 3:debug
+    switch (verbose_){
+      case 0:
+        spdlog::set_level(spdlog::level::err); 
+        break;
+      case 1:
+        spdlog::set_level(spdlog::level::warn); 
+        break;
+      case 2:
+        spdlog::set_level(spdlog::level::info); 
+        break;
+      case 3:
+        spdlog::set_level(spdlog::level::debug); 
+        break;
+
+    }
     // Set custom format: [Time] [Logger] [Level] Message
     spdlog::set_pattern("[%H:%M:%S.%e] [%n] [%^%l%$] %v");
 
@@ -439,8 +456,8 @@ public:
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();
 
-    MatrixXd lamda = MatrixXd::Zero(N_*n_, T_);
-    MatrixXd mu = MatrixXd::Zero(N_*N_, T_);
+    MatrixXd lamda = MatrixXd::Zero(n_*N_, T_);
+    MatrixXd mu = MatrixXd::Zero(n_hi_*N_, 1);
     bool has_converged = false;
     bool is_optimal = false;
     Scalar residual = 1e10;
@@ -498,6 +515,12 @@ public:
     assert (r_.sparsity_in(4).is_dense());
     assert (r_.sparsity_in(5).is_dense());
 
+    // DEBUG, ensure no nan in input
+    if (x.hasNaN()) logger_->warn("x has nan");
+    if (u.hasNaN()) logger_->warn("u has nan");
+    if (lamda.hasNaN()) logger_->warn("lamda has nan");
+    if (mu.hasNaN()) logger_->warn("mu has nan");
+
 
     casadi::Sparsity full_r0_sp = r_.sparsity_out(0);
     assert (full_r0_sp.is_dense());
@@ -539,6 +562,7 @@ public:
     wb_.res[0] = nullptr;
 
     auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
+    check_spmatrix_has_nan(full_KKT, "full_KKT");
 
     // Apply active set method, skim down full_r0 and full_KKT
     // logger_->debug("Reduce KKT system...");
@@ -576,7 +600,14 @@ public:
     reduced_KKT += reg_matrix;
 
     // logger_->debug("Solve linear system ...");
+    check_spmatrix_has_nan(reduced_KKT, "reduced_KKT");
+    if (reduced_r0.hasNaN()){
+      logger_->warn("reduced_dy has nan");
+    }
     std::tie(reduced_dy, residual, inertia) = solve_linear_system(reduced_KKT, -reduced_r0, "ldl");
+    if (reduced_dy.hasNaN()){
+      logger_->warn("reduced_dy has nan");
+    }
     const int mu_in_y_offset = n_*N_*T_ + m_*N_*T_ + n_*N_*T_;  
     assert (reduced_dy.rows() == mu_in_y_offset + active_h_indices.size());
     // logger_->debug("Done");
@@ -660,7 +691,7 @@ public:
     } else {
       reg_ = reg0_;
     }
-    logger_->debug("Line search stopped after {}/{} iterations", ls_iter, line_search_max_iter_);
+    logger_->debug("Line search stopped after {}/{} iterations", ls_iter+1, line_search_max_iter_);
     logger_->debug("Step size = {:.5f}",step);
 
     x = new_x;
@@ -700,6 +731,19 @@ public:
     return res;
   }
 
-
+  bool check_spmatrix_has_nan(const SpMatrix& mtx, std::string name){
+    bool has_nan = false;
+    const double* values = mtx.valuePtr();
+    for (int i = 0; i < mtx.nonZeros(); ++i) {
+      if (std::isnan(values[i])) {
+          has_nan = true;
+          break;
+      }
+    }
+    if (has_nan){
+      logger_->warn(name + " has nan");
+    }
+    return has_nan;
+  }
 
 };

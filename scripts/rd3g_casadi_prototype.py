@@ -13,13 +13,15 @@ logger.setLevel(logging.WARNING)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(2)
+np.random.seed(3)
 game = create_random_game(car_count=5, horizon=40)
 solver_config = RD3GCasadiConfig()
-solver = RD3GCasadi(solver_config, game, cpp_only=False)
+solver = RD3GCasadi(solver_config, game, cpp_only=True)
 # sol = solver.solve()
 solver.init_cpp_backend()
-solver.solve_cpp_backend()
+sol = solver.solve_cpp_backend()
 
-solver.final()
-# logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.is_optimal=}')
+# solver.final()
+logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
+            f'{sol.residual=:.6f} {sol.is_optimal=}, '
+            f'{sol.has_converged=}')

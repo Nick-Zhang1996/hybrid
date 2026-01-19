@@ -22,7 +22,22 @@ PYBIND11_MODULE(rd3g_casadi, m) {
   m.doc() = "RD3G CasADi solver";
   py::class_<ClassName>(m, "Rd3gCasadi")
     .def(py::init<int, int, int, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar,
-                int, int,bool, std::string, std::string>())
+                int, int,int, std::string, std::string>(),
+     py::arg("N"), 
+     py::arg("T"), 
+     py::arg("n_hi"), 
+     py::arg("dt"), 
+     py::arg("rho"), 
+     py::arg("rho_b"), 
+     py::arg("bc_a"), 
+     py::arg("bc_b"), 
+     py::arg("reg"), 
+     py::arg("tolerance"), 
+     py::arg("backtracking_max_iter"), 
+     py::arg("max_iter"), 
+     py::arg("verbose"), 
+     py::arg("base_dir"), 
+     py::arg("casadi_module_name"))
     .def("dr_dy", &ClassName::casadi_dr_dy)
     .def("solve", &ClassName::solve)
     .def("step", &ClassName::step)

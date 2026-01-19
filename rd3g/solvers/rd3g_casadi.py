@@ -327,7 +327,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.tolerance,
                 solver_config.backtracking_max_iter,
                 solver_config.iterations,
-                True,
+                1,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name
             )
@@ -351,6 +351,7 @@ class RD3GCasadi(BaseSolver):
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
         # Although they are identical, there should be a single source of truth.
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
+
         t0 = time()
         # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
         retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
@@ -360,6 +361,48 @@ class RD3GCasadi(BaseSolver):
         del mu
         del msg
         logger.info(f"cpp: {dt=}")
+
+        return Solution(elapsed_time=dt,
+                        iterations=i,
+                        u=u,
+                        x=x,
+                        residual=residual,
+                        has_converged=has_converged,
+                        is_optimal=is_optimal)
+
+    def solve_cpp_backend_rand_restart(self, restarts=10):
+        if self.cpp_solver is None:
+            logger.error('Call init_cpp_backend() first')
+            raise RuntimeError
+
+        gc = self.game.config
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        # FIXME this is specific to car merge game
+        logger.info('Solving game with 10 random restarts')
+        logger.warning("Using sample u specific to car merging game")
+        u_mean = np.array([-0.02230492, -0.00410712])
+        u_cov = np.array([[0.10592138, 0.00403225], [0.00403225, 0.00832558]])
+
+        t0 = time()
+        for i in range(restarts):
+            raw_samples = np.random.multivariate_normal(u_mean, u_cov, size=(self.N, self.T))
+            # raw_sampled: (N, T, m) -> [Agent, Time, Control_Dim]
+            # reshaped_samples:  (m, N, T) -> [Agent, Control_Dim, Time]
+            reshaped_samples = raw_samples.transpose(2, 0, 1).reshape(self.m * self.N, self.T)
+            u_ref = np.array(reshaped_samples, order='F')
+            assert np.isfortran(self.x0)
+            assert np.isfortran(u_ref)
+
+            # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
+            retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
+            x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
+            del lamda
+            del mu
+            del msg
+            if is_optimal and has_converged:
+                break
+        dt = time()-t0
+        logger.info(f"cpp: {dt=}, restarts={i}")
 
         return Solution(elapsed_time=dt,
                         iterations=i,
