@@ -12,38 +12,65 @@ logger.setLevel(logging.WARNING)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-converge_vec = []
-optimal_vec = []
-dt_vec = []
 good_u_vec = []
-for i in range(100):
-    np.random.seed(i)
-    game = create_random_game(car_count=5, horizon=40)
-    solver_config = RD3GCasadiConfig()
-    solver = RD3GCasadi(solver_config, game, cpp_only=True)
-    # sol = solver.solve()
-    solver.init_cpp_backend()
-    # sol = solver.solve_cpp_backend()
-    sol = solver.solve_cpp_backend_rand_restart(restarts=100)
+car_conv_mean_vec = []
+car_conv_var_vec = []
+car_optimal_mean_vec = []
+car_optimal_var_vec = []
+car_time_mean_vec = []
+car_time_var_vec = []
+for car_count in range(2, 9):
+    converge_vec = []
+    optimal_vec = []
+    dt_vec = []
+    for i in range(100):
+        np.random.seed(i)
+        game = create_random_game(car_count=car_count, horizon=20)
+        solver_config = RD3GCasadiConfig()
+        solver = RD3GCasadi(solver_config, game, cpp_only=True)
+        # sol = solver.solve()
+        solver.init_cpp_backend()
+        # sol = solver.solve_cpp_backend()
+        sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
-    # solver.final()
-    converge_vec.append(sol.has_converged)
-    optimal_vec.append(sol.is_optimal)
-    dt_vec.append(sol.elapsed_time)
-    logger.info(
-        f'{i=}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.is_optimal=}')
-    if sol.is_optimal and sol.has_converged:
-        good_u_vec.append(sol.u)
+        # solver.final()
+        converge_vec.append(sol.has_converged)
+        optimal_vec.append(sol.is_optimal and sol.has_converged)
+        dt_vec.append(sol.elapsed_time)
+        logger.debug(
+            f'{i=}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.is_optimal=}')
+        if sol.is_optimal and sol.has_converged:
+            good_u_vec.append(sol.u)
 
-    if i % 10 == 9:
-        convergence_rate = np.mean(converge_vec)
-        optimal_rate = np.mean(optimal_vec)
-        median_dt = np.median(dt_vec)
-        mean_dt = np.mean(dt_vec)
-        logger.info(f'{convergence_rate=}, {optimal_rate=}, {mean_dt=}, {median_dt=}')
+        if i % 10 == 9:
+            convergence_rate = np.mean(converge_vec)
+            optimal_rate = np.mean(optimal_vec)
+            median_dt = np.median(dt_vec)
+            mean_dt = np.mean(dt_vec)
+            logger.debug(
+                f'{convergence_rate=}, {optimal_rate=}, {mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+    converge = np.mean(converge_vec)
+    optimal = np.mean(optimal_vec)
+    median_dt_ms = np.median(dt_vec) * 1000
+    mean_dt_ms = np.mean(dt_vec) * 1000
+    var_dt_ms = np.var(dt_vec) * 1000
+    car_time_mean_vec.append(mean_dt_ms)
+    car_time_var_vec.append(var_dt_ms)
+    car_conv_mean_vec.append(converge)
+    car_optimal_mean_vec.append(optimal)
+    car_conv_var_vec.append(np.var(converge_vec))
+    car_optimal_var_vec.append(np.var(optimal_vec))
+    logger.debug(
+        f'{car_count} cars {converge=}, {optimal=}, {mean_dt_ms=:.1f}ms, {var_dt_ms=:.1f}ms')
 
 # Report mean and covariance of optimal results, used as param for initial guess
-stacked_u = np.hstack([val.reshape(game.m, game.N*game.T, order='F') for val in good_u_vec])
-mean = np.mean(stacked_u, axis=1)
-cov = np.cov(stacked_u)
-logger.info(f'{mean=}, {cov=}')
+# stacked_u = np.hstack([val.reshape(game.m, game.N*game.T, order='F') for val in good_u_vec])
+# mean = np.mean(stacked_u, axis=1)
+# cov = np.cov(stacked_u)
+# logger.info(f'{mean=}, {cov=}')
+print(f'{car_time_mean_vec=}')
+print(f'{car_time_var_vec=}')
+print(f'{car_conv_mean_vec=}')
+print(f'{car_conv_var_vec=}')
+print(f'{car_optimal_mean_vec=}')
+print(f'{car_optimal_var_vec=}')

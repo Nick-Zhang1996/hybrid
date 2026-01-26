@@ -24,7 +24,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 DEBUG = False
 
 
@@ -360,7 +360,7 @@ class RD3GCasadi(BaseSolver):
         del lamda
         del mu
         del msg
-        logger.info(f"cpp: {dt=}")
+        logger.debug(f"cpp: {dt=}")
 
         return Solution(elapsed_time=dt,
                         iterations=i,
@@ -402,7 +402,7 @@ class RD3GCasadi(BaseSolver):
             if is_optimal and has_converged:
                 break
         dt = time()-t0
-        logger.info(f"cpp: {dt=}, restarts={i}")
+        logger.debug(f"cpp: {dt=}, restarts={i}")
 
         return Solution(elapsed_time=dt,
                         iterations=i,
