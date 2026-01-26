@@ -18,9 +18,9 @@ class Solution():
     """ Total iterations run """
     iterations: int = 0
     u: Any = None
-    """(T,N,m) Open-loop Nash policy"""
+    """(m,N,T) Open-loop Nash policy"""
     x: Any = None
-    """(T,N,n) State trajectory """
+    """(n,N,T) State trajectory """
     residual: float = 0
     has_converged: bool = False
     is_optimal: bool = False

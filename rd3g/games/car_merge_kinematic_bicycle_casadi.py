@@ -98,13 +98,22 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         # this is not a parameter so not in config
         self.h_Qh = np.diag([-1.0, -1, 0, 0])
 
-    def visualize(self, x0, u, x=None, show=True, save=False):
+    def visualize(self, u, x, show=True, save=False):
+        """ Visualize the game with given initial state (x0) and control (u) in a single frame.
+        Args:
+            u: (m,N,T)
+            x: (n, N, T+1)
+        """
+        n = self.n
+        m = self.m
+        T = self.T
+        N = self.N
+
         if (not show) and (not save):
             return
-        if x is None:
-            x = np.vstack(
-                [self.config.x0[np.newaxis, :, :],
-                 self.rollout(self.config.x0, u)])
+        assert u.shape == (m, N, T)
+        assert x.shape == (n, N, T+1)
+
         fig, ax = plt.subplots()
         ax.vlines(x=-self.config.track_width,
                   ymin=self.visual_y_lim[0],
@@ -117,8 +126,8 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
             ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
         for i in range(self.N):
-            xx = x[:, i, 0]
-            yy = x[:, i, 1]
+            xx = x[0, i, :]
+            yy = x[1, i, :]
             ax.plot(-yy, xx, '*-')
         ax.set_aspect('equal', adjustable='box')
         if save:
@@ -128,22 +137,30 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         if show:
             plt.show()
 
-    def animate(self, x0, u, x=None, show=False, save=False):
+    def animate(self, u, x, show=True, save=False):
+        """ Animate the game with given initial state (x0) and control (u).
+        Args:
+            u: (m,N,T)
+            x: (n, N, T+1)
+        """
+        n = self.n
+        m = self.m
+        T = self.T
+        N = self.N
         if (not show) and (not save):
             return
-        if x is None:
-            x = np.vstack(
-                [self.config.x0[np.newaxis, :, :],
-                 self.rollout(self.config.x0, u)])
+        assert u.shape == (m, N, T)
+        assert x.shape == (n, N, T+1)
         fig, ax = plt.subplots()
 
         if self.sprite_visualization:
             car_scale = self.car_scale
             # draw car sprite
             car_pose_vec = []
-            for states in x:
+            for k in range(T+1):
+                states = x[:, :, k]
                 car_pose_vec.append(
-                    [[-states[i][1], states[i][0], states[i][3] + np.pi / 2]
+                    [[-states[1][i], states[0][i], states[3][i] + np.pi / 2]
                      for i in range(self.config.N)])
 
             im_vec = []
@@ -191,9 +208,9 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
                 tt = np.linspace(0, self.config.dt * self.config.T, self.config.T + 1)
                 # for plt.Rectangle, we offset position so this corresponds to top left corner
                 # also flip x axis
-                xx = x[:, i, 0] - 1.0
-                yy = -(x[:, i, 1]) - 0.5
-                angle = x[:, i, 3]
+                xx = x[0, i, :] - 1.0
+                yy = -(x[1, i, :]) - 0.5
+                angle = x[3, i, :]
                 xx_fun = interpolate.interp1d(tt, xx)
                 yy_fun = interpolate.interp1d(tt, yy)
                 angle_fun = interpolate.interp1d(tt, angle)
@@ -380,8 +397,8 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         return val
 
     def h(self, x, u):
-        """ Construct the inequality constraint function. 
-        h() is a mapping from (x,u) to all constraints. 
+        """ Construct the inequality constraint function.
+        h() is a mapping from (x,u) to all constraints.
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
             u: (m*N,T), controls, casadi.SX symbolic variable

@@ -456,13 +456,52 @@ class RD3GCasadi(BaseSolver):
 
         logger.info(f'Stop after {i} iteration because {msg}')
 
+        # u_ref: m*N, T
+        # sol.u: T,N,m
+        # x_ref n*N, T
+        # sol.x: T,N,n
         return Solution(elapsed_time=dt,
                         iterations=i,
-                        u=u_ref,
-                        x=x_ref,
+                        u=u_ref.toarray().reshape((m, N, T), order='F'),
+                        x=x_ref.toarray().reshape((n, N, T), order='F'),
                         residual=res,
                         has_converged=has_converged,
                         is_optimal=is_optimal)
+
+    def _rollout_full_x(self, u_ref):
+        n = self.n
+        m = self.m
+        T = self.T
+        N = self.N
+        gc = self.game.config
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
+        assert u_ref.shape == (m, N, T)
+
+        # n*N, T
+        u_cat = u_ref.reshape((m*N, T), order='F')
+        x_ref = self.rollout_casadi(self.x0, u_cat, int_param_dm, double_param_dm)
+        x = np.dstack(
+            [self.x0[:, :, np.newaxis],
+                x_ref.toarray().reshape((n, N, T), order='F')])
+        assert x.shape == (n, N, T+1)
+        return x
+
+    def visualize(self, u_ref, save=False):
+        """ Visualize the game with given and control (u) in a single frame.
+        Args:
+            u_ref: (m, N, T, order='F')
+        """
+        x = self._rollout_full_x(u_ref)
+        self.game.visualize(u_ref, x, show=True, save=save)
+
+    def animate(self, u_ref, save=False):
+        """ Animate the game with given and control (u).
+        Args:
+            u_ref: (m, N, T, order='F')
+        """
+        x = self._rollout_full_x(u_ref)
+        self.game.animate(u_ref, x, show=True, save=save)
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
         """ Solver step function
@@ -764,16 +803,29 @@ class RD3GCasadi(BaseSolver):
         eye = cas.SX.eye(self.N)
         h_val = self.game.h(x, u)
 
+        # dLLi_dx for all i, n*N*N*T
+        # for LL_idx in range(N):  # dLL[i]
+        #     # dLLi_dx{-i} is a part of the residual, so two agent indices
+        #     hi_val = h_val[:, LL_idx]
+        #     # dLLi_dx n*N*T
+        #     for k in range(T):
+        #         for i in range(N):  # dLLi_dx[k][i]
+        #             xki = cas.reshape(x[:, k], n, N)[:, i]
+        #             dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, LL_idx, hi_val), xki).T
+        #             r_vec.append(dLLi_dxki)  # n
+        #             assert dLLi_dxki.shape == (n, 1)
+
         # dLLi_dx n*N*T
         for k in range(T):
-            for i in range(N):
+            for i in range(N):  # dLLi_dx[k][i]
                 hi_val = h_val[:, i]
                 xki = cas.reshape(x[:, k], n, N)[:, i]
                 dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val), xki).T
                 r_vec.append(dLLi_dxki)  # n
                 assert dLLi_dxki.shape == (n, 1)
 
-        # dLLi_du m*N*T
+        # dLLi_dui for all i, m*N*T
+        # Unlike dLLi_dx, dLL[i]_du[i] only applies to the same index set, dLLi_du{-i} != 0
         for k in range(T):
             for i in range(N):
                 hi_val = h_val[:, i]
