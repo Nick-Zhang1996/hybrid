@@ -12,7 +12,7 @@ import numpy as np
 import casadi as cas
 import qdldl
 import scipy.sparse  # sparse matrix operations
-from scipy.sparse.linalg import lsqr, gmres, minres
+from scipy.sparse.linalg import lsqr
 import scipy.linalg
 from scipy.linalg import norm
 import matplotlib.pyplot as plt
@@ -662,11 +662,11 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         KKT += reg_matrix
 
-        p.s('Debug checking')
-        KKT_np = KKT.toarray()
-        cond_num = np.linalg.cond(KKT_np)
-        logger.info(f"KKT matrix condition Number: {cond_num}")
-        p.e('Debug checking')
+        # p.s('Debug checking')
+        # KKT_np = KKT.toarray()
+        # cond_num = np.linalg.cond(KKT_np)
+        # logger.info(f"KKT matrix condition Number: {cond_num}")
+        # p.e('Debug checking')
 
         p.s('Solve Linear')
         t0 = time()
@@ -676,33 +676,6 @@ class RD3GCasadi(BaseSolver):
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
-
-        counter = IterCounter()
-        p.s('Solve Linear (GMRES)')
-        t0 = time()
-        gmres_reduced_dy, info = gmres(
-            KKT, -KKT_residual, callback=counter.callback, callback_type='pr_norm')
-        dt = time() - t0
-        # gmres_residual = scipy.sparse.linalg.norm(KKT @ gmres_reduced_dy + KKT_residual)
-        if info != 0:
-            logger.info(f'GMRES bad solution, {dt=} itn={counter.itn} {counter.res}')
-        else:
-            logger.info(f'GMRES Success, {dt=} itn={counter.itn} {counter.res}')
-        p.e('Solve Linear (GMRES)')
-
-        counter = IterCounter()
-        p.s('Solve Linear (MINRES)')
-        t0 = time()
-        gmres_reduced_dy, info = gmres(
-            KKT, -KKT_residual, callback=counter.callback, callback_type='pr_norm')
-        dt = time() - t0
-        if info != 0:
-            logger.info(f'MINRES bad solution, {dt=} itn={counter.itn} {counter.res}')
-        else:
-            logger.info(f'MINRES Success, {dt=} itn={counter.itn} {counter.res}')
-        p.e('Solve Linear (MINRES)')
-
-        # DEBUG
 
         # Verify residual reduction with a line search
         # Recover full dy
