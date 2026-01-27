@@ -12,7 +12,7 @@ import numpy as np
 import casadi as cas
 import qdldl
 import scipy.sparse  # sparse matrix operations
-from scipy.sparse.linalg import lsqr
+from scipy.sparse.linalg import lsqr, gmres, minres
 import scipy.linalg
 from scipy.linalg import norm
 import matplotlib.pyplot as plt
@@ -26,6 +26,16 @@ from rd3g.utilities.casadi_util import dm_to_csc
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 DEBUG = False
+
+
+class IterCounter:
+    def __init__(self):
+        self.itn = 0
+        self.res = -1
+
+    def callback(self, pr_norm):
+        self.itn += 1
+        self.res = pr_norm
 
 
 def create_partial_identity(n, k):
@@ -293,6 +303,28 @@ class RD3GCasadi(BaseSolver):
         xkj = cas.SX.sym('xkj', n, 1)
         col_h_val = self.game.collision_h(xki, xkj)
         self.collision_h_casadi = cas.Function('collision_h', [xki, xkj]+config_params, [col_h_val])
+
+        # Construct KKT matrix for K_i
+        # To obtain x_i_k, do this: , note the column major storage
+        self.ri_casadi_vec = []
+        self.Ki_casadi_vec = []
+        for i in range(N):
+            xik_vec = [cas.reshape(x[:, k], n, N)[:, i] for k in range(T)]
+            xi = cas.vertcat(*xik_vec)
+            uik_vec = [cas.reshape(u[:, k], m, N)[:, i] for k in range(T)]
+            ui = cas.vertcat(*uik_vec)
+            lamdaik_vec = [cas.reshape(lamda[:, k], n, N)[:, i] for k in range(T)]
+            lamdai = cas.vertcat(*lamdaik_vec)
+            mui = cas.reshape(mu, n_hi, N)[:, i]
+            args_i = [xi, ui, lamdai, mui]
+            hi_vals = h_val[:, i]
+            yi = cas.vertcat(*[cas.vec(val) for val in args_i])
+            L = self.LLi(x, u, lamda, mu, i, hi_vals)
+            ri = cas.jacobian(L, yi)
+            self.ri_casadi_vec.append(cas.Function(f'r_{i}', args+config_params, [ri]))
+            Ki = cas.jacobian(ri, yi)
+            self.Ki_casadi_vec.append(cas.Function(f'K_{i}', args+config_params, [Ki]))
+
         logger.info('Constructing CasADi functions... Done')
 
     def init(self):
@@ -530,15 +562,58 @@ class RD3GCasadi(BaseSolver):
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
+        args = [x, u, lamda, mu, *params_dm]
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val, h_val = self.r_casadi(x, u, lamda, mu, *params_dm)
-        dr_dy_val = self.dr_dy_casadi(x, u, lamda, mu, *params_dm)
+        r0_val, h_val = self.r_casadi(*args)
+        dr_dy_val = self.dr_dy_casadi(*args)
         r0_np = np.array(r0_val)
         r0_norm = norm(r0_np)
         dr_dy_csc = dm_to_csc(dr_dy_val)
         p.e('Form KKT')
+
+        p.s('Inertia Checking')
+        is_optimal = True
+        saddle_agent_idx = []
+        min_pivot_vec = []
+        for i in range(N):
+            # Construct KKT matrix for agent i K_i
+            Ki = self.Ki_casadi_vec[i](*args)
+            Ki = dm_to_csc(Ki)
+
+            # Apply Levenberg-Marquardt Regularization
+            # H = H + reg * I
+            primal_var_count = (n+m)*T
+            ind = np.arange(primal_var_count)
+            reg_matrix = scipy.sparse.eye(Ki.shape[0], format="csc")
+            reg_matrix[ind, ind] = self.reg
+            # Apply constraint relaxation to allow AMD permutation in LDL
+            ind = np.arange(primal_var_count, Ki.shape[0])
+            reg_matrix[ind, ind] = -self.reg
+            Ki_reg = Ki + reg_matrix
+
+            upper = scipy.sparse.triu(Ki_reg, format='csc')
+            upper.eliminate_zeros()
+            upper.sort_indices()
+            upper.sum_duplicates()
+            # pylint:disable-next=c-extension-no-member
+            solver = qdldl.Solver(upper, upper=True)
+            #  C = P @ A @ P.T, C = L @ D @ L.T
+            _, D_diag, _ = solver.factors()
+            pos = np.sum(D_diag > 0)
+            neg = np.sum(D_diag < 0)
+            zero = len(D_diag) - pos - neg
+            in_Ki = (pos, neg, zero)
+            exp_in_Ki = (primal_var_count, Ki.shape[0]-primal_var_count, 0)
+            logger.info(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
+            if in_Ki != exp_in_Ki:
+                is_optimal = False
+                saddle_agent_idx.append(i)
+                min_pivot_vec.append(np.min(D_diag))
+
+        p.e('Inertia Checking')
+        logger.info(f'Saddle agents: {saddle_agent_idx}')
 
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
@@ -571,6 +646,7 @@ class RD3GCasadi(BaseSolver):
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
         p.e('Reduce KKT')
+        assert scipy.sparse.linalg.norm(KKT - KKT.T) < 1e-10
 
         # solve sparse system
         # Full: r0 + dr_dy @ dy = 0
@@ -586,40 +662,47 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         KKT += reg_matrix
 
+        p.s('Debug checking')
+        KKT_np = KKT.toarray()
+        cond_num = np.linalg.cond(KKT_np)
+        logger.info(f"KKT matrix condition Number: {cond_num}")
+        p.e('Debug checking')
+
         p.s('Solve Linear')
-        reduced_dy, residual, kkt_inertia = solve_linear(
-            KKT, -KKT_residual, method='qdldl', profiler=p)
+        t0 = time()
+        reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
+        dt = time() - t0
         p.e('Solve Linear')
+        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
+        logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
 
-        # Inertia checking for SOSC
-        in_n = n*N*T + m*N*T  # Primal vars
-        in_m = T*N*n + n_hi*N - len(inactive_r_rows)  # Active multipliers
-        expected_inertia = (in_n, in_m, 0)
-        # logger.info(f'Expected SOSC inertia {expected_inertia}')
-        if expected_inertia == kkt_inertia:
-            is_optimal = True
+        counter = IterCounter()
+        p.s('Solve Linear (GMRES)')
+        t0 = time()
+        gmres_reduced_dy, info = gmres(
+            KKT, -KKT_residual, callback=counter.callback, callback_type='pr_norm')
+        dt = time() - t0
+        # gmres_residual = scipy.sparse.linalg.norm(KKT @ gmres_reduced_dy + KKT_residual)
+        if info != 0:
+            logger.info(f'GMRES bad solution, {dt=} itn={counter.itn} {counter.res}')
         else:
-            is_optimal = False
-            logger.info(f'Bad inertia: Expected {expected_inertia}, actual {kkt_inertia}')
+            logger.info(f'GMRES Success, {dt=} itn={counter.itn} {counter.res}')
+        p.e('Solve Linear (GMRES)')
 
-        if DEBUG:
-            p.s('Debug checking')
-            H, A = self.hessian_components(dr_dy_csc)
+        counter = IterCounter()
+        p.s('Solve Linear (MINRES)')
+        t0 = time()
+        gmres_reduced_dy, info = gmres(
+            KKT, -KKT_residual, callback=counter.callback, callback_type='pr_norm')
+        dt = time() - t0
+        if info != 0:
+            logger.info(f'MINRES bad solution, {dt=} itn={counter.itn} {counter.res}')
+        else:
+            logger.info(f'MINRES Success, {dt=} itn={counter.itn} {counter.res}')
+        p.e('Solve Linear (MINRES)')
 
-            KKT_np = KKT.toarray()
-            # Do we have linearly dependent constraints?
-            H, A = self.hessian_components(KKT)
-            H_pos, H_neg, H_zero = check_inertia(H.toarray())
-            logger.info(f'H inertia {H_pos, H_neg, H_zero}')
-
-            A_dense = A.toarray()
-            rank = np.linalg.matrix_rank(A_dense, tol=1e-10)
-            logger.info(f'{A.shape=}, {rank=}')
-
-            cond_num = np.linalg.cond(KKT_np)
-            logger.debug(f"KKT matrix condition Number: {cond_num}")
-            p.e('Debug checking')
+        # DEBUG
 
         # Verify residual reduction with a line search
         # Recover full dy
@@ -706,10 +789,10 @@ class RD3GCasadi(BaseSolver):
     def L(self, x_k, u_k_i, x_k1_i, lamda_k, mu_i, i):
         ''' Lagrangian for agent i at time k, excluding inequality constraints
         Args:
-            x_k: (n,N) state vector at step k
-            u_k_i: (m,1) control vector for agent i at step k
-            x_k1_i: (n,1) state vector for agent i at step k+1
-            lamda_k: (n,N) Multiplier for dynamics constraint
+            x_k: (n, N) state vector at step k
+            u_k_i: (m, 1) control vector for agent i at step k
+            x_k1_i: (n, 1) state vector for agent i at step k+1
+            lamda_k: (n, N) Multiplier for dynamics constraint
             mu_i: (n_hi, 1),  (unused) multiplier for inequality constraint h()
             i: agent index i
         Return:
@@ -735,8 +818,8 @@ class RD3GCasadi(BaseSolver):
     def LLi(self, x, u, lamda, mu, i, hi_vals):
         ''' Lagrangian for agent i across all time steps
         Args:
-            x: (n*N,T) Agent states
-            u: (m*N,T) Agent control
+            x: (n*N, T) Agent states
+            u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
             mu: (n_hi*N, 1) Multiplier for positive h
             i: agent index
@@ -785,13 +868,13 @@ class RD3GCasadi(BaseSolver):
     def r(self, x, u, lamda, mu):
         ''' Residual for the game
         Args:
-            x: (n*N,T) Agent states
-            u: (m*N,T) Agent control
+            x: (n*N, T) Agent states
+            u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
-            mu: (n_hi*N,1) Multiplier for positive h
+            mu: (n_hi*N, 1) Multiplier for positive h
         Return:
             r_val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
-            h_val: (n_hi, N) Result of h(x,u), which is needed for active set on constraints
+            h_val: (n_hi, N) Result of h(x, u), which is needed for active set on constraints
         '''
         T = self.T
         N = self.N
@@ -863,12 +946,12 @@ class RD3GCasadi(BaseSolver):
         assert h_val.shape == (n_hi, N)
         return r_val, h_val
 
-    def hessian_components(self, dr_dy):
-        """ Re-organize the dr_dy hessian matrix to the following format
+    def hessian_components(self, Ki):
+        """ Verify agent KKT matrix is in following format, return component H, A
         [H A.T
          A 0 ]
         Args:
-            dr_dy: scipy.sparse.csc_matrix
+            Ki: scipy.sparse.csc_matrix
         Returns:
             H, A
         """
@@ -876,26 +959,23 @@ class RD3GCasadi(BaseSolver):
         N = self.N
         n = self.n
         m = self.m
-        primal_n = N*T*(n+m)  # primal variables
-        H = dr_dy[:primal_n, :primal_n]
-        A = dr_dy[primal_n:, :primal_n]
-        AT = dr_dy[:primal_n, primal_n:]
-        # empty = dr_dy[primal_n:, primal_n:]
-        # diff = (H.T - H).toarray()
-        # assert norm(diff) < 1e-10
-        # diff = (AT.T - A).toarray()
-        # assert norm(diff) < 1e-10
+        primal_n = (n+m)*T  # primal variables for agent i
+        H = Ki[:primal_n, :primal_n]
+        A = Ki[primal_n:, :primal_n]
+        AT = Ki[:primal_n, primal_n:]
+
+        empty = Ki[primal_n:, primal_n:]
+        assert scipy.sparse.linalg.norm(empty) < 1e-10
+        assert empty.nnz == 0
 
         assert np.sum(np.abs((H-H.T).data)) < 1e-10
-        # Do the dynamics constrain agree?
-        diff = (A-AT.T).toarray()[:n*N*T, :]
-        assert np.sum(np.abs(diff)) < 1e-10
+        dyn_diff = (A-AT.T).toarray()[:n*T, :]
+        assert np.sum(np.abs(dyn_diff)) < 1e-10
 
-        diff = (A-AT.T).toarray()[n*N*T:, :]
+        h_diff = (A-AT.T).toarray()[n*T:, :]
+        assert np.sum(np.abs(h_diff)) < 1e-10
 
-        assert np.sum(np.abs((A-AT.T).data)) < 1e-10
-        # Due to regularization, this is not empty
-        # assert empty.nnz == 0
+        # assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         return H, A
 
     def residual_components(self, r):
