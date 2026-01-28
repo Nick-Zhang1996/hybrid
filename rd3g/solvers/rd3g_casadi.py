@@ -96,7 +96,7 @@ def solve_linear(A, b, method, profiler):
     """ Solve for x in Ax = b, give x, residual, and inertia of A
     Args:
         A: (n,n) csc_matrix
-        b: (N,1) csc_matrix
+        b: (N,1) np.array
     Return:
         x: such that Ax-b is minimized
         res: residual, |Ax-b|_2
@@ -577,10 +577,13 @@ class RD3GCasadi(BaseSolver):
         is_optimal = True
         saddle_agent_idx = []
         min_pivot_vec = []
+        dy_i_vec = []  # solution for best response game
         for i in range(N):
             # Construct KKT matrix for agent i K_i
             Ki = self.Ki_casadi_vec[i](*args)
             Ki = dm_to_csc(Ki)
+
+            ri = self.ri_casadi_vec[i](*args)
 
             # Apply Levenberg-Marquardt Regularization
             # H = H + reg * I
@@ -599,6 +602,9 @@ class RD3GCasadi(BaseSolver):
             upper.sum_duplicates()
             # pylint:disable-next=c-extension-no-member
             solver = qdldl.Solver(upper, upper=True)
+            dy_i = solver.solve(-ri.toarray())
+            dy_i_vec.append(dy_i)
+
             #  C = P @ A @ P.T, C = L @ D @ L.T
             _, D_diag, _ = solver.factors()
             pos = np.sum(D_diag > 0)
@@ -618,6 +624,37 @@ class RD3GCasadi(BaseSolver):
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
+
+        # Reconstruct dy from dy_i to form an best response initial guess
+        dy_size = offsets[-1]
+        br_dy = np.zeros((dy_size, 1)) + np.nan
+        for i in range(N):
+            dy_i = dy_i_vec[i]
+            offset = 0
+            offset_i = 0
+            # x
+            xi_size = n*T
+            br_dy[i*xi_size: (i+1)*xi_size, 0] = dy_i[:xi_size]
+            offset += xi_size*N
+            offset_i += xi_size
+            # u
+            ui_size = m*T
+            br_dy[offset + i*ui_size: offset + (i+1)*ui_size, 0] = dy_i[offset_i:offset_i+ui_size]
+            offset += ui_size*N
+            offset_i += ui_size
+            # lamda
+            li_size = n*T
+            br_dy[offset + i*li_size: offset + (i+1)*li_size, 0] = dy_i[offset_i:offset_i+li_size]
+            offset += li_size*N
+            offset_i += li_size
+            # mu
+            mi_size = n_hi
+            br_dy[offset + i*mi_size: offset + (i+1)*mi_size, 0] = dy_i[offset_i:offset_i+mi_size]
+            offset += mi_size*N
+            offset_i += mi_size
+            assert offset == dy_size
+            assert offset_i == dy_i.shape[0]
+        assert not np.any(np.isnan(br_dy))
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint
@@ -645,6 +682,7 @@ class RD3GCasadi(BaseSolver):
         # TODO set the relevant mu to 0 to satisfy strict complementarity
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
+        reduced_dy_guess = br_dy[active_y_rows, 0]
         p.e('Reduce KKT')
         assert scipy.sparse.linalg.norm(KKT - KKT.T) < 1e-10
 
@@ -673,6 +711,15 @@ class RD3GCasadi(BaseSolver):
         reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
         dt = time() - t0
         p.e('Solve Linear')
+        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
+        logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+        del residual
+
+        p.s('Solve Linear (with guess)')
+        t0 = time()
+        reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual, x0=reduced_dy_guess)[:4]
+        dt = time() - t0
+        p.e('Solve Linear (with guess)')
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
