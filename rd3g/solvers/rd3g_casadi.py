@@ -38,6 +38,20 @@ class IterCounter:
         self.res = pr_norm
 
 
+@dataclass
+class BrGameResult:
+    is_optimal: bool
+    Ki: scipy.sparse.csc_matrix
+    Ki_reg: scipy.sparse.csc_matrix
+    dy_i: np.ndarray
+    L_zero_diag: scipy.sparse.csc_matrix
+    D_diag: np.ndarray
+    P_vec: scipy.sparse.csc_matrix
+
+    def verify(self):
+        #  C = P @ Ki_reg @ P.T, C = L @ D @ L.T
+
+
 def create_partial_identity(n, k):
     """
     Creates an n x n CSC matrix with the first k diagonal elements set to 1.
@@ -574,9 +588,10 @@ class RD3GCasadi(BaseSolver):
         p.e('Form KKT')
 
         p.s('Inertia Checking')
+        # Formulate the KKT matrix for each agent's best response game
         is_optimal = True
         saddle_agent_idx = []
-        min_pivot_vec = []
+        br_game_vec = []
         dy_i_vec = []  # solution for best response game
         for i in range(N):
             # Construct KKT matrix for agent i K_i
@@ -603,10 +618,11 @@ class RD3GCasadi(BaseSolver):
             # pylint:disable-next=c-extension-no-member
             solver = qdldl.Solver(upper, upper=True)
             dy_i = solver.solve(-ri.toarray())
+
             dy_i_vec.append(dy_i)
 
             #  C = P @ A @ P.T, C = L @ D @ L.T
-            _, D_diag, _ = solver.factors()
+            L_zero_diag, D_diag, P_vec = solver.factors()
             pos = np.sum(D_diag > 0)
             neg = np.sum(D_diag < 0)
             zero = len(D_diag) - pos - neg
@@ -616,7 +632,9 @@ class RD3GCasadi(BaseSolver):
             if in_Ki != exp_in_Ki:
                 is_optimal = False
                 saddle_agent_idx.append(i)
-                min_pivot_vec.append(np.min(D_diag))
+            br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
+                               dy_i, L_zero_diag, D_diag, P_vec))
+            br_game_vec[-1].verify()  # DEBUG FIXME
 
         p.e('Inertia Checking')
         logger.info(f'Saddle agents: {saddle_agent_idx}')
@@ -626,35 +644,7 @@ class RD3GCasadi(BaseSolver):
         offsets = list(accumulate(sizes))
 
         # Reconstruct dy from dy_i to form an best response initial guess
-        dy_size = offsets[-1]
-        br_dy = np.zeros((dy_size, 1)) + np.nan
-        for i in range(N):
-            dy_i = dy_i_vec[i]
-            offset = 0
-            offset_i = 0
-            # x
-            xi_size = n*T
-            br_dy[i*xi_size: (i+1)*xi_size, 0] = dy_i[:xi_size]
-            offset += xi_size*N
-            offset_i += xi_size
-            # u
-            ui_size = m*T
-            br_dy[offset + i*ui_size: offset + (i+1)*ui_size, 0] = dy_i[offset_i:offset_i+ui_size]
-            offset += ui_size*N
-            offset_i += ui_size
-            # lamda
-            li_size = n*T
-            br_dy[offset + i*li_size: offset + (i+1)*li_size, 0] = dy_i[offset_i:offset_i+li_size]
-            offset += li_size*N
-            offset_i += li_size
-            # mu
-            mi_size = n_hi
-            br_dy[offset + i*mi_size: offset + (i+1)*mi_size, 0] = dy_i[offset_i:offset_i+mi_size]
-            offset += mi_size*N
-            offset_i += mi_size
-            assert offset == dy_size
-            assert offset_i == dy_i.shape[0]
-        assert not np.any(np.isnan(br_dy))
+        br_dy = self.dri_to_dr(dy_i_vec)
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint
@@ -723,6 +713,24 @@ class RD3GCasadi(BaseSolver):
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
+
+        p.s('Solve Linear (with preconditioner)')
+        # To solve KKT @ dy = -r0 with a preconditioner (right preconditioning)
+        # We find M similar to KKT, and cheap to invert
+        # Solve (KKT @ inv(M)) @ dy = -r0
+        # We don't actually calculate entries in inv(M), instead we implement M @ v, M.T @v
+        # This is a Linear Operator
+
+        def invM_t_vec(dr):
+            """ Calculate inv(M) @ dr, where M @ dy = dr. So dr -> dy"""
+            # dr -> dri
+            dri_vec = self.dr_to_dri(dr)
+            # dri -> inv(LDL.T) -> dyi
+            for i in range(N):
+                dri_vec[i]
+            # dyi -> dy
+
+        p.e('Solve Linear (with preconditioner)')
 
         # Verify residual reduction with a line search
         # Recover full dy
@@ -1022,3 +1030,92 @@ class RD3GCasadi(BaseSolver):
         offset += n_hi*N
         assert r.shape == (offset, 1)
         return r_Lx, r_Lu, r_f, r_h
+
+    def dr_to_dri(self, dr):
+        """ Slice dr to a vector of dri. Also applies to dy -> dyi
+        Args:
+            dr: (dim, 1) column vector 
+        Returns:
+            dri_vec: list[ (dim,1)]"""
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        n_hi = self.n_hi
+        assert dr.shape[1] == 1
+        dri_vec = []
+        xi_size = n*T
+        ui_size = m*T
+        li_size = n*T
+        mi_size = n_hi
+        dri_vec = []
+        for i in range(N):
+            dri = np.zeros((offsets[-1], 1)) + np.nan
+            offset = 0
+            offset_i = 0
+            # x
+            dri[:xi_size] = dr[i*xi_size: (i+1)*xi_size, 0]
+            offset += xi_size*N
+            offset_i += xi_size
+            # u
+            dri[offset_i:offset_i+ui_size] = dr[offset + i*ui_size: offset + (i+1)*ui_size, 0]
+            offset += ui_size*N
+            offset_i += ui_size
+            # lamda
+            dri[offset_i:offset_i+li_size] = dr[offset + i*li_size: offset + (i+1)*li_size, 0]
+            offset += li_size*N
+            offset_i += li_size
+            # mu
+            dri[offset_i:offset_i+mi_size] = dr[offset + i*mi_size: offset + (i+1)*mi_size, 0]
+            offset += mi_size*N
+            offset_i += mi_size
+            assert offset == dr.shape[0]
+            assert offset_i == dri.shape[0]
+            assert not np.any(np.isnan(dri))
+            dri_vec.append(dri)
+        return dri_vec
+
+    def dri_to_dr(self, dri_vec):
+        """ Construct dr from dri, also works on dy -> dy_i
+        Args:
+            dr: (dim, 1) column vector 
+        Returns:
+            dri_vec: list[ (dim,1)]"""
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        n_hi = self.n_hi
+        dr_size = n*N*T + m*N*T + n*N*T + n_hi*N
+        dr = np.zeros((dr_size, 1)) + np.nan
+        for i in range(N):
+            dri = dri_vec[i]
+            offset = 0
+            offset_i = 0
+            # x
+            xi_size = n*T
+            dr[i*xi_size: (i+1)*xi_size, 0] = dri[:xi_size]
+            offset += xi_size*N
+            offset_i += xi_size
+            # u
+            ui_size = m*T
+            dr[offset + i*ui_size: offset +
+                (i+1)*ui_size, 0] = dri[offset_i:offset_i+ui_size]
+            offset += ui_size*N
+            offset_i += ui_size
+            # lamda
+            li_size = n*T
+            dr[offset + i*li_size: offset +
+                (i+1)*li_size, 0] = dri[offset_i:offset_i+li_size]
+            offset += li_size*N
+            offset_i += li_size
+            # mu
+            mi_size = n_hi
+            dr[offset + i*mi_size: offset +
+                (i+1)*mi_size, 0] = dri[offset_i:offset_i+mi_size]
+            offset += mi_size*N
+            offset_i += mi_size
+            assert offset == dy_size
+            assert offset_i == dri.shape[0]
+        assert not np.any(np.isnan(dr))
+        return dr
