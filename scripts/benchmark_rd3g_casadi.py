@@ -30,8 +30,8 @@ for car_count in range(2, 9):
         solver = RD3GCasadi(solver_config, game, cpp_only=True)
         # sol = solver.solve()
         solver.init_cpp_backend()
-        # sol = solver.solve_cpp_backend()
-        sol = solver.solve_cpp_backend_rand_restart(restarts=10)
+        sol = solver.solve_cpp_backend()
+        # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
         # solver.final()
         converge_vec.append(sol.has_converged)
