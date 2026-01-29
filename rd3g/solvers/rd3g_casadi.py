@@ -49,6 +49,7 @@ class BrGameResult:
     L_zero_diag: csc_matrix
     D_diag: np.ndarray
     P_vec: np.ndarray
+    reg: float
 
     def verify(self):
         """ Verify the LDL decomposition of Ki_reg. """
@@ -652,45 +653,30 @@ class RD3GCasadi(BaseSolver):
             zero = len(D_diag) - pos - neg
             in_Ki = (pos, neg, zero)
             exp_in_Ki = (primal_var_count, Ki.shape[0]-primal_var_count, 0)
-            logger.info(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
+            logger.debug(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
+            reg = 0
             if in_Ki != exp_in_Ki:
                 is_optimal = False
                 saddle_agent_idx.append(i)
+                bad_in_count = exp_in_Ki[0] - in_Ki[0]
+                reg = -np.sort(D_diag[D_diag < 0])[bad_in_count-1]
+
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
-                               dy_i, L_zero_diag, D_diag, P_vec))
+                               dy_i, L_zero_diag, D_diag, P_vec, reg))
 
         p.e('Inertia Checking')
-        logger.info(f'Saddle agents: {saddle_agent_idx}')
+        # Inertia correcting regularization
+        reg_vec = [val.reg for val in br_game_vec]
+        in_reg_mtx = self.make_full_KKT_reg(reg_vec)
+        full_KKT += in_reg_mtx
+
+        logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
 
-        # Reconstruct dy from dy_i to form an best response initial guess
-        br_dy = self.dri_to_dr([val.dy_i for val in br_game_vec])
-
-        # Remove inactive constraints and their multiplier
-        # h < 0 -> inactive cosntraint
-        #   remove them from residual to reduce dimension, also remove corresponding columns in mu
-        # Starting index of first h() in residual
-        h_in_r_offset = n*N*T + m*N*T + n*N*T  # dLLi_dx, dLLi_du, dynamics constraint
-        # Starting index of mu, multiplier for h()
-        mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
-        p.s('Reduce KKT')
-
-        h_val_np = np.array(h_val, order='F').flatten(order='F')
-        neg_h_mask = (h_val_np < 0).nonzero()[0]
-        inactive_r_rows = []
-        inactive_y_rows = []
-        for idx in neg_h_mask:
-            inactive_r_rows.append(h_in_r_offset + idx)
-            inactive_y_rows.append(mu_in_y_offset + idx)
-
-        # Remove zero rows & columns in the linear system
-        all_r_indices = np.arange(full_KKT.shape[0])
-        all_y_indices = np.arange(full_KKT.shape[1])
-        active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
-        active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
+        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
 
         # Full: r0 + dr_dy @ dy = 0
         # Reduced: KKT_residual + KKT @ reduced_dy = 0
@@ -705,107 +691,55 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         full_KKT += reg_matrix
 
-        # TODO set the relevant mu to 0 to satisfy strict complementarity
-        # self.check_KKT(full_KKT)
-        KKT_residual = r0_np[active_r_rows, :]
-        KKT = full_KKT[active_r_rows, :][:, active_y_rows]
-        reduced_dy_guess = br_dy[active_y_rows]
-        p.e('Reduce KKT')
+        if False:  # active set
+            p.s('Reduce KKT')
+            # Remove inactive constraints and their multiplier
+            # h < 0 -> inactive cosntraint
+            #   remove them from residual to reduce dimension, also remove corresponding columns in mu
+            # Starting index of first h() in residual
+            h_in_r_offset = n*N*T + m*N*T + n*N*T  # dLLi_dx, dLLi_du, dynamics constraint
+            # Starting index of mu, multiplier for h()
+            mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
 
-        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
-        p.s('Solve Linear')
-        t0 = time()
-        reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
-        dt = time() - t0
-        logger.info(f'Reduced KKT: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-        del residual
-        p.e('Solve Linear')
+            h_val_np = np.array(h_val, order='F').flatten(order='F')
+            neg_h_mask = (h_val_np < 0).nonzero()[0]
+            inactive_r_rows = []
+            inactive_y_rows = []
+            for idx in neg_h_mask:
+                inactive_r_rows.append(h_in_r_offset + idx)
+                inactive_y_rows.append(mu_in_y_offset + idx)
 
-        p.s('Solve Linear (with guess)')
-        t0 = time()
-        _, istop, itn, residual = lsqr(KKT, -KKT_residual, x0=reduced_dy_guess)[:4]
-        dt = time() - t0
-        logger.info(f'Reduced KKT with guess: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-        del residual
-        p.e('Solve Linear (with guess)')
+            # Remove zero rows & columns in the linear system
+            all_r_indices = np.arange(full_KKT.shape[0])
+            all_y_indices = np.arange(full_KKT.shape[1])
+            active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
+            active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
+
+            # TODO set the relevant mu to 0 to satisfy strict complementarity
+            # self.check_KKT(full_KKT)
+            KKT_residual = r0_np[active_r_rows, :]
+            KKT = full_KKT[active_r_rows, :][:, active_y_rows]
+            p.e('Reduce KKT')
+
+            p.s('Solve Linear')
+            t0 = time()
+            reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
+            dt = time() - t0
+            logger.info(f'Reduced KKT: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+            del residual
+            p.e('Solve Linear')
+            # Verify residual reduction with a line search
+            # Recover full dy
+            dy = np.zeros(full_KKT.shape[1])
+            dy[active_y_rows] = reduced_dy
 
         p.s('Solve Linear (full KKT)')
         t0 = time()
-        _, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
+        dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
         dt = time() - t0
         logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
         p.e('Solve Linear (full KKT)')
-
-        p.s('Solve Linear (with preconditioner)')
-        # To solve KKT @ dy = -r0 with a preconditioner (right preconditioning)
-        # We find M similar to KKT, and cheap to invert
-        # Solve (KKT @ inv(M)) @ dy = -r0
-        # We don't actually calculate entries in inv(M), instead we implement M @ v, M.T @v
-        # This is a Linear Operator
-
-        def invM_t_vec(dr):
-            """ Calculate inv(M) @ dr, where M @ dy = dr. So dr -> dy"""
-            # dr -> dri
-            dri_vec = self.dr_to_dri(dr)
-            dyi_vec = []
-            # dri -> inv(LDL.T) -> dyi
-            # TODO vectorize this into a big block diagonal matrix for speed
-            for i in range(N):
-                # Ki_reg @ dyi = -dri
-                # Ki_reg = P @ L @ D @ L.T @ P.T
-                dri = dri_vec[i]
-                g = br_game_vec[i]
-                P = g.get_P()
-                L = g.get_L()
-                DLTPTdyi = spsolve_triangular(L, P.T @ dri, lower=True)
-                invD = g.get_inv_D()
-                PTdyi = spsolve_triangular(L.T, invD @ DLTPTdyi, lower=False)
-                dyi_vec.append(P @ PTdyi)
-
-            # dyi -> dy
-            dy = self.dri_to_dr(dyi_vec)
-            return dy
-
-        def matvec(v):
-            return full_KKT @ invM_t_vec(v.flatten())
-
-        def rmatvec(v):
-            return full_KKT.T @ invM_t_vec(v.flatten())
-
-        KKT_lo = LinearOperator(full_KKT.shape,
-                                matvec=matvec,
-                                rmatvec=rmatvec)
-
-        KKT_np = full_KKT.toarray()
-        cond_num = np.linalg.cond(KKT_np)
-        logger.info(f"KKT matrix condition Number: {cond_num}")
-
-        s_max = svds(full_KKT, k=1, which='LM', return_singular_vectors=False)[0]
-        s_min = svds(full_KKT, k=1, which='SM', return_singular_vectors=False)[0]
-        cond = s_max/s_min
-        logger.info(f'Before Preconditioning {cond=}')
-
-        KKT_np = KKT_lo @ np.eye(full_KKT.shape[0])
-        cond_num = np.linalg.cond(KKT_np)
-        logger.info(f"KKT matrix condition Number: {cond_num}")
-
-        s_max = svds(KKT_lo, k=1, which='LM', return_singular_vectors=False)[0]
-        s_min = svds(KKT_lo, k=1, which='SM', return_singular_vectors=False)[0]
-        cond = s_max/s_min
-        logger.info(f'After Preconditioning {cond=}')
-        t0 = time()
-        # Full, unreduced system
-        _, istop, itn, residual = lsqr(KKT_lo, -r0_np)[:4]
-        dt = time() - t0
-        logger.info(f'Full KKT precond:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-        del residual
-        p.e('Solve Linear (with preconditioner)')
-
-        # Verify residual reduction with a line search
-        # Recover full dy
-        dy = np.zeros(full_KKT.shape[1])
-        dy[active_y_rows] = reduced_dy
 
         p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
@@ -833,7 +767,7 @@ class RD3GCasadi(BaseSolver):
                     raise LineSearchSuccess
             raise LineSearchMaxIter
         except LineSearchMaxIter:
-            self.reg *= 10
+            self.reg = min(self.reg * 10, 0.1)
             step_size = 0.0
             logger.debug(f"Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
@@ -1293,3 +1227,25 @@ class RD3GCasadi(BaseSolver):
             Ti = (idx - n_hi*Ni) // N
             Nj = idx - n_hi*Ni - N*Ti
             return f'mu for h(x,u) {idx=} {Ni=}, {Nj=}, {Ti=}'
+
+    def make_full_KKT_reg(self, reg_vec):
+        """ Given a list of regularization value for each agent, 
+        create a regularizaiton matrix for full game KKT"""
+        N = self.N
+        n = self.n
+        m = self.m
+        T = self.T
+        n_hi = self.n_hi
+        l = n*N*T + m*N*T + n*N*T + n_hi*N
+        data = []
+        row = []
+        for i in range(self.N):
+            for k in range(self.T):
+                for idx in range(self.n):
+                    data.append(reg_vec[i])
+                    row.append(k*(n*N) + i*n + idx)
+                for idx in range(self.m):
+                    data.append(reg_vec[i])
+                    row.append(n*N*T + k*(m*N) + i*m + idx)
+        reg_mtx = csc_matrix((data, (row, row)), shape=(l, l))
+        return reg_mtx
