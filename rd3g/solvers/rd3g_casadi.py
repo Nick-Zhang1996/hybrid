@@ -12,6 +12,7 @@ import numpy as np
 import casadi as cas
 import qdldl
 from scipy.sparse import csc_matrix
+from scipy.sparse.linalg import svds
 import scipy.sparse  # sparse matrix operations
 from scipy.sparse.linalg import lsqr, spsolve_triangular, LinearOperator
 import scipy.linalg
@@ -610,7 +611,7 @@ class RD3GCasadi(BaseSolver):
         dr_dy_val = self.dr_dy_casadi(*args)
         r0_np = np.array(r0_val)
         r0_norm = norm(r0_np)
-        dr_dy_csc = dm_to_csc(dr_dy_val)
+        full_KKT = dm_to_csc(dr_dy_val)
         p.e('Form KKT')
 
         p.s('Inertia Checking')
@@ -686,37 +687,30 @@ class RD3GCasadi(BaseSolver):
             inactive_y_rows.append(mu_in_y_offset + idx)
 
         # Remove zero rows & columns in the linear system
-        all_r_indices = np.arange(dr_dy_csc.shape[0])
-        all_y_indices = np.arange(dr_dy_csc.shape[1])
+        all_r_indices = np.arange(full_KKT.shape[0])
+        all_y_indices = np.arange(full_KKT.shape[1])
         active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
         active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
 
-        # TODO set the relevant mu to 0 to satisfy strict complementarity
-        # self.check_KKT(dr_dy_csc)
-        KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
-        KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
-        reduced_dy_guess = br_dy[active_y_rows]
-        p.e('Reduce KKT')
-
-        # solve sparse system
         # Full: r0 + dr_dy @ dy = 0
         # Reduced: KKT_residual + KKT @ reduced_dy = 0
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
         ind = np.arange(primal_var_count)
-        reg_matrix = scipy.sparse.eye(KKT.shape[0], format="csc")
+        reg_matrix = scipy.sparse.eye(full_KKT.shape[0], format="csc")
         reg_matrix[ind, ind] = self.reg
         # Apply constraint relaxation to allow AMD permutation in LDL
-        ind = np.arange(primal_var_count, KKT.shape[0])
+        ind = np.arange(primal_var_count, full_KKT.shape[0])
         reg_matrix[ind, ind] = -self.reg
-        KKT += reg_matrix
+        full_KKT += reg_matrix
 
-        # p.s('Debug checking')
-        # KKT_np = KKT.toarray()
-        # cond_num = np.linalg.cond(KKT_np)
-        # logger.info(f"KKT matrix condition Number: {cond_num}")
-        # p.e('Debug checking')
+        # TODO set the relevant mu to 0 to satisfy strict complementarity
+        # self.check_KKT(full_KKT)
+        KKT_residual = r0_np[active_r_rows, :]
+        KKT = full_KKT[active_r_rows, :][:, active_y_rows]
+        reduced_dy_guess = br_dy[active_y_rows]
+        p.e('Reduce KKT')
 
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         p.s('Solve Linear')
@@ -737,7 +731,7 @@ class RD3GCasadi(BaseSolver):
 
         p.s('Solve Linear (full KKT)')
         t0 = time()
-        _, istop, itn, residual = lsqr(dr_dy_csc, -r0_np)[:4]
+        _, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
         dt = time() - t0
         logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
@@ -774,15 +768,32 @@ class RD3GCasadi(BaseSolver):
             return dy
 
         def matvec(v):
-            return dr_dy_csc @ invM_t_vec(v)
+            return full_KKT @ invM_t_vec(v.flatten())
 
         def rmatvec(v):
-            return dr_dy_csc.T @ invM_t_vec(v)
+            return full_KKT.T @ invM_t_vec(v.flatten())
 
-        KKT_lo = LinearOperator(dr_dy_csc.shape,
+        KKT_lo = LinearOperator(full_KKT.shape,
                                 matvec=matvec,
                                 rmatvec=rmatvec)
 
+        KKT_np = full_KKT.toarray()
+        cond_num = np.linalg.cond(KKT_np)
+        logger.info(f"KKT matrix condition Number: {cond_num}")
+
+        s_max = svds(full_KKT, k=1, which='LM', return_singular_vectors=False)[0]
+        s_min = svds(full_KKT, k=1, which='SM', return_singular_vectors=False)[0]
+        cond = s_max/s_min
+        logger.info(f'Before Preconditioning {cond=}')
+
+        KKT_np = KKT_lo @ np.eye(full_KKT.shape[0])
+        cond_num = np.linalg.cond(KKT_np)
+        logger.info(f"KKT matrix condition Number: {cond_num}")
+
+        s_max = svds(KKT_lo, k=1, which='LM', return_singular_vectors=False)[0]
+        s_min = svds(KKT_lo, k=1, which='SM', return_singular_vectors=False)[0]
+        cond = s_max/s_min
+        logger.info(f'After Preconditioning {cond=}')
         t0 = time()
         # Full, unreduced system
         _, istop, itn, residual = lsqr(KKT_lo, -r0_np)[:4]
@@ -793,7 +804,7 @@ class RD3GCasadi(BaseSolver):
 
         # Verify residual reduction with a line search
         # Recover full dy
-        dy = np.zeros(dr_dy_csc.shape[1])
+        dy = np.zeros(full_KKT.shape[1])
         dy[active_y_rows] = reduced_dy
 
         p.s('Line Search')
