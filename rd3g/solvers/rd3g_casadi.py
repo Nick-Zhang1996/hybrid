@@ -11,8 +11,9 @@ from time import time
 import numpy as np
 import casadi as cas
 import qdldl
+from scipy.sparse import csc_matrix
 import scipy.sparse  # sparse matrix operations
-from scipy.sparse.linalg import lsqr
+from scipy.sparse.linalg import lsqr, spsolve_triangular, LinearOperator
 import scipy.linalg
 from scipy.linalg import norm
 import matplotlib.pyplot as plt
@@ -24,7 +25,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 DEBUG = False
 
 
@@ -41,15 +42,40 @@ class IterCounter:
 @dataclass
 class BrGameResult:
     is_optimal: bool
-    Ki: scipy.sparse.csc_matrix
-    Ki_reg: scipy.sparse.csc_matrix
+    Ki: csc_matrix
+    Ki_reg: csc_matrix
     dy_i: np.ndarray
-    L_zero_diag: scipy.sparse.csc_matrix
+    L_zero_diag: csc_matrix
     D_diag: np.ndarray
-    P_vec: scipy.sparse.csc_matrix
+    P_vec: np.ndarray
 
     def verify(self):
-        #  C = P @ Ki_reg @ P.T, C = L @ D @ L.T
+        """ Verify the LDL decomposition of Ki_reg. """
+        # C = P @ Ki_reg @ P.T, C = L @ D @ L.T
+        # P is the permutation matrix, P.T = inv(P)
+        P = self.get_P()
+        L = self.get_L()
+        C_upper = scipy.sparse.triu(csc_matrix(P @ self.Ki_reg @ P.T), format='csc')
+        D = scipy.sparse.diags(self.D_diag)
+        C = scipy.sparse.triu(L @ D @ L.T)
+        assert scipy.sparse.linalg.norm(C_upper - C) < 1e-10
+
+    def get_inv_D(self):
+        inv_D_diag = 1.0/self.D_diag
+        invD = scipy.sparse.diags(inv_D_diag)
+        return invD
+
+    def get_L(self):
+        L = self.L_zero_diag + scipy.sparse.eye(self.L_zero_diag.shape[0])
+        return L
+
+    def get_P(self):
+        l = len(self.P_vec)
+        rows = np.arange(l)
+        cols = self.P_vec
+        data = np.ones(l)
+        P = csc_matrix((data, (rows, cols)), shape=(l, l))
+        return P
 
 
 def create_partial_identity(n, k):
@@ -182,7 +208,7 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     tolerance: float = 5e-4
-    iterations: int = 10
+    iterations: int = 30
     # backtracking line search param
     bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
@@ -588,17 +614,16 @@ class RD3GCasadi(BaseSolver):
         p.e('Form KKT')
 
         p.s('Inertia Checking')
-        # Formulate the KKT matrix for each agent's best response game
+        # Formulate the KKT matrix for each agent's best response game, verify inertia, and solve
         is_optimal = True
         saddle_agent_idx = []
         br_game_vec = []
-        dy_i_vec = []  # solution for best response game
         for i in range(N):
             # Construct KKT matrix for agent i K_i
             Ki = self.Ki_casadi_vec[i](*args)
             Ki = dm_to_csc(Ki)
-
             ri = self.ri_casadi_vec[i](*args)
+            # self.check_Ki(Ki)
 
             # Apply Levenberg-Marquardt Regularization
             # H = H + reg * I
@@ -619,8 +644,6 @@ class RD3GCasadi(BaseSolver):
             solver = qdldl.Solver(upper, upper=True)
             dy_i = solver.solve(-ri.toarray())
 
-            dy_i_vec.append(dy_i)
-
             #  C = P @ A @ P.T, C = L @ D @ L.T
             L_zero_diag, D_diag, P_vec = solver.factors()
             pos = np.sum(D_diag > 0)
@@ -634,7 +657,6 @@ class RD3GCasadi(BaseSolver):
                 saddle_agent_idx.append(i)
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
                                dy_i, L_zero_diag, D_diag, P_vec))
-            br_game_vec[-1].verify()  # DEBUG FIXME
 
         p.e('Inertia Checking')
         logger.info(f'Saddle agents: {saddle_agent_idx}')
@@ -644,7 +666,7 @@ class RD3GCasadi(BaseSolver):
         offsets = list(accumulate(sizes))
 
         # Reconstruct dy from dy_i to form an best response initial guess
-        br_dy = self.dri_to_dr(dy_i_vec)
+        br_dy = self.dri_to_dr([val.dy_i for val in br_game_vec])
 
         # Remove inactive constraints and their multiplier
         # h < 0 -> inactive cosntraint
@@ -670,11 +692,11 @@ class RD3GCasadi(BaseSolver):
         active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
 
         # TODO set the relevant mu to 0 to satisfy strict complementarity
+        # self.check_KKT(dr_dy_csc)
         KKT_residual = r0_np[active_r_rows, :]  # reduced r() residual
         KKT = dr_dy_csc[active_r_rows, :][:, active_y_rows]  # reduced_dr_dy_csc
-        reduced_dy_guess = br_dy[active_y_rows, 0]
+        reduced_dy_guess = br_dy[active_y_rows]
         p.e('Reduce KKT')
-        assert scipy.sparse.linalg.norm(KKT - KKT.T) < 1e-10
 
         # solve sparse system
         # Full: r0 + dr_dy @ dy = 0
@@ -696,23 +718,30 @@ class RD3GCasadi(BaseSolver):
         # logger.info(f"KKT matrix condition Number: {cond_num}")
         # p.e('Debug checking')
 
+        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
         p.s('Solve Linear')
         t0 = time()
         reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
         dt = time() - t0
-        p.e('Solve Linear')
-        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
-        logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+        logger.info(f'Reduced KKT: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
+        p.e('Solve Linear')
 
         p.s('Solve Linear (with guess)')
         t0 = time()
-        reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual, x0=reduced_dy_guess)[:4]
+        _, istop, itn, residual = lsqr(KKT, -KKT_residual, x0=reduced_dy_guess)[:4]
         dt = time() - t0
-        p.e('Solve Linear (with guess)')
-        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
-        logger.info(f'Reduced stop:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+        logger.info(f'Reduced KKT with guess: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
         del residual
+        p.e('Solve Linear (with guess)')
+
+        p.s('Solve Linear (full KKT)')
+        t0 = time()
+        _, istop, itn, residual = lsqr(dr_dy_csc, -r0_np)[:4]
+        dt = time() - t0
+        logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+        del residual
+        p.e('Solve Linear (full KKT)')
 
         p.s('Solve Linear (with preconditioner)')
         # To solve KKT @ dy = -r0 with a preconditioner (right preconditioning)
@@ -725,11 +754,41 @@ class RD3GCasadi(BaseSolver):
             """ Calculate inv(M) @ dr, where M @ dy = dr. So dr -> dy"""
             # dr -> dri
             dri_vec = self.dr_to_dri(dr)
+            dyi_vec = []
             # dri -> inv(LDL.T) -> dyi
+            # TODO vectorize this into a big block diagonal matrix for speed
             for i in range(N):
-                dri_vec[i]
-            # dyi -> dy
+                # Ki_reg @ dyi = -dri
+                # Ki_reg = P @ L @ D @ L.T @ P.T
+                dri = dri_vec[i]
+                g = br_game_vec[i]
+                P = g.get_P()
+                L = g.get_L()
+                DLTPTdyi = spsolve_triangular(L, P.T @ dri, lower=True)
+                invD = g.get_inv_D()
+                PTdyi = spsolve_triangular(L.T, invD @ DLTPTdyi, lower=False)
+                dyi_vec.append(P @ PTdyi)
 
+            # dyi -> dy
+            dy = self.dri_to_dr(dyi_vec)
+            return dy
+
+        def matvec(v):
+            return dr_dy_csc @ invM_t_vec(v)
+
+        def rmatvec(v):
+            return dr_dy_csc.T @ invM_t_vec(v)
+
+        KKT_lo = LinearOperator(dr_dy_csc.shape,
+                                matvec=matvec,
+                                rmatvec=rmatvec)
+
+        t0 = time()
+        # Full, unreduced system
+        _, istop, itn, residual = lsqr(KKT_lo, -r0_np)[:4]
+        dt = time() - t0
+        logger.info(f'Full KKT precond:{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+        del residual
         p.e('Solve Linear (with preconditioner)')
 
         # Verify residual reduction with a line search
@@ -764,6 +823,7 @@ class RD3GCasadi(BaseSolver):
             raise LineSearchMaxIter
         except LineSearchMaxIter:
             self.reg *= 10
+            step_size = 0.0
             logger.debug(f"Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
             self.reg = self.config.reg
@@ -974,7 +1034,7 @@ class RD3GCasadi(BaseSolver):
         assert h_val.shape == (n_hi, N)
         return r_val, h_val
 
-    def hessian_components(self, Ki):
+    def check_Ki(self, Ki):
         """ Verify agent KKT matrix is in following format, return component H, A
         [H A.T
          A 0 ]
@@ -983,6 +1043,7 @@ class RD3GCasadi(BaseSolver):
         Returns:
             H, A
         """
+        tol = 1e-2
         T = self.T
         N = self.N
         n = self.n
@@ -993,15 +1054,49 @@ class RD3GCasadi(BaseSolver):
         AT = Ki[:primal_n, primal_n:]
 
         empty = Ki[primal_n:, primal_n:]
+        assert scipy.sparse.linalg.norm(empty) < tol
+        assert empty.nnz == 0
+
+        assert np.sum(np.abs((H-H.T).data)) < tol
+        dyn_diff = (A-AT.T).toarray()[:n*T, :]
+        assert np.sum(np.abs(dyn_diff)) < tol
+
+        h_diff = (A-AT.T).toarray()[n*T:, :]
+        assert np.sum(np.abs(h_diff)) < tol
+
+        return H, A
+
+    def check_KKT(self, Ki):
+        """ Verify KKT matrix is in following format, return component H, A
+        [H A.T
+         A 0 ]
+        Args:
+            Ki: scipy.sparse.csc_matrix
+        Returns:
+            H, A
+        NOTE does not apply to current formulation
+        """
+        T = self.T
+        N = self.N
+        n = self.n
+        m = self.m
+        primal_n = (n+m)*N*T  # primal variables for the game
+        H = Ki[:primal_n, :primal_n]
+        A = Ki[primal_n:, :primal_n]
+        AT = Ki[:primal_n, primal_n:]
+
+        empty = Ki[primal_n:, primal_n:]
         assert scipy.sparse.linalg.norm(empty) < 1e-10
         assert empty.nnz == 0
 
         assert np.sum(np.abs((H-H.T).data)) < 1e-10
-        dyn_diff = (A-AT.T).toarray()[:n*T, :]
+        dyn_diff = (A-AT.T).toarray()[:n*N*T, :]
         assert np.sum(np.abs(dyn_diff)) < 1e-10
 
-        h_diff = (A-AT.T).toarray()[n*T:, :]
-        assert np.sum(np.abs(h_diff)) < 1e-10
+        # won't pass by construction
+        # e.g. dLLi/dxi does not depend on mu_j, but mu_j * h(xj,xi) depends on xi
+        # h_diff = (A-AT.T).toarray()[n*N*T:, :]
+        # assert np.sum(np.abs(h_diff)) < 1e-10
 
         # assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         return H, A
@@ -1034,39 +1129,39 @@ class RD3GCasadi(BaseSolver):
     def dr_to_dri(self, dr):
         """ Slice dr to a vector of dri. Also applies to dy -> dyi
         Args:
-            dr: (dim, 1) column vector 
+            dr: (dim) column vector 
         Returns:
-            dri_vec: list[ (dim,1)]"""
+            dri_vec: list[ (dim)]"""
         N = self.N
         T = self.T
         n = self.n
         m = self.m
         n_hi = self.n_hi
-        assert dr.shape[1] == 1
         dri_vec = []
         xi_size = n*T
         ui_size = m*T
         li_size = n*T
         mi_size = n_hi
         dri_vec = []
+        dri_size = n*T + m*T + n*T + n_hi
         for i in range(N):
-            dri = np.zeros((offsets[-1], 1)) + np.nan
+            dri = np.zeros(dri_size) + np.nan
             offset = 0
             offset_i = 0
             # x
-            dri[:xi_size] = dr[i*xi_size: (i+1)*xi_size, 0]
+            dri[:xi_size] = dr[i*xi_size: (i+1)*xi_size]
             offset += xi_size*N
             offset_i += xi_size
             # u
-            dri[offset_i:offset_i+ui_size] = dr[offset + i*ui_size: offset + (i+1)*ui_size, 0]
+            dri[offset_i:offset_i+ui_size] = dr[offset + i*ui_size: offset + (i+1)*ui_size]
             offset += ui_size*N
             offset_i += ui_size
             # lamda
-            dri[offset_i:offset_i+li_size] = dr[offset + i*li_size: offset + (i+1)*li_size, 0]
+            dri[offset_i:offset_i+li_size] = dr[offset + i*li_size: offset + (i+1)*li_size]
             offset += li_size*N
             offset_i += li_size
             # mu
-            dri[offset_i:offset_i+mi_size] = dr[offset + i*mi_size: offset + (i+1)*mi_size, 0]
+            dri[offset_i:offset_i+mi_size] = dr[offset + i*mi_size: offset + (i+1)*mi_size]
             offset += mi_size*N
             offset_i += mi_size
             assert offset == dr.shape[0]
@@ -1078,44 +1173,112 @@ class RD3GCasadi(BaseSolver):
     def dri_to_dr(self, dri_vec):
         """ Construct dr from dri, also works on dy -> dy_i
         Args:
-            dr: (dim, 1) column vector 
+            dr: (dim) column vector 
         Returns:
-            dri_vec: list[ (dim,1)]"""
+            dri_vec: list[ (dim)]"""
         N = self.N
         T = self.T
         n = self.n
         m = self.m
         n_hi = self.n_hi
         dr_size = n*N*T + m*N*T + n*N*T + n_hi*N
-        dr = np.zeros((dr_size, 1)) + np.nan
+        dr = np.zeros(dr_size) + np.nan
         for i in range(N):
             dri = dri_vec[i]
             offset = 0
             offset_i = 0
             # x
             xi_size = n*T
-            dr[i*xi_size: (i+1)*xi_size, 0] = dri[:xi_size]
+            dr[i*xi_size: (i+1)*xi_size] = dri[:xi_size]
             offset += xi_size*N
             offset_i += xi_size
             # u
             ui_size = m*T
             dr[offset + i*ui_size: offset +
-                (i+1)*ui_size, 0] = dri[offset_i:offset_i+ui_size]
+                (i+1)*ui_size] = dri[offset_i:offset_i+ui_size]
             offset += ui_size*N
             offset_i += ui_size
             # lamda
             li_size = n*T
             dr[offset + i*li_size: offset +
-                (i+1)*li_size, 0] = dri[offset_i:offset_i+li_size]
+                (i+1)*li_size] = dri[offset_i:offset_i+li_size]
             offset += li_size*N
             offset_i += li_size
             # mu
             mi_size = n_hi
             dr[offset + i*mi_size: offset +
-                (i+1)*mi_size, 0] = dri[offset_i:offset_i+mi_size]
+                (i+1)*mi_size] = dri[offset_i:offset_i+mi_size]
             offset += mi_size*N
             offset_i += mi_size
-            assert offset == dy_size
+            assert offset == dr_size
             assert offset_i == dri.shape[0]
         assert not np.any(np.isnan(dr))
         return dr
+
+    def r_idx_str(self, idx):
+        """ Given an r index, print its name"""
+        N = self.N
+        n = self.n
+        m = self.m
+        T = self.T
+        n_hi = self.n_hi
+        if idx < n*N*T:
+            Ti = idx // (n*N)
+            Ni = (idx - Ti*n*N) // n
+            ni = idx - Ti*n*N - Ni*n
+            return f'dLLi/dxi {Ti=}, {Ni=}, {ni=}'
+        idx -= n*N*T
+
+        if idx < m*N*T:
+            Ti = idx // (m*N)
+            Ni = (idx - Ti*m*N) // m
+            mi = idx - Ti*m*N - Ni*m
+            return f'dLLi/dui {Ti=}, {Ni=}, {mi=}'
+        idx -= m*N*T
+
+        if idx < n*N*T:
+            Ti = idx // (n*N)
+            Ni = (idx - Ti*n*N) // n
+            ni = idx - Ti*n*N - Ni*n
+            return f'f(x,u) {Ti=}, {Ni=}, {ni=}'
+        idx -= n*N*T
+
+        if idx < n_hi*N:  # n_hi = N*T (in that order)
+            Ni = idx // n_hi
+            Ti = (idx - n_hi*Ni) // N
+            Nj = idx - n_hi*Ni - N*Ti
+            return f'h(x,u) {Ni=}, {Nj=}, {Ti=}'
+
+    def y_idx_str(self, idx):
+        """ Given an y index, print its name"""
+        N = self.N
+        n = self.n
+        m = self.m
+        T = self.T
+        n_hi = self.n_hi
+        if idx < n*N*T:
+            Ti = idx // (n*N)
+            Ni = (idx - Ti*n*N) // n
+            ni = idx - Ti*n*N - Ni*n
+            return f'x {Ti=}, {Ni=}, {ni=}'
+        idx -= n*N*T
+
+        if idx < m*N*T:
+            Ti = idx // (m*N)
+            Ni = (idx - Ti*m*N) // m
+            mi = idx - Ti*m*N - Ni*m
+            return f'u {Ti=}, {Ni=}, {mi=}'
+        idx -= m*N*T
+
+        if idx < n*N*T:
+            Ti = idx // (n*N)
+            Ni = (idx - Ti*n*N) // n
+            ni = idx - Ti*n*N - Ni*n
+            return f'lambda for f(x,u) {idx=}, {Ti=}, {Ni=}, {ni=}'
+        idx -= n*N*T
+
+        if idx < n_hi*N:  # n_hi = N*T (in that order)
+            Ni = idx // n_hi
+            Ti = (idx - n_hi*Ni) // N
+            Nj = idx - n_hi*Ni - N*Ti
+            return f'mu for h(x,u) {idx=} {Ni=}, {Nj=}, {Ti=}'
