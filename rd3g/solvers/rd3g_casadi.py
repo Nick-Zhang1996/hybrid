@@ -666,11 +666,10 @@ class RD3GCasadi(BaseSolver):
 
         p.e('Inertia Checking')
         # Inertia correcting regularization
-        reg_vec = [val.reg for val in br_game_vec]
-        in_reg_mtx = self.make_full_KKT_reg(reg_vec)
-        full_KKT += in_reg_mtx
-
-        logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
+        # reg_vec = [val.reg for val in br_game_vec]
+        # in_reg_mtx = self.make_full_KKT_reg(reg_vec)
+        # full_KKT += in_reg_mtx
+        # logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]

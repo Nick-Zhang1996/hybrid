@@ -10,7 +10,7 @@ logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
 logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger('main')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 good_u_vec = []
 car_conv_mean_vec = []
@@ -60,7 +60,7 @@ for car_count in range(2, 9):
     car_optimal_mean_vec.append(optimal)
     car_conv_var_vec.append(np.var(converge_vec))
     car_optimal_var_vec.append(np.var(optimal_vec))
-    logger.debug(
+    logger.info(
         f'{car_count} cars {converge=}, {optimal=}, {mean_dt_ms=:.1f}ms, {var_dt_ms=:.1f}ms')
 
 # Report mean and covariance of optimal results, used as param for initial guess
