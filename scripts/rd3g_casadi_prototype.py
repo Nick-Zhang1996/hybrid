@@ -7,7 +7,7 @@ from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('RD3G_CasADi')
+logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
 logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger('main')
