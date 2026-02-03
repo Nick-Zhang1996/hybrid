@@ -39,8 +39,6 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     """ Target state for all agents, dim: (n,N)"""
     J_Qr: Any = None
     """ Cost matrix for tracking reference state dim: (n,n)"""
-    J_Q: Any = None
-    """ Cost matrix for penalizing non-zero state dim: (n,n)"""
     J_R: Any = None
     """ Cost matrix for control effort dim: (m,m)"""
 
@@ -50,7 +48,6 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
             f'should be {(self.n, self.N)}, but got {self.x0.shape}')
         assert self.target_x_ref.shape == (self.n, self.N)
         assert self.J_Qr.shape == (self.n, self.n)
-        assert self.J_Q.shape == (self.n, self.n)
         assert self.J_R.shape == (self.m, self.m)
         return super().__post_init__()
 
@@ -357,13 +354,12 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
         target_x_ref = self.config.get_param('target_x_ref')
         J_Qr = self.config.get_param('J_Qr')
-        J_Q = self.config.get_param('J_Q')
         J_R = self.config.get_param('J_R')
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
+        M = np.array([[1, 0, 0, 0]], order='F')  # matrix to pick out x coord
 
-        val = dx.T @ J_Qr @ dx + \
-            x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
+        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i + M @ x_k_i - cas.sum(M @ x_k)
         return val
 
     # pylint: disable-next=arguments-renamed
@@ -452,8 +448,7 @@ def create_random_game(car_count=3, horizon=20):
     n: int = 4
     m: int = 2
 
-    J_Qr = np.diag([0, 0.1, 0.01, 0])
-    J_Q = np.diag([0, 0, 0, 1.0])
+    J_Qr = np.diag([0, 0.1, 0.01, 1.0])
     J_R = np.eye(m) * 0.3
 
     # multiple car merge, car_count: main_lane_n + merge_lane_n
@@ -498,7 +493,6 @@ def create_random_game(car_count=3, horizon=20):
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),
-        J_Q=J_Q.copy(order='F'),
         J_R=J_R.copy(order='F')
     )
     return CarMergeKinematicBicycleCasadi(config)

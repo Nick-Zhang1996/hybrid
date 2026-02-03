@@ -20,7 +20,7 @@ solver_config = RD3GCasadiConfig()
 solver = RD3GCasadi(solver_config, game, cpp_only=False)
 sol = solver.solve()
 # solver.visualize(sol.u)
-# solver.animate(sol.u)
+solver.animate(sol.u)
 # solver.init_cpp_backend()
 # sol = solver.solve_cpp_backend()
 
