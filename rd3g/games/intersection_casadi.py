@@ -38,6 +38,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     vert_lanes: int = 3  # Number of vertical lanes
 
     collision_radius: float = 2.0
+    """ Minimum distance between two cars"""
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
@@ -331,13 +332,25 @@ class IntersectionCasadi(BaseGame):
         assert i_onehot.shape == (self.config.N, 1)
         lf = 1.0
         lr = 1.0
-        beta = cas.atan(cas.tan(u_k_i[1]) * lr / (lf + lr))
-        dx = cas.vertcat(
-            x_k_i[2] * cas.cos(x_k_i[3] + beta), x_k_i[2] * cas.sin(x_k_i[3] + beta), u_k_i[0],
-            x_k_i[2] / lr * cas.sin(beta)
-        )
+
+        def dynamics(x_, u_):
+            beta = cas.atan(cas.tan(u_[1]) * lr / (lf + lr))
+            dx = cas.vertcat(
+                x_[2] * cas.cos(x_[3] + beta), x_[2] * cas.sin(x_[3] + beta), u_[0],
+                x_[2] / lr * cas.sin(beta)
+            )
+            return dx
         dt = self.config.get_param('dt')
-        val = x_k_i + dx * dt
+
+        # RK4 Integration
+        k1 = dynamics(x_k_i, u_k_i)
+        k2 = dynamics(x_k_i + 0.5 * dt * k1, u_k_i)
+        k3 = dynamics(x_k_i + 0.5 * dt * k2, u_k_i)
+        k4 = dynamics(x_k_i + dt * k3, u_k_i)
+        val = x_k_i + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+
+        # Euler
+        # val = x_k_i + dx * dt
         return val
 
     def h(self, x, u):
@@ -396,7 +409,7 @@ def create_random_game(car_count=3, horizon=20):
     n: int = 4
     m: int = 2
 
-    J_R = np.eye(m) * 0.3  # Control effort
+    J_R = np.eye(m) * 0.1  # Control effort
 
     hori_lane_n = min(int(0.5 * N), N - 1)
     verti_lane_n = N - hori_lane_n
@@ -429,16 +442,16 @@ def create_random_game(car_count=3, horizon=20):
         v = 2.0+np.random.random()
         x0 = make_x0(True, np.random.randint(0, default.hori_lanes), offset, v, 0.0)
         x0_vec.append(x0)
-        x_ref_vec.append(np.array([x0[0], 0, v, 0.0]))
-        J_Qr_diag_vec.append(np.array([0.1, 0, 0.01, 1.0]))
+        x_ref_vec.append(np.array([0, x0[1], x0[2], x0[3]]))
+        J_Qr_diag_vec.append(np.array([0, 0.1, 0.01, 10.0]))
 
     for i in range(verti_lane_n):
         offset = - i*5.4 + np.random.random()
         v = 2.0+np.random.random()
         x0 = make_x0(False, np.random.randint(0, default.vert_lanes), offset, v, 0.0)
         x0_vec.append(x0)
-        x_ref_vec.append(np.array([0, x0[1], v, 0.0]))
-        J_Qr_diag_vec.append(np.array([0, 0.1, 0.01, 1.0]))
+        x_ref_vec.append(np.array([x0[0], 0, x0[2], x0[3]]))
+        J_Qr_diag_vec.append(np.array([0.1, 0, 0.01, 10.0]))
 
     # n * N
     x0 = np.vstack(x0_vec).T

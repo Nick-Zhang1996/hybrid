@@ -222,7 +222,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
     # Apply Levenberg-Marquardt Regularization
-    reg: float = 1e-4
+    reg: float = 1e-5
 
 
 class LineSearchMaxIter(Exception):
