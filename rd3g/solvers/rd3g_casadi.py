@@ -210,7 +210,7 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     tolerance: float = 5e-4
-    iterations: int = 30
+    iterations: int = 50
     # backtracking line search param
     bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
@@ -773,7 +773,9 @@ class RD3GCasadi(BaseSolver):
             self.reg = self.config.reg
         p.e('Line Search')
 
-        logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}')
+        h_val_np = np.array(h_val, order='F').flatten(order='F')
+        h_pos = np.sum(h_val_np > 0)
+        logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}, {h_pos=}')
 
         p.s('More debug checking')
         if DEBUG:

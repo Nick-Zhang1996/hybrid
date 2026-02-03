@@ -37,7 +37,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     hori_lanes: int = 2  # Number of horizontal lanes
     vert_lanes: int = 3  # Number of vertical lanes
 
-    collision_radius: float = 2.0
+    collision_radius: float = 1.4
     """ Minimum distance between two cars"""
 
     x0: Any = None
@@ -390,14 +390,29 @@ class IntersectionCasadi(BaseGame):
             x_j: (n,1) State of j at time k
         Return:
             h_val: (1,1), h_val <= 0 means no collision
-
+        For collision checking, each car is modeled as two circles.
         """
         # car distance larger than 1.2 normalized
         assert x_i.shape == (self.n, 1)
         assert x_j.shape == (self.n, 1)
-        collision_radius = self.config.get_param('collision_radius')
-        val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
-            x_i[1, 0] - x_j[1, 0])**2 + collision_radius**2
+        d = self.config.get_param('collision_radius')
+        offset = 0.7
+        f1x = x_i[0, 0] + offset * cas.cos(x_i[2, 0])
+        f1y = x_i[1, 0] + offset * cas.sin(x_i[2, 0])
+        f2x = x_j[0, 0] + offset * cas.cos(x_j[2, 0])
+        f2y = x_j[1, 0] + offset * cas.sin(x_j[2, 0])
+        r1x = x_i[0, 0] - offset * cas.cos(x_i[2, 0])
+        r1y = x_i[1, 0] - offset * cas.sin(x_i[2, 0])
+        r2x = x_j[0, 0] - offset * cas.cos(x_j[2, 0])
+        r2y = x_j[1, 0] - offset * cas.sin(x_j[2, 0])
+
+        FF = -(f1x - f2x)**2 - (f1y - f2y)**2 + d**2
+        FR = -(f1x - f2x)**2 - (r1y - r2y)**2 + d**2
+        RF = -(r1x - r2x)**2 - (f1y - f2y)**2 + d**2
+        RR = -(r1x - r2x)**2 - (r1y - r2y)**2 + d**2
+        vals = cas.vertcat(FF, FR, RF, RR)
+
+        val = cas.mmax(vals)
         return val
 
 
