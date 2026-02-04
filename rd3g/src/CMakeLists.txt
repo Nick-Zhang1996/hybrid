@@ -5,6 +5,8 @@ cmake_policy(SET CMP0069 NEW) # suppress warning, also compiler optimization
 # use std::string instead of std::__cxx11::basic_string to be compatible with pre-built casadi bin
 add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
 message(STATUS "DEBUG: CMake is using Python at: ${PYTHON_EXECUTABLE}")
+add_compile_options(-flto=auto)
+add_link_options(-flto=auto)
 
 project(residual_game)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)

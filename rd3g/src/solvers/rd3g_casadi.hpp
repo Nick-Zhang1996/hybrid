@@ -14,6 +14,7 @@
 #define SPDLOG_HEADER_ONLY
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ostr.h>
+#include <spdlog/fmt/ranges.h> // <--- Critical for printing containers
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <pybind11/pybind11.h>
@@ -136,6 +137,8 @@ protected:
   cas::Function rollout_;
   cas::Function h_;
   cas::Function collision_h_;
+  std::vector<cas::Function> Ki_vec_;
+  // std::vector<cas::Function> ri_vec_;
 
   SpMatrix debug_full_KKT_;
   SpMatrix debug_reduced_KKT_;
@@ -157,8 +160,6 @@ public:
         tolerance_{tolerance},
         line_search_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
         max_iterations_{max_iter}, verbose_(verbose) {
-
-
     
     const std::string logger_name{"rd3g_casadi_cpp"};
     logger_ = spdlog::get(logger_name);
@@ -199,6 +200,13 @@ public:
 
     cas::Function get_n = safe_load_fun("get_n", lib_path);
     cas::Function get_m = safe_load_fun("get_m", lib_path);
+
+    Ki_vec_.reserve(N_);
+    // ri_vec_.reserve(N_);
+    for (int i=0; i<N_; i++){
+      Ki_vec_.push_back(safe_load_fun("K_"+std::to_string(i), lib_path));
+      // ri_vec_.push_back(safe_load_fun("r_"+std::to_string(i), lib_path));
+    }
 
     wb_ = get_max_buffer({r_, dr_dy_, rollout_, h_, collision_h_, get_n, get_m});
 
@@ -335,8 +343,7 @@ public:
   // Returns:
   //   x: solution
   //   res: residual, norm(Ax-b)
-  //   inertia: tuple(positive eigenval, negative eigenval, zero eigenval)
-  std::tuple<SpMatrix, Scalar, std::tuple<int,int,int>>
+  std::tuple<SpMatrix, Scalar>
   solve_linear_system(const SpMatrix& A, const MatrixXd& b, std::string method){
     if (method == "lscg"){
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
@@ -357,7 +364,7 @@ public:
       }
       // NOTE this is relative error |Ax-b|/|Ax|, make sure it's consistent elsewhere
       // TODO should we use dense matrix for x?
-      return {x.sparseView(), static_cast<Scalar>(solver.error()), {-1,-1,-1}};
+      return {x.sparseView(), static_cast<Scalar>(solver.error())};
     }
     else if (method == "ldl"){
       // SimplicialLDLT is a direct sparse solver for P*A*P' = L*D*L'
@@ -373,8 +380,7 @@ public:
       solver.compute(A);
 
       if(solver.info() != Eigen::Success) {
-          // TODO use logging
-          std::cerr << "LDL decomposition failed" << std::endl;
+          logger_->error("LDL decomposition failed");
           throw std::runtime_error("LDL decomposition failed");
       }
 
@@ -393,6 +399,7 @@ public:
       
       // Iterate through D to count signs
       // logger_->debug("Checking inertia...");
+      /*
       const double epsilon = 1e-8;
       for (int i = 0; i < D.size(); ++i) {
           if (D[i] > epsilon) pos++;
@@ -400,10 +407,11 @@ public:
           else zero++;
       }
       auto inertia = std::make_tuple(pos, neg, zero);
+      */
 
       const Scalar residual = (A * x - b).norm();
 
-      return {x.sparseView(), residual, inertia};
+      return {x.sparseView(), residual};
 
     }
     throw std::runtime_error("Unknown method type: " + method);
@@ -564,6 +572,66 @@ public:
     auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
     check_spmatrix_has_nan(full_KKT, "full_KKT");
 
+    // Check inertia for each agent KKT matrix Ki
+    bool is_optimal = true;
+    std::vector<int> saddle_agent_vec;
+    saddle_agent_vec.reserve(N_);
+    for (int i=0; i<N_; i++){
+      // Call K_i
+      casadi::Sparsity Ki_sp = Ki_vec_[i].sparsity_out(0);
+      std::vector<double> Ki_buffer(Ki_sp.nnz());
+      wb_.res[0] = Ki_buffer.data();
+      assert (Ki_vec_[i].n_out() == 1);
+      auto Ki = get_mapped_spmatrix(Ki_sp, Ki_buffer.data());
+
+      // The arguments are the same as r, dr_dy. No need to reset wb_.args
+      Ki_vec_[i](wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+      wb_.res[0] = nullptr;
+      // Apply Levenberg-Marquardt Regularization
+      // Without this AMD permutation will fail
+      int rows = Ki.rows();
+      int cols = Ki.cols();
+      const int primal_n = (n_+m_)*T_;
+      const int dual_n = n_*T_+n_hi_;
+      std::vector<Eigen::Triplet<double>> triplets;
+      triplets.reserve(rows);
+      for (int k = 0; k < rows; ++k) {
+          // Primal (+reg), Dual/Constraints (-reg)
+          double val = (k < primal_n) ? reg_ : -reg_;
+          triplets.emplace_back(k, k, val);
+      }
+      SpMatrix reg_matrix(rows, cols);
+      reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
+      SpMatrix Ki_reg = Ki + reg_matrix;
+
+
+      // LDL decomposition
+      Eigen::SimplicialLDLT<SpMatrix> solver;
+      solver.compute(Ki_reg);
+      if(solver.info() != Eigen::Success) {
+          logger_->error("LDL decomposition failed");
+          throw std::runtime_error("LDL decomposition failed");
+      }
+      // Check Inertia
+      Eigen::VectorXd D = solver.vectorD();
+      int pos = 0;
+      int neg = 0;
+      int zero = 0;
+      const double epsilon = 1e-8;
+      for (int i = 0; i < D.size(); ++i) {
+          if (D[i] > epsilon) pos++;
+          else if (D[i] < -epsilon) neg++;
+          else zero++;
+      }
+      auto inertia = std::make_tuple(pos, neg, zero);
+      auto expected_inertia = std::make_tuple(primal_n, dual_n, 0);
+      if (inertia != expected_inertia){
+        is_optimal = false;
+        saddle_agent_vec.push_back(i);
+      }
+    }
+    logger_->info("Saddle agents: {}", saddle_agent_vec);
+
     // Apply active set method, skim down full_r0 and full_KKT
     // logger_->debug("Reduce KKT system...");
     SpMatrix reduced_KKT;
@@ -580,7 +648,6 @@ public:
     // TODO maybe use dense matrix for solution
     Vector reduced_dy;
     Scalar residual;
-    std::tuple<int,int,int> inertia;
 
     // Apply Levenberg-Marquardt Regularization
     // logger_->debug("Apply Regularization...");
@@ -604,20 +671,14 @@ public:
     if (reduced_r0.hasNaN()){
       logger_->warn("reduced_dy has nan");
     }
-    std::tie(reduced_dy, residual, inertia) = solve_linear_system(reduced_KKT, -reduced_r0, "ldl");
+    std::tie(reduced_dy, residual) = solve_linear_system(reduced_KKT, -reduced_r0, "lscg");
     if (reduced_dy.hasNaN()){
       logger_->warn("reduced_dy has nan");
     }
     const int mu_in_y_offset = n_*N_*T_ + m_*N_*T_ + n_*N_*T_;  
     assert (reduced_dy.rows() == mu_in_y_offset + active_h_indices.size());
-    // logger_->debug("Done");
-    auto [pos, neg, zero] = inertia;
-    logger_->debug("reduced_KKT inertia ({},{},{})", pos, neg, zero);
-    const int in_n = n_*N_*T_ + m_*N_*T_;
-    int in_m = T_*N_*n_ + active_h_indices.size();  // Active ineq constraints/multipliers
-    std::tuple<int,int,int> expected_inertia(in_n, in_m, 0);
-    logger_->debug("expected inertia ({},{},{})", in_n, in_m, 0);
-    bool is_optimal = (inertia == expected_inertia);
+
+
 
     // Reconstruct full_dy from reduced_dy
     MatrixXd full_dy = MatrixXd::Zero(full_KKT.cols(),1);

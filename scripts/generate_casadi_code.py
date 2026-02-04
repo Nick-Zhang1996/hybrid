@@ -20,11 +20,7 @@ def codegen(car_count, horizon):
 
 
 if __name__ == "__main__":
-    codegen(5, 40)
-    codegen(2, 20)
-    codegen(3, 20)
-    codegen(4, 20)
-    codegen(5, 20)
-    codegen(6, 20)
-    codegen(7, 20)
-    codegen(8, 20)
+    # codegen(5, 40)
+    for T in [20, 40]:
+        for i in range(2, 10):
+            codegen(i, T)

@@ -210,7 +210,7 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game."""
     tolerance: float = 5e-4
-    iterations: int = 50
+    iterations: int = 20
     # backtracking line search param
     bc_a: float = 1e-4  # alpha
     bc_b: float = 0.5  # beta
@@ -659,6 +659,7 @@ class RD3GCasadi(BaseSolver):
                 is_optimal = False
                 saddle_agent_idx.append(i)
                 bad_in_count = exp_in_Ki[0] - in_Ki[0]
+                # NOTE this is an estimate, it does not guarantee Ki_reg>0
                 reg = -np.sort(D_diag[D_diag < 0])[bad_in_count-1]
 
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
@@ -666,10 +667,10 @@ class RD3GCasadi(BaseSolver):
 
         p.e('Inertia Checking')
         # Inertia correcting regularization
-        # reg_vec = [val.reg for val in br_game_vec]
-        # in_reg_mtx = self.make_full_KKT_reg(reg_vec)
-        # full_KKT += in_reg_mtx
-        # logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
+        reg_vec = [val.reg for val in br_game_vec]
+        in_reg_mtx = self.make_full_KKT_reg(reg_vec)
+        full_KKT += in_reg_mtx
+        logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
@@ -682,6 +683,8 @@ class RD3GCasadi(BaseSolver):
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         primal_var_count = (n+m)*N*T
+
+        """
         ind = np.arange(primal_var_count)
         reg_matrix = scipy.sparse.eye(full_KKT.shape[0], format="csc")
         reg_matrix[ind, ind] = self.reg
@@ -689,6 +692,7 @@ class RD3GCasadi(BaseSolver):
         ind = np.arange(primal_var_count, full_KKT.shape[0])
         reg_matrix[ind, ind] = -self.reg
         full_KKT += reg_matrix
+        """
 
         if False:  # active set
             p.s('Reduce KKT')

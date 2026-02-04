@@ -15,16 +15,16 @@ logger.setLevel(logging.INFO)
 
 # np.random.seed(4)
 np.random.seed()
-game = create_random_game(car_count=5, horizon=20)
+game = create_random_game(car_count=3, horizon=20)
 solver_config = RD3GCasadiConfig()
-solver = RD3GCasadi(solver_config, game, cpp_only=False)
-sol = solver.solve()
+solver = RD3GCasadi(solver_config, game, cpp_only=True)
+# sol = solver.solve()
+solver.init_cpp_backend()
+sol = solver.solve_cpp_backend()
 # solver.visualize(sol.u)
-solver.animate(sol.u)
-# solver.init_cpp_backend()
-# sol = solver.solve_cpp_backend()
+# solver.animate(sol.u)
 
-solver.final()
+# solver.final()
 logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')

@@ -8,3 +8,4 @@ build/
 *.gif
 .vscode/
 CMakeFiles/
+casadi_codegen/
