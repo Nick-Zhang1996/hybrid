@@ -164,6 +164,132 @@ int get_m_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, 
 #define get_m_SZ_RES 1
 #define get_m_SZ_IW 0
 #define get_m_SZ_W 0
+int K_0(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_0_alloc_mem(void);
+int K_0_init_mem(int mem);
+void K_0_free_mem(int mem);
+int K_0_checkout(void);
+void K_0_release(int mem);
+void K_0_incref(void);
+void K_0_decref(void);
+casadi_int K_0_n_in(void);
+casadi_int K_0_n_out(void);
+casadi_real K_0_default_in(casadi_int i);
+const char* K_0_name_in(casadi_int i);
+const char* K_0_name_out(casadi_int i);
+const casadi_int* K_0_sparsity_in(casadi_int i);
+const casadi_int* K_0_sparsity_out(casadi_int i);
+int K_0_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_0_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_0_SZ_ARG 6
+#define K_0_SZ_RES 1
+#define K_0_SZ_IW 0
+#define K_0_SZ_W 0
+int K_1(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_1_alloc_mem(void);
+int K_1_init_mem(int mem);
+void K_1_free_mem(int mem);
+int K_1_checkout(void);
+void K_1_release(int mem);
+void K_1_incref(void);
+void K_1_decref(void);
+casadi_int K_1_n_in(void);
+casadi_int K_1_n_out(void);
+casadi_real K_1_default_in(casadi_int i);
+const char* K_1_name_in(casadi_int i);
+const char* K_1_name_out(casadi_int i);
+const casadi_int* K_1_sparsity_in(casadi_int i);
+const casadi_int* K_1_sparsity_out(casadi_int i);
+int K_1_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_1_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_1_SZ_ARG 6
+#define K_1_SZ_RES 1
+#define K_1_SZ_IW 0
+#define K_1_SZ_W 0
+int K_2(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_2_alloc_mem(void);
+int K_2_init_mem(int mem);
+void K_2_free_mem(int mem);
+int K_2_checkout(void);
+void K_2_release(int mem);
+void K_2_incref(void);
+void K_2_decref(void);
+casadi_int K_2_n_in(void);
+casadi_int K_2_n_out(void);
+casadi_real K_2_default_in(casadi_int i);
+const char* K_2_name_in(casadi_int i);
+const char* K_2_name_out(casadi_int i);
+const casadi_int* K_2_sparsity_in(casadi_int i);
+const casadi_int* K_2_sparsity_out(casadi_int i);
+int K_2_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_2_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_2_SZ_ARG 6
+#define K_2_SZ_RES 1
+#define K_2_SZ_IW 0
+#define K_2_SZ_W 0
+int K_3(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_3_alloc_mem(void);
+int K_3_init_mem(int mem);
+void K_3_free_mem(int mem);
+int K_3_checkout(void);
+void K_3_release(int mem);
+void K_3_incref(void);
+void K_3_decref(void);
+casadi_int K_3_n_in(void);
+casadi_int K_3_n_out(void);
+casadi_real K_3_default_in(casadi_int i);
+const char* K_3_name_in(casadi_int i);
+const char* K_3_name_out(casadi_int i);
+const casadi_int* K_3_sparsity_in(casadi_int i);
+const casadi_int* K_3_sparsity_out(casadi_int i);
+int K_3_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_3_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_3_SZ_ARG 6
+#define K_3_SZ_RES 1
+#define K_3_SZ_IW 0
+#define K_3_SZ_W 0
+int K_4(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_4_alloc_mem(void);
+int K_4_init_mem(int mem);
+void K_4_free_mem(int mem);
+int K_4_checkout(void);
+void K_4_release(int mem);
+void K_4_incref(void);
+void K_4_decref(void);
+casadi_int K_4_n_in(void);
+casadi_int K_4_n_out(void);
+casadi_real K_4_default_in(casadi_int i);
+const char* K_4_name_in(casadi_int i);
+const char* K_4_name_out(casadi_int i);
+const casadi_int* K_4_sparsity_in(casadi_int i);
+const casadi_int* K_4_sparsity_out(casadi_int i);
+int K_4_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_4_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_4_SZ_ARG 6
+#define K_4_SZ_RES 1
+#define K_4_SZ_IW 0
+#define K_4_SZ_W 0
+int K_5(const casadi_real** arg, casadi_real** res, casadi_int* iw, casadi_real* w, int mem);
+int K_5_alloc_mem(void);
+int K_5_init_mem(int mem);
+void K_5_free_mem(int mem);
+int K_5_checkout(void);
+void K_5_release(int mem);
+void K_5_incref(void);
+void K_5_decref(void);
+casadi_int K_5_n_in(void);
+casadi_int K_5_n_out(void);
+casadi_real K_5_default_in(casadi_int i);
+const char* K_5_name_in(casadi_int i);
+const char* K_5_name_out(casadi_int i);
+const casadi_int* K_5_sparsity_in(casadi_int i);
+const casadi_int* K_5_sparsity_out(casadi_int i);
+int K_5_work(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+int K_5_work_bytes(casadi_int *sz_arg, casadi_int* sz_res, casadi_int *sz_iw, casadi_int *sz_w);
+#define K_5_SZ_ARG 6
+#define K_5_SZ_RES 1
+#define K_5_SZ_IW 0
+#define K_5_SZ_W 0
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

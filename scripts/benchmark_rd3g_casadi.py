@@ -25,7 +25,7 @@ for car_count in range(2, 9):
     dt_vec = []
     for i in range(50):
         np.random.seed(i)
-        game = create_random_game(car_count=car_count, horizon=20)
+        game = create_random_game(car_count=car_count, horizon=40)
         solver_config = RD3GCasadiConfig()
         solver = RD3GCasadi(solver_config, game, cpp_only=True)
         # sol = solver.solve()

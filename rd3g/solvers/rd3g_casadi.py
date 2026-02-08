@@ -223,6 +223,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     rho_b: float = 1.0
     # Apply Levenberg-Marquardt Regularization
     reg: float = 1e-5
+    # Apply inertia correction to each agent KKT
+    inertia_correction: bool = True
 
 
 class LineSearchMaxIter(Exception):
@@ -237,7 +239,7 @@ class RD3GCasadi(BaseSolver):
     """Residual Descent Differential Dynamic Game Solver (RD3G) with CasADi
 
     Attributes:
-        config (ResidualGameConfig): Configuration nametuple to
+        config (RD3GCasadiConfig): Configuration nametuple to
             specify solver iterations, cpp binary, tolerance etc.
         N (int): Number of agents
         T (int): Horizon length
@@ -392,12 +394,12 @@ class RD3GCasadi(BaseSolver):
                 game.config.N,
                 game.config.T,
                 game.config.n_hi,
-                game.config.dt,
-                solver_config.rho_0,
+                game.config.dt, solver_config.rho_0,
                 solver_config.rho_b,
                 solver_config.bc_a,
                 solver_config.bc_b,
                 solver_config.reg,
+                solver_config.inertia_correction,
                 solver_config.tolerance,
                 solver_config.backtracking_max_iter,
                 solver_config.iterations,
@@ -661,16 +663,19 @@ class RD3GCasadi(BaseSolver):
                 bad_in_count = exp_in_Ki[0] - in_Ki[0]
                 # NOTE this is an estimate, it does not guarantee Ki_reg>0
                 reg = -np.sort(D_diag[D_diag < 0])[bad_in_count-1]
+            # TODO debug: verify Ki_reg > 0
 
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
                                dy_i, L_zero_diag, D_diag, P_vec, reg))
 
         p.e('Inertia Checking')
-        # Inertia correcting regularization
         reg_vec = [val.reg for val in br_game_vec]
-        in_reg_mtx = self.make_full_KKT_reg(reg_vec)
-        full_KKT += in_reg_mtx
         logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
+
+        if self.config.inertia_correction:
+            # Inertia correcting regularization
+            in_reg_mtx = self.make_full_KKT_reg(reg_vec)
+            full_KKT += in_reg_mtx
 
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]

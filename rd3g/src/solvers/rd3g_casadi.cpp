@@ -21,8 +21,24 @@ PYBIND11_MODULE(rd3g_casadi, m) {
   bind_sparse_struct(m);
   m.doc() = "RD3G CasADi solver";
   py::class_<ClassName>(m, "Rd3gCasadi")
-    .def(py::init<int, int, int, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar, Scalar,
-                int, int,int, std::string, std::string>(),
+    .def(py::init<
+      int, // N
+      int, // T
+      int, // n_hi
+      Scalar, // dt
+      Scalar, // rho
+      Scalar, // rho_b
+      Scalar, // bc_a
+      Scalar, // bc_b
+      Scalar, // reg
+      bool, // inertia_correction
+      Scalar,// tolerance
+      int,// backtracking_max_iter
+      int,// max_iter
+      int,// verbose
+      std::string,// base_dir
+      std::string// casadi_module_name
+      >(),
      py::arg("N"), 
      py::arg("T"), 
      py::arg("n_hi"), 
@@ -32,6 +48,7 @@ PYBIND11_MODULE(rd3g_casadi, m) {
      py::arg("bc_a"), 
      py::arg("bc_b"), 
      py::arg("reg"), 
+     py::arg("inertia_correction"), 
      py::arg("tolerance"), 
      py::arg("backtracking_max_iter"), 
      py::arg("max_iter"), 

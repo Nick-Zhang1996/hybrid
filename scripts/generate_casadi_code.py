@@ -21,6 +21,6 @@ def codegen(car_count, horizon):
 
 if __name__ == "__main__":
     # codegen(5, 40)
-    for T in [20, 40]:
-        for i in range(2, 10):
+    for T in [20]:
+        for i in range(2, 9):
             codegen(i, T)

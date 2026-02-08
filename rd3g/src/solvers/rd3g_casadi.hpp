@@ -126,6 +126,7 @@ protected:
   MatrixXd x0_;
   mutable Profiler<false> profiler_;
   int verbose_; // 0:error, 1:warning, 2:info, 3:debug
+  bool inertia_correction_;
 
   std::shared_ptr<spdlog::logger> logger_;
 
@@ -150,6 +151,7 @@ public:
   // NOTE n,m may need to be template variables for performance
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar rho,
                const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
+               const bool inertia_correction,
                const Scalar tolerance, const int backtracking_max_iter,
                const int max_iter, const int verbose,
                const std::string base_dir,
@@ -157,6 +159,7 @@ public:
       : N_{N}, T_{T}, n_hi_{n_hi}, dt_{dt}, 
         rho_{rho}, rho_b_{rho_b}, bc_a_{bc_a},bc_b_{bc_b},
         reg0_{reg},reg_{reg},
+        inertia_correction_{inertia_correction},
         tolerance_{tolerance},
         line_search_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
         max_iterations_{max_iter}, verbose_(verbose) {
@@ -569,13 +572,15 @@ public:
     dr_dy_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr;
 
-    auto full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
+    // Copy here because we need to modify it later
+    SpMatrix full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
     check_spmatrix_has_nan(full_KKT, "full_KKT");
 
     // Check inertia for each agent KKT matrix Ki
     bool is_optimal = true;
     std::vector<int> saddle_agent_vec;
     saddle_agent_vec.reserve(N_);
+    std::vector<Scalar> reg_vec(N_,0);
     for (int i=0; i<N_; i++){
       // Call K_i
       casadi::Sparsity Ki_sp = Ki_vec_[i].sparsity_out(0);
@@ -604,7 +609,6 @@ public:
       reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
       SpMatrix Ki_reg = Ki + reg_matrix;
 
-
       // LDL decomposition
       Eigen::SimplicialLDLT<SpMatrix> solver;
       solver.compute(Ki_reg);
@@ -618,9 +622,15 @@ public:
       int neg = 0;
       int zero = 0;
       const double epsilon = 1e-8;
+      std::vector<Scalar> neg_pivot_vec;
+      neg_pivot_vec.reserve(D.size());
       for (int i = 0; i < D.size(); ++i) {
-          if (D[i] > epsilon) pos++;
-          else if (D[i] < -epsilon) neg++;
+          if (D[i] > epsilon) {
+            pos++;
+          } else if (D[i] < -epsilon){
+            neg++;
+            neg_pivot_vec.push_back(D[i]);
+          }
           else zero++;
       }
       auto inertia = std::make_tuple(pos, neg, zero);
@@ -628,9 +638,17 @@ public:
       if (inertia != expected_inertia){
         is_optimal = false;
         saddle_agent_vec.push_back(i);
+        // Missing positive eigenvalue count
+        int bad_in_count = std::get<0>(expected_inertia) - std::get<0>(inertia);
+        std::sort(neg_pivot_vec.begin(), neg_pivot_vec.end());
+        reg_vec[i] = - neg_pivot_vec[bad_in_count-1];
       }
     }
     logger_->info("Saddle agents: {}", saddle_agent_vec);
+
+    if (inertia_correction_){
+      full_KKT += make_full_KKT_reg(reg_vec);
+    }
 
     // Apply active set method, skim down full_r0 and full_KKT
     // logger_->debug("Reduce KKT system...");
@@ -805,6 +823,41 @@ public:
       logger_->warn(name + " has nan");
     }
     return has_nan;
+  }
+
+  // Make regularization matrix given regularization coefficient from each agent
+  SpMatrix make_full_KKT_reg(const std::vector<double>& reg_vec) {
+      int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + n_hi_ * N_;
+
+      typedef Eigen::Triplet<Scalar> T;
+      std::vector<T> triplet_list;
+      triplet_list.reserve(N_ * T_ * (n_ + m_));
+
+      for (int i = 0; i < N_; ++i) {
+          Scalar val = reg_vec[i];
+
+          for (int k = 0; k < T_; ++k) {
+              
+              // Block 1: dLLi/dxi
+              int x_offset = k * (n_ * N_) + i * n_;
+              for (int idx = 0; idx < n_; ++idx) {
+                  int row_idx = x_offset + idx;
+                  // Diagonal matrix, so col_idx == row_idx
+                  triplet_list.push_back(T(row_idx, row_idx, val));
+              }
+
+              // Block 1: dLLi/dxi
+              int u_offset = n_ * N_ * T_ + k * (m_ * N_) + i * m_;
+              for (int idx = 0; idx < m_; ++idx) {
+                  int row_idx = u_offset + idx;
+                  triplet_list.push_back(T(row_idx, row_idx, val));
+              }
+          }
+      }
+
+      SpMatrix reg_mtx(l, l);
+      reg_mtx.setFromTriplets(triplet_list.begin(), triplet_list.end());
+      return reg_mtx;
   }
 
 };
