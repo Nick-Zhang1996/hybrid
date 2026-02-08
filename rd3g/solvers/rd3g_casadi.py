@@ -1,7 +1,5 @@
 """ Residual Descent Differential Dynamic Game Solver (RD3G) with CasADi """
 # pylint: disable=invalid-name, forgotten-debug-statement
-# NOTE since casadi use column-major memory layout, consider changing order of indexing
-# so most frequent slicing is on columns
 
 import logging
 from dataclasses import dataclass
@@ -12,9 +10,8 @@ import numpy as np
 import casadi as cas
 import qdldl
 from scipy.sparse import csc_matrix
-from scipy.sparse.linalg import svds
 import scipy.sparse  # sparse matrix operations
-from scipy.sparse.linalg import lsqr, spsolve_triangular, LinearOperator
+from scipy.sparse.linalg import lsqr
 import scipy.linalg
 from scipy.linalg import norm
 import matplotlib.pyplot as plt
@@ -27,21 +24,12 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-DEBUG = False
-
-
-class IterCounter:
-    def __init__(self):
-        self.itn = 0
-        self.res = -1
-
-    def callback(self, pr_norm):
-        self.itn += 1
-        self.res = pr_norm
+DEBUG = True
 
 
 @dataclass
 class BrGameResult:
+    """ Result of a Best Response game (per agent game) """
     is_optimal: bool
     Ki: csc_matrix
     Ki_reg: csc_matrix
@@ -196,13 +184,6 @@ def solve_linear(A, b, method, profiler):
         logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
 
-    if DEBUG:
-        # check qdldl dy against lsqr result
-        diff_norm = norm(qdldl_x - x)
-        x_norm = norm(x)
-        qdldl_x_norm = norm(qdldl_x)
-        logger.info(f'{diff_norm=}, {x_norm=}, {qdldl_x_norm=}')
-
 # NOTE: changing config requires re-run codegen, since configs are constants
 
 
@@ -342,7 +323,6 @@ class RD3GCasadi(BaseSolver):
         X = self.game.rollout(x0, u)
         self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
-        # TODO Some games may not have collision constraints, fail silently
         xki = cas.SX.sym('xki', n, 1)
         xkj = cas.SX.sym('xkj', n, 1)
         col_h_val = self.game.collision_h(xki, xkj)
@@ -640,30 +620,27 @@ class RD3GCasadi(BaseSolver):
             reg_matrix[ind, ind] = -self.reg
             Ki_reg = Ki + reg_matrix
 
-            upper = scipy.sparse.triu(Ki_reg, format='csc')
-            upper.eliminate_zeros()
-            upper.sort_indices()
-            upper.sum_duplicates()
-            # pylint:disable-next=c-extension-no-member
-            solver = qdldl.Solver(upper, upper=True)
+            in_Ki, solver = self.get_inertia(Ki_reg)
             dy_i = solver.solve(-ri.toarray())
 
-            #  C = P @ A @ P.T, C = L @ D @ L.T
-            L_zero_diag, D_diag, P_vec = solver.factors()
-            pos = np.sum(D_diag > 0)
-            neg = np.sum(D_diag < 0)
-            zero = len(D_diag) - pos - neg
-            in_Ki = (pos, neg, zero)
             exp_in_Ki = (primal_var_count, Ki.shape[0]-primal_var_count, 0)
             logger.debug(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
+            L_zero_diag, D_diag, P_vec = solver.factors()
+
             reg = 0
             if in_Ki != exp_in_Ki:
                 is_optimal = False
                 saddle_agent_idx.append(i)
                 bad_in_count = exp_in_Ki[0] - in_Ki[0]
                 # NOTE this is an estimate, it does not guarantee Ki_reg>0
-                reg = -np.sort(D_diag[D_diag < 0])[bad_in_count-1]
-            # TODO debug: verify Ki_reg > 0
+                reg = -np.sort(D_diag[D_diag < 0])[-bad_in_count]
+                # TODO do a binary search here
+                data = np.full(primal_var_count, 1)
+                indices = np.arange(primal_var_count)
+                I_H = scipy.sparse.csc_matrix((data, (indices, indices)), shape=Ki_reg.shape)
+                corrected_Ki_reg = Ki_reg+reg*I_H
+                new_in_Ki = self.get_inertia(corrected_Ki_reg)
+                logger.debug(f'corrected K{i} inertia {new_in_Ki}, optimal {exp_in_Ki}')
 
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
                                dy_i, L_zero_diag, D_diag, P_vec, reg))
@@ -677,33 +654,29 @@ class RD3GCasadi(BaseSolver):
             in_reg_mtx = self.make_full_KKT_reg(reg_vec)
             full_KKT += in_reg_mtx
 
+        primal_var_count = (n+m)*N*T
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
 
         istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
 
-        # Full: r0 + dr_dy @ dy = 0
-        # Reduced: KKT_residual + KKT @ reduced_dy = 0
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
-        primal_var_count = (n+m)*N*T
-
-        """
-        ind = np.arange(primal_var_count)
-        reg_matrix = scipy.sparse.eye(full_KKT.shape[0], format="csc")
-        reg_matrix[ind, ind] = self.reg
+        # ind = np.arange(primal_var_count)
+        # reg_matrix = scipy.sparse.eye(full_KKT.shape[0], format="csc")
+        # reg_matrix[ind, ind] = self.reg
+        # ind = np.arange(primal_var_count, full_KKT.shape[0])
         # Apply constraint relaxation to allow AMD permutation in LDL
-        ind = np.arange(primal_var_count, full_KKT.shape[0])
-        reg_matrix[ind, ind] = -self.reg
-        full_KKT += reg_matrix
-        """
+        # reg_matrix[ind, ind] = -self.reg
+        # full_KKT += reg_matrix
 
         if False:  # active set
             p.s('Reduce KKT')
             # Remove inactive constraints and their multiplier
             # h < 0 -> inactive cosntraint
-            #   remove them from residual to reduce dimension, also remove corresponding columns in mu
+            #   remove them from residual to reduce dimension,
+            #  also remove corresponding columns in mu
             # Starting index of first h() in residual
             h_in_r_offset = n*N*T + m*N*T + n*N*T  # dLLi_dx, dLLi_du, dynamics constraint
             # Starting index of mu, multiplier for h()
@@ -786,17 +759,11 @@ class RD3GCasadi(BaseSolver):
         h_pos = np.sum(h_val_np > 0)
         logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}, {h_pos=}')
 
-        p.s('More debug checking')
         if DEBUG:
+            p.s('More debug checking')
             # Where does the residual come from?
-            r_val_np = r_val.toarray()
             r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
             logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
-
-            # Are inactive residual indeed inactive?
-            inactive_residual = norm(r_val_np[inactive_r_rows, 0])
-            # logger.debug(f'{inactive_residual=}')
-            assert inactive_residual < 1e-10
 
             # Check the linearization is valid
             r0_np = np.array(r0_val)
@@ -804,13 +771,8 @@ class RD3GCasadi(BaseSolver):
             expected_r = r0_val * (1-step_size)
             diff = norm(expected_r - r_np)
             logger.info(f'Diff in expected r {diff=}')
+            p.e('More debug checking')
 
-            # plt.plot(step_size_vec, stepped_r_vec, '*-')
-            # plt.plot(0, r0_norm, 'o')
-            # plt.title('Reduced descent')
-            # plt.show()
-            # TODO Use a merit function of form r_val + C * h_residual
-        p.e('More debug checking')
         self.residual_vec.append(r0_norm)
         p.e()
 
@@ -1259,3 +1221,20 @@ class RD3GCasadi(BaseSolver):
                     row.append(n*N*T + k*(m*N) + i*m + idx)
         reg_mtx = csc_matrix((data, (row, row)), shape=(l, l))
         return reg_mtx
+
+    def get_inertia(self, mtx):
+        """ Given matrix mtx, give inertia (pos,neg,zero), and qdldl solver instance"""
+        upper = scipy.sparse.triu(mtx, format='csc')
+        upper.eliminate_zeros()
+        upper.sort_indices()
+        upper.sum_duplicates()
+        # pylint:disable-next=c-extension-no-member
+        solver = qdldl.Solver(upper, upper=True)
+
+        #  C = P @ A @ P.T, C = L @ D @ L.T
+        L_zero_diag, D_diag, P_vec = solver.factors()
+        pos = np.sum(D_diag > 0)
+        neg = np.sum(D_diag < 0)
+        zero = len(D_diag) - pos - neg
+        inertia = (pos, neg, zero)
+        return inertia, solver

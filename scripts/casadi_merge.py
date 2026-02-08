@@ -1,5 +1,4 @@
 """ Prototype to solve merge game with RD3G CasADi """
-from time import time
 import logging
 import numpy as np
 
@@ -8,7 +7,7 @@ from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
@@ -17,14 +16,14 @@ logger.setLevel(logging.INFO)
 np.random.seed()
 game = create_random_game(car_count=3, horizon=20)
 solver_config = RD3GCasadiConfig()
-solver = RD3GCasadi(solver_config, game, cpp_only=True)
-# sol = solver.solve()
-solver.init_cpp_backend()
-sol = solver.solve_cpp_backend()
+solver = RD3GCasadi(solver_config, game, cpp_only=False)
+sol = solver.solve()
+# solver.init_cpp_backend()
+# sol = solver.solve_cpp_backend()
 # solver.visualize(sol.u)
 # solver.animate(sol.u)
 
-# solver.final()
+solver.final()
 logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')
