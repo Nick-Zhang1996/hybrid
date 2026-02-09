@@ -78,12 +78,12 @@ rects2 = ax.bar(pos2, optimal_mean_vec, bar_width, yerr=optimal_var_vec, capsize
                 label='Optimal Rate (1 run)', color=colors[1])
 
 # 3. 10 Repeat: Convergence (Actual)
-rects3 = ax.bar(pos3, rep_conv_mean_vec, bar_width, yerr=rep_conv_var_vec, capsize=3,
-                label='Converge Rate (10 run)', color=colors[2])
+# rects3 = ax.bar(pos3, rep_conv_mean_vec, bar_width, yerr=rep_conv_var_vec, capsize=3,
+#                 label='Converge Rate (10 run)', color=colors[2])
 
 # 4. 10 Repeat: Optimal
-rects4 = ax.bar(pos4, rep_optimal_mean_vec, bar_width, yerr=rep_optimal_var_vec, capsize=3,
-                label='Optimal Rate (10 run)', color=colors[3])
+# rects4 = ax.bar(pos4, rep_optimal_mean_vec, bar_width, yerr=rep_optimal_var_vec, capsize=3,
+#                 label='Optimal Rate (10 run)', color=colors[3])
 
 # --- Add Numerical Labels ---
 

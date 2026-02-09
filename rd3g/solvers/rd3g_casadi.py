@@ -24,7 +24,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-DEBUG = True
+DEBUG = False
 
 
 @dataclass
@@ -202,10 +202,14 @@ class RD3GCasadiConfig(BaseSolverConfig):
     rho_0: float = 20.0
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
-    # Apply Levenberg-Marquardt Regularization
+    # Levenberg-Marquardt Regularization Coefficient
     reg: float = 1e-5
     # Apply inertia correction to each agent KKT
     inertia_correction: bool = True
+    # Inertia correction max iterations
+    max_in_reg_iter: int = 10
+    # Maximum inertia regularization value
+    max_in_reg_val: float = 1.0
 
 
 class LineSearchMaxIter(Exception):
@@ -383,6 +387,8 @@ class RD3GCasadi(BaseSolver):
                 solver_config.tolerance,
                 solver_config.backtracking_max_iter,
                 solver_config.iterations,
+                solver_config.max_in_reg_iter,
+                solver_config.max_in_reg_val,
                 1,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name
@@ -624,23 +630,54 @@ class RD3GCasadi(BaseSolver):
             dy_i = solver.solve(-ri.toarray())
 
             exp_in_Ki = (primal_var_count, Ki.shape[0]-primal_var_count, 0)
-            logger.debug(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
+            # logger.debug(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
             L_zero_diag, D_diag, P_vec = solver.factors()
 
             reg = 0
-            if in_Ki != exp_in_Ki:
-                is_optimal = False
-                saddle_agent_idx.append(i)
-                bad_in_count = exp_in_Ki[0] - in_Ki[0]
-                # NOTE this is an estimate, it does not guarantee Ki_reg>0
-                reg = -np.sort(D_diag[D_diag < 0])[-bad_in_count]
-                # TODO do a binary search here
-                data = np.full(primal_var_count, 1)
-                indices = np.arange(primal_var_count)
-                I_H = scipy.sparse.csc_matrix((data, (indices, indices)), shape=Ki_reg.shape)
-                corrected_Ki_reg = Ki_reg+reg*I_H
-                new_in_Ki = self.get_inertia(corrected_Ki_reg)
-                logger.debug(f'corrected K{i} inertia {new_in_Ki}, optimal {exp_in_Ki}')
+            if self.config.inertia_correction:
+                if in_Ki != exp_in_Ki:
+                    is_optimal = False
+                    saddle_agent_idx.append(i)
+                    data = np.full(primal_var_count, 1)
+                    indices = np.arange(primal_var_count)
+                    I_H = scipy.sparse.csc_matrix((data, (indices, indices)), shape=Ki_reg.shape)
+                    # Binary search to find minimal reg to correct inertia
+                    reg_upper = 2.0  # Gives good inertia
+                    reg_lower = 1.0  # Gives bad inertia
+                    reg_upper_in, _ = self.get_inertia(Ki_reg+reg_upper*I_H)
+                    reg_lower_in, _ = self.get_inertia(Ki_reg+reg_lower*I_H)
+                    reg_iter = 0
+                    for reg_iter in range(self.config.max_in_reg_iter):
+                        if reg_upper_in != exp_in_Ki:  # Inc upper bound
+                            reg_lower = reg_upper
+                            reg_lower_in = reg_upper_in
+                            reg_upper *= 2
+                            reg_upper_in, _ = self.get_inertia(Ki_reg+reg_upper*I_H)
+                        elif reg_lower_in == exp_in_Ki:  # Dec lower bound
+                            reg_upper = reg_lower
+                            reg_upper_in = reg_lower_in
+                            reg_lower /= 2
+                            reg_lower_in, _ = self.get_inertia(Ki_reg+reg_lower*I_H)
+                        else:
+                            reg_middle = (reg_upper + reg_lower) / 2
+                            reg_middle_in, _ = self.get_inertia(Ki_reg+reg_middle*I_H)
+                            if reg_middle_in == exp_in_Ki:
+                                reg_upper = reg_middle
+                                reg_upper_in = reg_middle_in
+                            else:
+                                reg_lower = reg_middle
+                                reg_lower_in = reg_middle_in
+                        if (reg_upper - reg_lower)/reg_upper < 0.1:
+                            break
+                        if reg_upper > self.config.max_in_reg_val:
+                            reg_upper = self.config.max_in_reg_val
+                            break
+                    reg = reg_upper
+                    if reg_upper_in != exp_in_Ki:
+                        logger.warning(
+                            f'Fail to correct K{i} inertia: {reg_upper_in}, {reg_iter=}, {reg=}')
+                    else:
+                        logger.debug(f'corrected K{i} {reg_iter=}, {reg=}')
 
             br_game_vec.append(BrGameResult(is_optimal, Ki, Ki_reg,
                                dy_i, L_zero_diag, D_diag, P_vec, reg))

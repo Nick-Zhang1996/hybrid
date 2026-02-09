@@ -35,6 +35,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
       Scalar,// tolerance
       int,// backtracking_max_iter
       int,// max_iter
+      int,// max_in_reg_iter
+      Scalar,// max_in_reg_val
       int,// verbose
       std::string,// base_dir
       std::string// casadi_module_name
@@ -52,6 +54,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
      py::arg("tolerance"), 
      py::arg("backtracking_max_iter"), 
      py::arg("max_iter"), 
+     py::arg("max_in_reg_iter"), 
+     py::arg("max_in_reg_val"), 
      py::arg("verbose"), 
      py::arg("base_dir"), 
      py::arg("casadi_module_name"))

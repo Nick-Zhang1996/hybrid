@@ -122,6 +122,8 @@ protected:
   Scalar tolerance_;
   int line_search_max_iter_;
   int max_iterations_;
+  int max_in_reg_iter_;
+  Scalar max_in_reg_val_;
   // dim: N*n
   MatrixXd x0_;
   mutable Profiler<false> profiler_;
@@ -152,8 +154,12 @@ public:
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar rho,
                const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
                const bool inertia_correction,
-               const Scalar tolerance, const int backtracking_max_iter,
-               const int max_iter, const int verbose,
+               const Scalar tolerance,
+               const int backtracking_max_iter,
+               const int max_iter, 
+               const int max_in_reg_iter, 
+               const Scalar max_in_reg_val,
+               const int verbose,
                const std::string base_dir,
                const std::string casadi_module_name)
       : N_{N}, T_{T}, n_hi_{n_hi}, dt_{dt}, 
@@ -162,7 +168,10 @@ public:
         inertia_correction_{inertia_correction},
         tolerance_{tolerance},
         line_search_max_iter_{backtracking_max_iter}, x0_{}, profiler_{},
-        max_iterations_{max_iter}, verbose_(verbose) {
+        max_iterations_{max_iter}, 
+        max_in_reg_iter_{max_in_reg_iter},
+        max_in_reg_val_{max_in_reg_val},
+        verbose_(verbose) {
     
     const std::string logger_name{"rd3g_casadi_cpp"};
     logger_ = spdlog::get(logger_name);
@@ -532,7 +541,6 @@ public:
     if (lamda.hasNaN()) logger_->warn("lamda has nan");
     if (mu.hasNaN()) logger_->warn("mu has nan");
 
-
     casadi::Sparsity full_r0_sp = r_.sparsity_out(0);
     assert (full_r0_sp.is_dense());
     std::vector<double> full_r0_buffer(full_r0_sp.nnz());
@@ -581,6 +589,18 @@ public:
     std::vector<int> saddle_agent_vec;
     saddle_agent_vec.reserve(N_);
     std::vector<Scalar> reg_vec(N_,0);
+
+    // Create regularization matrix for Ki, only upper left block (H part) is I
+    const int primal_n = (n_+m_)*T_;
+    const int dual_n = n_*T_+n_hi_;
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(primal_n);
+    for (int i = 0; i < primal_n; ++i) {
+        triplets.emplace_back(i, i, 1.0);
+    }
+    SpMatrix I_H(primal_n+dual_n, primal_n+dual_n);
+    I_H.setFromTriplets(triplets.begin(), triplets.end());
+
     for (int i=0; i<N_; i++){
       // Call K_i
       casadi::Sparsity Ki_sp = Ki_vec_[i].sparsity_out(0);
@@ -596,8 +616,6 @@ public:
       // Without this AMD permutation will fail
       int rows = Ki.rows();
       int cols = Ki.cols();
-      const int primal_n = (n_+m_)*T_;
-      const int dual_n = n_*T_+n_hi_;
       std::vector<Eigen::Triplet<double>> triplets;
       triplets.reserve(rows);
       for (int k = 0; k < rows; ++k) {
@@ -608,44 +626,67 @@ public:
       SpMatrix reg_matrix(rows, cols);
       reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
       SpMatrix Ki_reg = Ki + reg_matrix;
-
       // LDL decomposition
       Eigen::SimplicialLDLT<SpMatrix> solver;
-      solver.compute(Ki_reg);
-      if(solver.info() != Eigen::Success) {
-          logger_->error("LDL decomposition failed");
-          throw std::runtime_error("LDL decomposition failed");
-      }
-      // Check Inertia
-      Eigen::VectorXd D = solver.vectorD();
-      int pos = 0;
-      int neg = 0;
-      int zero = 0;
-      const double epsilon = 1e-8;
-      std::vector<Scalar> neg_pivot_vec;
-      neg_pivot_vec.reserve(D.size());
-      for (int i = 0; i < D.size(); ++i) {
-          if (D[i] > epsilon) {
-            pos++;
-          } else if (D[i] < -epsilon){
-            neg++;
-            neg_pivot_vec.push_back(D[i]);
-          }
-          else zero++;
-      }
-      auto inertia = std::make_tuple(pos, neg, zero);
+      solver.analyzePattern(Ki_reg); // .compute() without .factorize()
+      auto inertia = get_inertia(Ki_reg, solver);
       auto expected_inertia = std::make_tuple(primal_n, dual_n, 0);
       if (inertia != expected_inertia){
         is_optimal = false;
         saddle_agent_vec.push_back(i);
-        // Missing positive eigenvalue count
-        int bad_in_count = std::get<0>(expected_inertia) - std::get<0>(inertia);
-        std::sort(neg_pivot_vec.begin(), neg_pivot_vec.end());
-        reg_vec[i] = - neg_pivot_vec[bad_in_count-1];
+        if (inertia_correction_){
+          // Old strategy: Find missing positive eigenvalue count, use pivot
+          // This is often not enough to correct inertia
+          // int bad_in_count = std::get<0>(expected_inertia) - std::get<0>(inertia);
+          // // NOTE neg_pivot_vec is uninitialized
+          // std::sort(neg_pivot_vec.begin(), neg_pivot_vec.end());
+          // reg_vec[i] = - neg_pivot_vec[bad_in_count-1];
+
+
+          Scalar reg_upper = 2.0;
+          Scalar reg_lower = 1.0;
+          auto reg_upper_in = get_inertia(Ki_reg + reg_upper*I_H, solver);
+          auto reg_lower_in = get_inertia(Ki_reg + reg_lower*I_H, solver);
+          for (int reg_iter=0; reg_iter<max_in_reg_iter_; reg_iter++){
+            if (reg_upper_in != expected_inertia){
+              reg_lower = reg_upper;
+              reg_lower_in = reg_upper_in;
+              reg_upper *= 2;
+              reg_upper_in = get_inertia(Ki_reg + reg_upper*I_H, solver);
+            } else if (reg_lower_in == expected_inertia){
+              reg_upper = reg_lower;
+              reg_upper_in = reg_lower_in;
+              reg_lower /= 2;
+              reg_lower_in = get_inertia(Ki_reg+reg_lower*I_H, solver);
+            } else {
+              Scalar reg_middle = (reg_upper + reg_lower) / 2;
+              auto reg_middle_in = get_inertia(Ki_reg+reg_middle*I_H, solver);
+              if (reg_middle_in == expected_inertia){
+                reg_upper = reg_middle;
+                reg_upper_in = reg_middle_in;
+              } else{
+                reg_lower = reg_middle;
+                reg_lower_in = reg_middle_in;
+              }
+            }
+            if ((reg_upper - reg_lower)/reg_upper < 0.1){
+              break;
+            }
+            if (reg_upper > max_in_reg_val_){
+              reg_upper = max_in_reg_val_;
+              break;
+            }
+          }
+          if (reg_upper_in != expected_inertia){
+            logger_->warn("Failed to correct K_{} inertia", i);
+          }
+          reg_vec[i] = reg_upper;
+        }
       }
     }
     logger_->info("Saddle agents: {}", saddle_agent_vec);
 
+    // TODO still need to add LM regularization
     if (inertia_correction_){
       full_KKT += make_full_KKT_reg(reg_vec);
     }
@@ -669,19 +710,19 @@ public:
 
     // Apply Levenberg-Marquardt Regularization
     // logger_->debug("Apply Regularization...");
-    std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(reduced_KKT.rows());
+    std::vector<Eigen::Triplet<double>> reg_triplets;
+    reg_triplets.reserve(reduced_KKT.rows());
     // Primal Variables: Add +reg to diagonal
     const int primal_var_count = (n_+m_)*N_*T_;
     for (int i = 0; i < primal_var_count; ++i) {
-        triplets.emplace_back(i, i, reg_);
+        reg_triplets.emplace_back(i, i, reg_);
     }
     // Dual Variables (Constraints): Add -reg to diagonal
     for (int i = primal_var_count; i < reduced_KKT.rows(); ++i) {
-        triplets.emplace_back(i, i, -reg_);
+        reg_triplets.emplace_back(i, i, -reg_);
     }
     Eigen::SparseMatrix<double> reg_matrix(reduced_KKT.rows(), reduced_KKT.cols());
-    reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
+    reg_matrix.setFromTriplets(reg_triplets.begin(), reg_triplets.end());
     reduced_KKT += reg_matrix;
 
     // logger_->debug("Solve linear system ...");
@@ -858,6 +899,38 @@ public:
       SpMatrix reg_mtx(l, l);
       reg_mtx.setFromTriplets(triplet_list.begin(), triplet_list.end());
       return reg_mtx;
+  }
+
+  // Find the inertia of a matrix
+  // Args:
+  //  solver: solver instance with symbolic factorization done. 
+  //        Caller must ensure identical sparsity pattern
+  // Return:
+  //  inertia tuple
+  std::tuple<int, int, int>
+  get_inertia(const SpMatrix& mtx, Eigen::SimplicialLDLT<SpMatrix>& solver){
+    solver.factorize(mtx);
+    // Eigen::SimplicialLDLT<SpMatrix> solver;
+    // solver.compute(mtx);
+    if(solver.info() != Eigen::Success) {
+        logger_->error("LDL decomposition failed");
+        throw std::runtime_error("LDL decomposition failed");
+    }
+    // Check Inertia
+    const auto& D = solver.vectorD();
+    int pos = 0;
+    int neg = 0;
+    int zero = 0;
+    const double epsilon = 1e-8;
+    for (int i = 0; i < D.size(); ++i) {
+        if (D[i] > epsilon) {
+          pos++;
+        } else if (D[i] < -epsilon){
+          neg++;
+        }
+        else zero++;
+    }
+    return std::make_tuple(pos, neg, zero);
   }
 
 };
