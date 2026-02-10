@@ -554,16 +554,18 @@ class RD3GCasadi(BaseSolver):
         Args:
             u_ref: (m, N, T, order='F')
         """
+        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
         x = self._rollout_full_x(u_ref)
         self.game.visualize(u_ref, x, show=True, save=save)
 
-    def animate(self, u_ref, save=False):
+    def animate(self, u_ref, save_gif=False, save_snapshots=False):
         """ Animate the game with given and control (u).
         Args:
             u_ref: (m, N, T, order='F')
         """
+        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
         x = self._rollout_full_x(u_ref)
-        self.game.animate(u_ref, x, show=True, save=save)
+        self.game.animate(u_ref, x, show=True, save_gif=save_gif, save_snapshots=save_snapshots)
 
     def step(self, x_ref, u_ref, lambda_ref, mu_ref):
         """ Solver step function

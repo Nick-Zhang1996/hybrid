@@ -12,20 +12,20 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(4)
+np.random.seed(5)
 # np.random.seed()
 cpp = True
-game = create_random_game(car_count=2, horizon=20)
+game = create_random_game(car_count=8, horizon=20)
 solver_config = RD3GCasadiConfig(inertia_correction=True)
-solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+solver = RD3GCasadi(solver_config, game, cpp_only=False)
 if cpp:
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()
 else:
     sol = solver.solve()
 # solver.visualize(sol.u)
-# solver.animate(sol.u)
 # solver.final()
 logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')
+solver.animate(sol.u, save_gif=False, save_snapshots=True)

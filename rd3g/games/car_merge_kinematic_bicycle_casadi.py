@@ -134,7 +134,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         if show:
             plt.show()
 
-    def animate(self, u, x, show=True, save=False):
+    def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
             u: (m,N,T)
@@ -144,7 +144,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         m = self.m
         T = self.T
         N = self.N
-        if (not show) and (not save):
+        if (not show) and (not save_gif) and (not save_snapshots):
             return
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T+1)
@@ -191,7 +191,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
                          car_pose_vec[frame][i][1] + L * car_scale))
                 return im_vec
         else:
-
+            # Show cars as rectangular blocks
             car_pos_vec = []
             car_angle_vec = []
             box_vec = []
@@ -268,36 +268,44 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         # Create the animation
         anim = FuncAnimation(fig, update, frames=self.T, blit=False)
 
-        gif_filename = resolve_logname(suffix='gif')
-        if save:
+        folder = os.path.join(BASEDIR, 'gifs')
+        gif_filename = os.path.join(folder, f'merge_{self.N}car.gif')
+        if save_gif:
             anim.save(gif_filename, writer='pillow')
-            logger.info(f'gif saved to {gif_filename}')
+            logger.info(f'Gif saved to {gif_filename}')
         if show:
             plt.show()
+        if show and save_snapshots:
+            logger.error(
+                'When show and save_snapshots are both on,'
+                ' matplotlib has weird problems, do one at a time')
         # NOTE save initial, middle, final snapshots
-        # update(0)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_initial.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+        if save_snapshots:
+            from PIL import Image
+            folder = os.path.join(BASEDIR, 'pics')
+            update(0)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'merge_{self.N}car_initial.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
 
-        # update(self.T//2)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_middle.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+            update(self.T//2)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'merge_{self.N}car_middle.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
 
-        # update(self.T-1)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_final.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+            update(self.T-1)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'merge_{self.N}car_final.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
         return
 
     def F(self, x_k, u_k):
@@ -452,14 +460,15 @@ def create_random_game(car_count=3, horizon=20):
     J_R = np.eye(m) * 0.3
 
     # multiple car merge, car_count: main_lane_n + merge_lane_n
-    main_lane_n = min(int(0.67 * N), N - 1)
+    main_lane_n = min(int(0.5 * N), N - 1)
     merge_lane_n = N - main_lane_n
     x_pos_main_lane = (
         np.linspace(0, (main_lane_n - 1) * 5.4, main_lane_n)
         + np.random.random(main_lane_n)
     )
     x_pos_merge_lane = (
-        (np.random.random() - 0.5) * 2 * 2.5  # overall offset
+        2.7
+        + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
         + np.linspace(0, (merge_lane_n - 1) * 5.4, merge_lane_n)  # spacing
         + np.random.random(merge_lane_n)  # individual random offset
     )

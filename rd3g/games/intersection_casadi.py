@@ -150,7 +150,7 @@ class IntersectionCasadi(BaseGame):
         if show:
             plt.show()
 
-    def animate(self, u, x, show=True, save=False):
+    def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
             u: (m,N,T)
@@ -240,13 +240,44 @@ class IntersectionCasadi(BaseGame):
 
         # Create the animation
         anim = FuncAnimation(fig, update, frames=self.T, blit=False)
-
-        gif_filename = resolve_logname(suffix='gif')
-        if save:
+        folder = os.path.join(BASEDIR, 'gifs')
+        gif_filename = os.path.join(folder, f'intersection_{self.N}car.gif')
+        if save_gif:
             anim.save(gif_filename, writer='pillow')
-            logger.info(f'gif saved to {gif_filename}')
+            logger.info(f'Gif saved to {gif_filename}')
         if show:
             plt.show()
+        if show and save_snapshots:
+            logger.error(
+                'When show and save_snapshots are both on,'
+                ' matplotlib has weird problems, do one at a time')
+        # NOTE save initial, middle, final snapshots
+        if save_snapshots:
+            from PIL import Image
+            folder = os.path.join(BASEDIR, 'pics')
+            update(0)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'intersection_{self.N}car_initial.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
+
+            update(self.T//2)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'intersection_{self.N}car_middle.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
+
+            update(self.T-1)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            filename = os.path.join(folder, f'intersection_{self.N}car_final.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
         return
 
     def F(self, x_k, u_k):
