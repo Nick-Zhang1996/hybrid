@@ -389,7 +389,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
-                1,  # 0:error, 1:warning, 2:info, 3:debug
+                0,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name
             )
@@ -542,7 +542,11 @@ class RD3GCasadi(BaseSolver):
 
         # n*N, T
         u_cat = u_ref.reshape((m*N, T), order='F')
-        x_ref = self.rollout_casadi(self.x0, u_cat, int_param_dm, double_param_dm)
+        try:
+            x_ref = self.rollout_casadi(self.x0, u_cat, int_param_dm, double_param_dm)
+        except AttributeError:
+            logger.error('cpp_only must be False to populate rollout_casadi()')
+            raise
         x = np.dstack(
             [self.x0[:, :, np.newaxis],
                 x_ref.toarray().reshape((n, N, T), order='F')])
