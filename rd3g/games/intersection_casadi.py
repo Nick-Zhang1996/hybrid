@@ -19,7 +19,6 @@ from rd3g.core.base_jax_game import BaseGame
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 # TODO: add lane/boundary constraint to h()
-# TODO: smarter way to make sure cars collide with zero control
 
 
 @dataclass(frozen=True)
@@ -160,8 +159,6 @@ class IntersectionCasadi(BaseGame):
         m = self.m
         T = self.T
         N = self.N
-        if (not show) and (not save):
-            return
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T+1)
         fig, ax = plt.subplots()
@@ -438,8 +435,8 @@ class IntersectionCasadi(BaseGame):
         r2y = x_j[1, 0] - offset * cas.sin(x_j[2, 0])
 
         FF = -(f1x - f2x)**2 - (f1y - f2y)**2 + d**2
-        FR = -(f1x - f2x)**2 - (r1y - r2y)**2 + d**2
-        RF = -(r1x - r2x)**2 - (f1y - f2y)**2 + d**2
+        FR = -(f1x - r2x)**2 - (f1y - r2y)**2 + d**2
+        RF = -(r1x - f2x)**2 - (r1y - f2y)**2 + d**2
         RR = -(r1x - r2x)**2 - (r1y - r2y)**2 + d**2
         vals = cas.vertcat(FF, FR, RF, RR)
 
@@ -464,7 +461,7 @@ def create_random_game(car_count=3, horizon=20):
         """ Make x0 for a single agent.
         hori: bool, on horizontal or vertical lane
         lane: Index of lane
-        offset: distance to intersection origin (bottom right)
+        offset: distance to intersection origin (bottom left)
         v: current speed
         heading: heading w.r.t. lane direction """
         lw = default.lane_width
@@ -484,7 +481,7 @@ def create_random_game(car_count=3, horizon=20):
     J_Qr_diag_vec = []
 
     for i in range(hori_lane_n):
-        offset = - i*5.4 + np.random.random()
+        offset = - i*5.4 - np.random.random()
         v = 2.0+np.random.random()
         x0 = make_x0(True, np.random.randint(0, default.hori_lanes), offset, v, 0.0)
         x0_vec.append(x0)
@@ -492,7 +489,7 @@ def create_random_game(car_count=3, horizon=20):
         J_Qr_diag_vec.append(np.array([0, 0.1, 0.01, 10.0]))
 
     for i in range(verti_lane_n):
-        offset = - i*5.4 + np.random.random()
+        offset = - i*5.4 - np.random.random()
         v = 2.0+np.random.random()
         x0 = make_x0(False, np.random.randint(0, default.vert_lanes), offset, v, 0.0)
         x0_vec.append(x0)

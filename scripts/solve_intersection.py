@@ -8,14 +8,14 @@ from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 i = 35
 np.random.seed(i)
-cpp = True
+cpp = False
 logger.info('Creating game...')
 game = create_random_game(car_count=8, horizon=20)
 logger.info('Setting up solver...')
@@ -33,4 +33,4 @@ logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')
 # if sol.is_optimal and sol.has_converged:
-solver.animate(sol.u, save_gif=True, save_snapshots=True)
+solver.animate(sol.u, save_gif=False, save_snapshots=False)

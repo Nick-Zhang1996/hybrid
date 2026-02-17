@@ -799,8 +799,10 @@ class RD3GCasadi(BaseSolver):
         p.e('Line Search')
 
         h_val_np = np.array(h_val, order='F').flatten(order='F')
+        h_sum = np.sum(h_val_np[h_val_np > 0])
         h_pos = np.sum(h_val_np > 0)
-        logger.info(f'{r0_norm=:.6f}, {self.reg=}, {step_size=}, {r_norm=:.6f}, {h_pos=}')
+        logger.info(
+            f'{r0_norm=:.6f}, {self.reg=}, {step_size=:.6f}, {r_norm=:.6f}, {h_sum=:.4f}, {h_pos=}')
 
         if DEBUG:
             p.s('More debug checking')
