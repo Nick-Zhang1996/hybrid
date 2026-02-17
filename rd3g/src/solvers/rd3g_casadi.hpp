@@ -129,6 +129,7 @@ protected:
   mutable Profiler<false> profiler_;
   int verbose_; // 0:error, 1:warning, 2:info, 3:debug
   bool inertia_correction_;
+  int line_search_no_progress_counter_;
 
   std::shared_ptr<spdlog::logger> logger_;
 
@@ -171,7 +172,8 @@ public:
         max_iterations_{max_iter}, 
         max_in_reg_iter_{max_in_reg_iter},
         max_in_reg_val_{max_in_reg_val},
-        verbose_(verbose) {
+        verbose_{verbose},
+        line_search_no_progress_counter_{0} {
     
     const std::string logger_name{"rd3g_casadi_cpp"};
     logger_ = spdlog::get(logger_name);
@@ -480,13 +482,14 @@ public:
     MatrixXd mu = MatrixXd::Zero(n_hi_*N_, 1);
     bool has_converged = false;
     bool is_optimal = false;
+    bool stop = false;
     Scalar residual = 1e10;
 
     int iter;
     for (iter=0; iter<max_iterations_; iter++){
-      std::tie(has_converged, is_optimal, residual) = step(x, u, lamda, mu, int_param, double_param);
+      std::tie(stop, has_converged, is_optimal, residual) = step(x, u, lamda, mu, int_param, double_param);
       logger_->info("has_converged={}, is_optimal={}, residual={:.5f}", has_converged, is_optimal, residual);
-      if (has_converged){
+      if (has_converged || stop){
         break;
       }
     }
@@ -501,8 +504,8 @@ public:
   // u_ref: m*N,T
   // lamda: n*N,T
   // mu: n_hi*N, 1
-  // Returns (has_converged, is_optimal, residual)
-  std::tuple<bool, bool, Scalar> 
+  // Returns (stop, has_converged, is_optimal, residual)
+  std::tuple<bool, bool, bool, Scalar> 
   step(Eigen::Ref<MatrixXd> x,
             Eigen::Ref<MatrixXd> u,
             Eigen::Ref<MatrixXd> lamda,
@@ -807,12 +810,15 @@ public:
     }
     if (ls_iter == line_search_max_iter_){
       reg_ = min(reg_*10.0, 0.1);
+      line_search_no_progress_counter_++;
       logger_->debug("Line Search no progress, inflating reg to {:.5f}", reg_);
     } else {
       reg_ = reg0_;
+      line_search_no_progress_counter_ = 0;
     }
     logger_->debug("Line search stopped after {}/{} iterations", ls_iter+1, line_search_max_iter_);
     logger_->debug("Step size = {:.5f}",step);
+    bool stop = line_search_no_progress_counter_ >= 2;
 
     x = new_x;
     u = new_u;
@@ -826,7 +832,7 @@ public:
     bool has_converged = new_r_norm < tolerance_;
 
     // Returns (has_converged, is_optimal, residual)
-    return {has_converged, is_optimal, new_r_norm};
+    return {stop, has_converged, is_optimal, new_r_norm};
 
   }
 
