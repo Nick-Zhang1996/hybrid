@@ -30,7 +30,6 @@ def codegen_intersection(car_count, horizon):
 
 
 if __name__ == "__main__":
-    codegen_intersection(8, 20)
     for T in [20]:
         for i in range(2, 9):
             codegen_merge(i, T)

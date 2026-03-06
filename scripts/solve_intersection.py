@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 i = 35
-np.random.seed(i)
+np.random.seed()
 cpp = False
 logger.info('Creating game...')
 game = create_random_game(car_count=8, horizon=20)

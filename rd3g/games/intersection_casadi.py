@@ -36,7 +36,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     hori_lanes: int = 2  # Number of horizontal lanes
     vert_lanes: int = 3  # Number of vertical lanes
 
-    collision_radius: float = 1.4
+    collision_radius: float = 2.0  # 1.4
     """ Minimum distance between two cars"""
 
     x0: Any = None
@@ -348,7 +348,7 @@ class IntersectionCasadi(BaseGame):
     def f(self, x_k_i, u_k_i, i_onehot):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
-            x_k_i: (n,1) State for agent i
+            x_k_i: (n,1) State for agent i [x,y,v,theta]
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
         Return:
@@ -372,13 +372,13 @@ class IntersectionCasadi(BaseGame):
 
         # RK4 Integration
         k1 = dynamics(x_k_i, u_k_i)
-        k2 = dynamics(x_k_i + 0.5 * dt * k1, u_k_i)
-        k3 = dynamics(x_k_i + 0.5 * dt * k2, u_k_i)
-        k4 = dynamics(x_k_i + dt * k3, u_k_i)
-        val = x_k_i + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+        # k2 = dynamics(x_k_i + 0.5 * dt * k1, u_k_i)
+        # k3 = dynamics(x_k_i + 0.5 * dt * k2, u_k_i)
+        # k4 = dynamics(x_k_i + dt * k3, u_k_i)
+        # val = x_k_i + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
 
         # Euler
-        # val = x_k_i + dx * dt
+        val = x_k_i + k1 * dt
         return val
 
     def h(self, x, u):
@@ -424,23 +424,26 @@ class IntersectionCasadi(BaseGame):
         assert x_i.shape == (self.n, 1)
         assert x_j.shape == (self.n, 1)
         d = self.config.get_param('collision_radius')
-        offset = 0.7
-        f1x = x_i[0, 0] + offset * cas.cos(x_i[2, 0])
-        f1y = x_i[1, 0] + offset * cas.sin(x_i[2, 0])
-        f2x = x_j[0, 0] + offset * cas.cos(x_j[2, 0])
-        f2y = x_j[1, 0] + offset * cas.sin(x_j[2, 0])
-        r1x = x_i[0, 0] - offset * cas.cos(x_i[2, 0])
-        r1y = x_i[1, 0] - offset * cas.sin(x_i[2, 0])
-        r2x = x_j[0, 0] - offset * cas.cos(x_j[2, 0])
-        r2y = x_j[1, 0] - offset * cas.sin(x_j[2, 0])
+        val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
+            x_i[1, 0] - x_j[1, 0])**2 + d**2
+        # Need to look into this double circle model
+        # offset = 0.7
+        # f1x = x_i[0, 0] + offset * cas.cos(x_i[3, 0])
+        # f1y = x_i[1, 0] + offset * cas.sin(x_i[3, 0])
+        # f2x = x_j[0, 0] + offset * cas.cos(x_j[3, 0])
+        # f2y = x_j[1, 0] + offset * cas.sin(x_j[3, 0])
+        # r1x = x_i[0, 0] - offset * cas.cos(x_i[3, 0])
+        # r1y = x_i[1, 0] - offset * cas.sin(x_i[3, 0])
+        # r2x = x_j[0, 0] - offset * cas.cos(x_j[3, 0])
+        # r2y = x_j[1, 0] - offset * cas.sin(x_j[3, 0])
 
-        FF = -(f1x - f2x)**2 - (f1y - f2y)**2 + d**2
-        FR = -(f1x - r2x)**2 - (f1y - r2y)**2 + d**2
-        RF = -(r1x - f2x)**2 - (r1y - f2y)**2 + d**2
-        RR = -(r1x - r2x)**2 - (r1y - r2y)**2 + d**2
-        vals = cas.vertcat(FF, FR, RF, RR)
-
-        val = cas.mmax(vals)
+        # FF = -(f1x - f2x)**2 - (f1y - f2y)**2 + d**2
+        # FR = -(f1x - r2x)**2 - (f1y - r2y)**2 + d**2
+        # RF = -(r1x - f2x)**2 - (r1y - f2y)**2 + d**2
+        # RR = -(r1x - r2x)**2 - (r1y - r2y)**2 + d**2
+        # vals = cas.vertcat(FF, FR, RF, RR)
+        # alpha = 10.0  # "sharpness" of the softmax
+        # val = (1.0 / alpha) * cas.log(cas.sum1(cas.exp(alpha * vals)))
         return val
 
 
@@ -481,7 +484,7 @@ def create_random_game(car_count=3, horizon=20):
     J_Qr_diag_vec = []
 
     for i in range(hori_lane_n):
-        offset = - i*10 - np.random.random()
+        offset = - i*4.0 - np.random.random()  # 5.4
         v = 2.0+np.random.random()
         x0 = make_x0(True, np.random.randint(0, default.hori_lanes), offset, v, 0.0)
         x0_vec.append(x0)
@@ -489,7 +492,7 @@ def create_random_game(car_count=3, horizon=20):
         J_Qr_diag_vec.append(np.array([0, 0.1, 0.01, 10.0]))
 
     for i in range(verti_lane_n):
-        offset = - i*10 - 4 - np.random.random()
+        offset = - i*4.0 - 2.7 - np.random.random()
         v = 2.0+np.random.random()
         x0 = make_x0(False, np.random.randint(0, default.vert_lanes), offset, v, 0.0)
         x0_vec.append(x0)

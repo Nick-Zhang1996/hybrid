@@ -26,7 +26,7 @@ for car_count in range(2, 9):
     converge_vec = []
     optimal_vec = []
     dt_vec = []
-    for i in range(50):
+    for i in range(100):
         np.random.seed(i)
         game = create_random_game(car_count=car_count, horizon=20)
         solver_config = RD3GCasadiConfig(inertia_correction=False)
@@ -82,7 +82,7 @@ print(f'{car_optimal_var_vec=}')
 # check solution iteration count
 
 # 1. Filter the vector for converged solutions and extract the iteration counts
-converged_iterations = [sol.iterations for sol]
+converged_iterations = [sol.iterations for sol in sol_vec]
 
 # 2. Plot the histogram
 plt.figure(figsize=(8, 5))
