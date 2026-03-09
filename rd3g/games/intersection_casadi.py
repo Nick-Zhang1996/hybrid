@@ -13,8 +13,7 @@ from matplotlib.animation import FuncAnimation
 import casadi as cas
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.base_casadi_game import CasadiGameConfig
-from rd3g.core.base_jax_game import BaseGame
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -58,7 +57,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
         return super().__post_init__()
 
 
-class IntersectionCasadi(BaseGame):
+class IntersectionCasadi(CasadiGame):
     ''' Kinematic Bicycle Intersection Game, with CasADi
         u = [throttle, steering]
         x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)

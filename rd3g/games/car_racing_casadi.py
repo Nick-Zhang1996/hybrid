@@ -13,12 +13,12 @@ import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 import casadi as cas
 
+from buzzracer.types import CurvilinearState, CartesianState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car import CarConfig
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.base_casadi_game import CasadiGameConfig
-from rd3g.core.base_jax_game import BaseGame
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -27,12 +27,12 @@ logger.setLevel(logging.INFO)
 @dataclass(frozen=True)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
-    T: int = 0
-    dt: float = 0.1
+    T: int = 20
+    dt: float = 0.05
     N: int = 3
     n: int = 5
     m: int = 2
-    n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_hi: int = 3*20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
 
     collision_radius: float = 2.0  # TODO use BuzzRacer size
     """ Minimum distance between two cars"""
@@ -49,7 +49,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
         return super().__post_init__()
 
 
-class CarRacingCasadi(BaseGame):
+class CarRacingCasadi(CasadiGame):
     ''' Car Racing Game with Kinematic Bicycle Model, with CasADi
         u = [steering, throttle]
         x = [s, n, phi, v_forward, v_sideway]
@@ -75,7 +75,7 @@ class CarRacingCasadi(BaseGame):
 
         # n_hi is a new concept
         self.n_hi = config.n_hi
-        self.car_param = CarConfig.porsche_18
+        self.car_param = CarConfig.porsche_18.value
 
         # bounds for visualization
         self.visual_x_lim = [-10, 10]
@@ -85,7 +85,12 @@ class CarRacingCasadi(BaseGame):
 
         s_vec = [track.data.s_vec.tolist()]
         c_vec = track.data.curvature_vec.tolist()
-        
+
+        s = np.array(s_vec[0])
+        c = np.array(c_vec)
+        assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
+        assert not np.isnan(c).any(), "No NaNs"
+
         # Arguments: (name, plugin, grid, values)
         # 'bspline' creates a cubic B-spline by default, ensuring smooth gradients.
         self.curvature_fun = cas.interpolant('kappa_spline', 'bspline', s_vec, c_vec)
@@ -119,15 +124,28 @@ class CarRacingCasadi(BaseGame):
 
         fig, ax = plt.subplots()
         p = track.data.left_boundary_vec
-        ax.plot(p[:,0], p[:,1])
+        ax.plot(p[:, 0], p[:, 1])
         p = track.data.right_boundary_vec
-        ax.plot(p[:,0], p[:,1])
+        ax.plot(p[:, 0], p[:, 1])
         p = track.data.r_vec
-        ax.plot(p[:,0], p[:,1])
-        # for i in range(self.N):
-        #     xx = x[0, i, :]
-        #     yy = x[1, i, :]
-        #     ax.plot(-yy, xx, '*-')
+        ax.plot(p[:, 0], p[:, 1])
+        print(x)
+
+        for i in range(N):
+            cart_traj = []
+            for k in range(T+1):
+                curv = CurvilinearState(progress=x[0, i, k],
+                                        lateral_err=x[1, i, k],
+                                        heading_err=x[2, i, k],
+                                        v_forward=x[3, i, k],
+                                        v_sideway=x[4, i, k],
+                                        rel_omega=0.0)
+                cart = track.curv_to_cart(curv)
+                cart_traj.append(cart)
+
+            xx = [e.x for e in cart_traj]
+            yy = [e.y for e in cart_traj]
+            ax.plot(xx, yy, '*-')
         ax.set_aspect('equal', adjustable='box')
         if save:
             filename = resolve_logname(suffix='gif')
@@ -136,6 +154,7 @@ class CarRacingCasadi(BaseGame):
         if show:
             plt.show()
 
+    # TODO refactor from below
     def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
@@ -152,98 +171,45 @@ class CarRacingCasadi(BaseGame):
         assert x.shape == (n, N, T+1)
         fig, ax = plt.subplots()
 
-        if self.sprite_visualization:
-            car_scale = self.car_scale
-            # draw car sprite
-            car_pose_vec = []
-            for k in range(T+1):
-                states = x[:, :, k]
-                car_pose_vec.append(
-                    [[-states[1][i], states[0][i], states[3][i] + np.pi / 2]
-                     for i in range(self.config.N)])
+        car_scale = self.car_scale
+        # draw car sprite
+        car_pose_vec = []
+        for k in range(T+1):
+            states = x[:, :, k]
+            car_pose_vec.append(
+                [[-states[1][i], states[0][i], states[3][i] + np.pi / 2]
+                    for i in range(self.config.N)])
 
-            im_vec = []
+        im_vec = []
+        for i in range(self.config.N):
+            rotated_car_img = np.clip(
+                rotate(self.car_img_vec[i % len(self.car_img_vec)],
+                       degrees(car_pose_vec[0][i][2]),
+                       reshape=True), 0.0, 1.0)
+            L, W, _ = rotated_car_img.shape
+            im = ax.imshow(rotated_car_img,
+                           extent=[
+                               car_pose_vec[0][i][0] - W * car_scale,
+                               car_pose_vec[0][i][0] + W * car_scale,
+                               car_pose_vec[0][i][1] - L * car_scale,
+                               car_pose_vec[0][i][1] + L * car_scale
+                           ])
+            im_vec.append(im)
+
+        def update(frame):
             for i in range(self.config.N):
                 rotated_car_img = np.clip(
                     rotate(self.car_img_vec[i % len(self.car_img_vec)],
-                           degrees(car_pose_vec[0][i][2]),
+                           degrees(car_pose_vec[frame][i][2]),
                            reshape=True), 0.0, 1.0)
                 L, W, _ = rotated_car_img.shape
-                im = ax.imshow(rotated_car_img,
-                               extent=[
-                                   car_pose_vec[0][i][0] - W * car_scale,
-                                   car_pose_vec[0][i][0] + W * car_scale,
-                                   car_pose_vec[0][i][1] - L * car_scale,
-                                   car_pose_vec[0][i][1] + L * car_scale
-                               ])
-                im_vec.append(im)
-
-            def update(frame):
-                for i in range(self.config.N):
-                    rotated_car_img = np.clip(
-                        rotate(self.car_img_vec[i % len(self.car_img_vec)],
-                               degrees(car_pose_vec[frame][i][2]),
-                               reshape=True), 0.0, 1.0)
-                    L, W, _ = rotated_car_img.shape
-                    im_vec[i].set_data(rotated_car_img)
-                    im_vec[i].set_extent(
-                        (car_pose_vec[frame][i][0] - W * car_scale,
-                         car_pose_vec[frame][i][0] + W * car_scale,
-                         car_pose_vec[frame][i][1] - L * car_scale,
-                         car_pose_vec[frame][i][1] + L * car_scale))
-                return im_vec
-        else:
-            # Show cars as rectangular blocks
-            car_pos_vec = []
-            car_angle_vec = []
-            box_vec = []
-            circle_vec = []
-            color_vec = ['red', 'green', 'blue', 'black']
-            color_vec = [color_vec[i % len(color_vec)] for i in range(self.config.N)]
-            # prepare smoothed animation
-            for i, color in zip(range(self.config.N), color_vec):
-                # interpolate for smooth graphics
-                # tt = np.linspace(0,self.config.T*self.config.dt,50)
-                tt = np.linspace(0, self.config.dt * self.config.T, self.config.T + 1)
-                # for plt.Rectangle, we offset position so this corresponds to top left corner
-                # also flip x axis
-                xx = x[0, i, :] - 1.0
-                yy = -(x[1, i, :]) - 0.5
-                angle = x[3, i, :]
-                xx_fun = interpolate.interp1d(tt, xx)
-                yy_fun = interpolate.interp1d(tt, yy)
-                angle_fun = interpolate.interp1d(tt, angle)
-
-                pos_vec = np.vstack([yy_fun(tt), xx_fun(tt)]).T
-                angle_vec = angle_fun(tt) / np.pi * 180.0
-                car_angle_vec.append(angle_vec)
-                car_pos_vec.append(pos_vec)
-                box_vec.append(
-                    plt.Rectangle(pos_vec[0],
-                                  1,
-                                  2,
-                                  angle=angle_vec[0],
-                                  color=color,
-                                  rotation_point='center'))
-                circle_vec.append(
-                    plt.Circle(pos_vec[0] + np.array([0.5, 1.0]),
-                               radius=(self.config.collision_radius) / 2,
-                               color=color,
-                               fill=False))
-
-            def update(frame):
-                for i in range(self.N):
-                    box_vec[i].set_xy(car_pos_vec[i][frame])
-                    box_vec[i].set_angle(car_angle_vec[i][frame])
-                    circle_vec[i].set_center(car_pos_vec[i][frame] +
-                                             np.array([0.5, 1.0]))
-                return box_vec
-
-            # Add the boxes to the plot
-            for box in box_vec:
-                ax.add_patch(box)
-            for circ in circle_vec:
-                ax.add_patch(circ)
+                im_vec[i].set_data(rotated_car_img)
+                im_vec[i].set_extent(
+                    (car_pose_vec[frame][i][0] - W * car_scale,
+                        car_pose_vec[frame][i][0] + W * car_scale,
+                        car_pose_vec[frame][i][1] - L * car_scale,
+                        car_pose_vec[frame][i][1] + L * car_scale))
+            return im_vec
 
         # fine-tune dark background to mimic tarmac
         # Set the background color of the plot (axes background)
@@ -317,6 +283,8 @@ class CarRacingCasadi(BaseGame):
         u_k_i.shape (m,1) u_k_i
         i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
         """
+        # TODO
+        return 0.0
         assert x_k.shape == (self.config.n, self.config.N)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
@@ -353,36 +321,37 @@ class CarRacingCasadi(BaseGame):
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
-        state = SimpleNamespace(progress=x_k_i[0,0],
-                                lateral_err=x_k_i[1,0],
-                                heading_err=x_k_i[2,0],
-                                v_forward=x_k_i[3,0])
-        control = SimpleNamespace(steering=u_k_i[0,0], control=u_k_i[1,0])
-        # TODO
-        curvature=self.curvature_fun(state.progress)
-        
-        beta = np.arctan(np.tan(control.steering) * param.lr / (param.lf + param.lr))
+        state = SimpleNamespace(progress=x_k_i[0, 0],
+                                lateral_err=x_k_i[1, 0],
+                                heading_err=x_k_i[2, 0],
+                                v_forward=x_k_i[3, 0],
+                                v_sideway=x_k_i[4, 0])
+        control = SimpleNamespace(steering=u_k_i[0, 0], throttle=u_k_i[1, 0])
+        curvature = self.curvature_fun(state.progress)
 
-        dsdt = (state.v_forward * np.cos(state.heading_err) - state.v_sideway *
-                np.sin(state.heading_err))/(1-state.lateral_err*curvature)
-        dndt = state.v_forward * np.sin(state.heading_err) + \
-            state.v_sideway * np.cos(state.heading_err)
+        beta = cas.arctan(cas.tan(control.steering) * param.lr / (param.lf + param.lr))
+
+        dsdt = (state.v_forward * cas.cos(state.heading_err) - state.v_sideway *
+                cas.sin(state.heading_err))/(1-state.lateral_err*curvature)
+        dndt = state.v_forward * cas.sin(state.heading_err) + \
+            state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
-        acc_rw = 6.17 * (control.throttle - state.v_forward / 15.2 - 0.333) * (state.v_forward > 0)
-        acc_cg = acc_rw / np.cos(beta)
-        d_v_forward_dt = acc_cg * np.cos(beta)
-        d_v_sideway_dt = acc_cg * np.sin(beta)
+        # TODO new sysid
+        acc_rw = 6.17 * (control.throttle - state.v_forward / 15.2 - 0.333)
+        acc_cg = acc_rw / cas.cos(beta)
+        d_v_forward_dt = acc_cg * cas.cos(beta)
+        d_v_sideway_dt = acc_cg * cas.sin(beta)
 
-        total_v = np.sqrt(state.v_forward**2 + state.v_sideway**2)
-        d_heading_dt = total_v / param.lr * np.sin(beta)
+        total_v = cas.sqrt(state.v_forward**2 + state.v_sideway**2)
+        d_heading_dt = total_v / param.lr * cas.sin(beta)
         d_rel_heading_dt = d_heading_dt - curvature * dsdt
 
         dt = self.config.get_param('dt')
-        progress=state.progress + dsdt * dt,
-        lateral_err=state.lateral_err + dndt * dt,
-        heading_err=state.heading_err + d_rel_heading_dt * dt,
-        v_forward=state.v_forward + d_v_forward_dt * dt,
-        v_sideway=state.v_sideway + d_v_sideway_dt,
+        progress = state.progress + dsdt * dt
+        lateral_err = state.lateral_err + dndt * dt
+        heading_err = state.heading_err + d_rel_heading_dt * dt
+        v_forward = state.v_forward + d_v_forward_dt * dt
+        v_sideway = state.v_sideway + d_v_sideway_dt * dt
         next_x = cas.vertcat(progress, lateral_err, heading_err, v_forward, v_sideway)
 
         return next_x
@@ -396,6 +365,7 @@ class CarRacingCasadi(BaseGame):
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
+        # TODO
         h_vec = []
         for i in range(self.N):
             hi_vec = []
@@ -426,6 +396,7 @@ class CarRacingCasadi(BaseGame):
             h_val: (1,1), h_val <= 0 means no collision
 
         """
+        # TODO
         # car distance larger than 1.2 normalized
         assert x_i.shape == (self.n, 1)
         assert x_j.shape == (self.n, 1)

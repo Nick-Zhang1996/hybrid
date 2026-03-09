@@ -1,5 +1,7 @@
 """ Prototype to solve car racing game with RD3G CasADi """
 import logging
+from math import radians
+
 import numpy as np
 
 from buzzracer.tracks.track import TrackConfig
@@ -18,7 +20,8 @@ logger.setLevel(logging.INFO)
 np.random.seed(5)
 # np.random.seed()
 cpp = True
-game_config = CarRacingCasadiConfig(x0=np.zeros((4,3)))
+x0_i = np.array([[1.0, 0.1, radians(10), 1.0, 0.0]])
+game_config = CarRacingCasadiConfig(x0=np.zeros((5, 3)))
 n = game_config.n
 N = game_config.N
 m = game_config.m
@@ -26,6 +29,8 @@ T = game_config.T
 track_config = TrackConfig()
 track = NascarTrack(track_config)
 game = CarRacingCasadi(game_config, track)
-u = np.zeros((m,N,T))
-x = np.zeros((n,N,T+1))
-game.visualize(u, x)
+solver_config = RD3GCasadiConfig(inertia_correction=True)
+solver = RD3GCasadi(solver_config, game, cpp_only=False)
+u = np.zeros((m, N, T))
+# x = np.zeros((n, N, T+1))
+solver.visualize(u)

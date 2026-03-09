@@ -14,8 +14,7 @@ from matplotlib.animation import FuncAnimation
 import casadi as cas
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.base_casadi_game import CasadiGameConfig
-from rd3g.core.base_jax_game import BaseGame
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
 
 logger = logging.getLogger('CarMergeKinematicBicycle')
 logger.setLevel(logging.INFO)
@@ -52,7 +51,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
         return super().__post_init__()
 
 
-class CarMergeKinematicBicycleCasadi(BaseGame):
+class CarMergeKinematicBicycleCasadi(CasadiGame):
     ''' Kinematic Bicycle Merging Game, with CasADi
         u = [throttle, steering]
         x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
@@ -308,50 +307,11 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
-    def F(self, x_k, u_k):
-        """ Dynamics for all agents
-        Args:
-            x_k: (n,N)
-            u_k: (m,N)
-        Return:
-            x_k_next: (n,N)
-        """
-        x_k_next_vec = []
-        for i in range(self.N):
-            i_onehot = cas.SX.eye(self.N)[:, i]
-            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
-        retval = cas.horzcat(*x_k_next_vec)
-        assert retval.shape == (self.n, self.N)
-        return retval
-
-    def rollout(self, x0, u):
-        """ Rollout control to get state trajectory, casadi compatible
-        Args:
-            x0: (n,N)
-            u: (m*N, T), u0..u_T-1
-        Return:
-            X: (n*N, T) x1..xT
-        """
-        assert u.shape == (self.m*self.N, self.T)
-        assert x0.shape == (self.n, self.N)
-
-        x_k = cas.SX.sym('x_k_', (self.n*self.N))
-        u_k = cas.SX.sym('u_k_', (self.m*self.N))
-        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.n, self.N),
-                                  cas.reshape(u_k, self.m, self.N)))
-        config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
-        config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
-        accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
-        rollout_fun = accum_fun.mapaccum(self.T)
-
-        X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
-        assert X.shape == (self.n*self.N, self.T)
-        return X
-
     # pylint: disable-next=arguments-renamed
+
     def J(self, x_k, u_k_i, i_onehot):
         """
-        Stage cost for an agent, given x,u
+        Stage cost for an agent, given
         x_k.shape (n,N) x_k_i
         u_k_i.shape (m,1) u_k_i
         i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
