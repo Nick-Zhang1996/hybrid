@@ -1,6 +1,9 @@
-""" CasADi infrastructure """
+""" Base class for CasADi Game """
+# BaseGame is obselete and this will be the new BaseGame after refactor
+
 import logging
 from dataclasses import dataclass, field, fields
+from abc import ABC, abstractmethod
 
 import casadi as cas
 import numpy as np
@@ -114,3 +117,117 @@ class CasadiGameConfig(BaseGameConfig):
 
     def get_double_param_sx(self):
         return self._double_param_sx
+
+
+class CasadiGame(ABC):
+    """Base class for a Differential Dynamic Game Problem"""
+
+    def __init__(self, config: BaseGameConfig):
+        self.config = config
+        self.dt = config.dt
+        self.T = config.T
+        self.N = config.N
+        self.n = config.n
+        self.m = config.m
+        self.x0 = config.x0
+
+    @abstractmethod
+    def visualize(self, u, x, show=True, save=False):
+        """ Visualize the game with given initial state (x0) and control (u) in a single frame.
+        Args:
+            u: (m,N,T)
+            x: (n, N, T+1)
+            show: if True, visualize with matplotlib
+            save: if True, save as png
+        """
+
+    @abstractmethod
+    def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
+        """ Animate the game with given initial state (x0) and control (u).
+        Args:
+            u: (m,N,T)
+            x: (n, N, T+1)
+            show: if True, visualize with matplotlib
+            save_gif:
+            save_snapshots:
+        """
+
+    def F(self, x_k, u_k):
+        """ Dynamics for all agents
+        Args:
+            x_k: (n,N)
+            u_k: (m,N)
+        Return:
+            x_k_next: (n,N)
+        """
+        x_k_next_vec = []
+        for i in range(self.N):
+            i_onehot = cas.SX.eye(self.N)[:, i]
+            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
+        retval = cas.horzcat(*x_k_next_vec)
+        assert retval.shape == (self.n, self.N)
+        return retval
+
+    def rollout(self, x0, u):
+        """ Rollout control to get state trajectory, casadi compatible
+        Args:
+            x0: (n,N)
+            u: (m*N, T), u0..u_T-1
+        Return:
+            X: (n*N, T) x1..xT
+        """
+        assert u.shape == (self.m*self.N, self.T)
+        assert x0.shape == (self.n, self.N)
+
+        x_k = cas.SX.sym('x_k_', (self.n*self.N))
+        u_k = cas.SX.sym('u_k_', (self.m*self.N))
+        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.n, self.N),
+                                  cas.reshape(u_k, self.m, self.N)))
+        config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
+        config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
+        accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
+        rollout_fun = accum_fun.mapaccum(self.T)
+
+        X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
+        assert X.shape == (self.n*self.N, self.T)
+        return X
+
+    @abstractmethod
+    def J(self, x_k, u_k_i, i_onehot):
+        """
+        Stage cost for an agent
+        Args:
+            x_k: (n,N) state for all agents at stage k
+            u_k_i: (m, 1) control for agent i at stage k
+            i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
+        Return:
+            val: stage cost for agent i at stage k
+        """
+
+    @abstractmethod
+    # pylint: disable-next=arguments-renamed
+    def Jfi(self, x_T, i_onehot):
+        """ Final cost"""
+        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
+
+    @abstractmethod
+    def f(self, x, u, i):
+        """ Dynamics function x_{t+1} = f(x_t,u,i)
+        Args:
+            x_k_i: (n,1) State for agent i
+            u_k_i: (m,1) Control for agent i
+            i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+        Return:
+            (n,1) The next state, progressed by self.dt
+        """
+
+    @abstractmethod
+    def h(self, x, u):
+        """ Construct the inequality constraint function.
+        h() is a mapping from (x,u) to all constraints.
+        Args:
+            x: (n*N,T), states, casadi.SX symbolic variable
+            u: (m*N,T), controls, casadi.SX symbolic variable
+        Returns:
+            h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
+        """

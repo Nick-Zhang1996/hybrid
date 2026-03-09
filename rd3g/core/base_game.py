@@ -1,4 +1,6 @@
-""" Base class for Differential Dynamic Game Problem"""
+""" Base class for Differential Dynamic Game Problem. 
+This is now OBSELETE and only used for the original RD3G solver. 
+New dev should use CasadiGame instead. """
 from abc import ABC, abstractmethod
 from typing import Any
 from functools import lru_cache
