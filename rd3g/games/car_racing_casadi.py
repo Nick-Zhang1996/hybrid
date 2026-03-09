@@ -78,10 +78,12 @@ class CarRacingCasadi(CasadiGame):
         self.car_param = CarConfig.porsche_18.value
 
         # bounds for visualization
-        self.visual_x_lim = [-10, 10]
-        self.visual_y_lim = [-10, 10]
 
-        self.car_scale = 0.0045 / 2
+        self.visual_x_lim = [track.data.x_min, track.data.x_max]
+        self.visual_y_lim = [track.data.y_min, track.data.y_max]
+
+        # Image wheelbase: 300px, car wheelbase 98e-3 m
+        self.car_scale = 98e-3 / 300
 
         s_vec = [track.data.s_vec.tolist()]
         c_vec = track.data.curvature_vec.tolist()
@@ -124,12 +126,11 @@ class CarRacingCasadi(CasadiGame):
 
         fig, ax = plt.subplots()
         p = track.data.left_boundary_vec
-        ax.plot(p[:, 0], p[:, 1])
+        ax.plot(p[:, 0], p[:, 1], color='k')
         p = track.data.right_boundary_vec
-        ax.plot(p[:, 0], p[:, 1])
+        ax.plot(p[:, 0], p[:, 1], color='k')
         p = track.data.r_vec
-        ax.plot(p[:, 0], p[:, 1])
-        print(x)
+        ax.plot(p[:, 0], p[:, 1], color='g')
 
         for i in range(N):
             cart_traj = []
@@ -161,38 +162,54 @@ class CarRacingCasadi(CasadiGame):
             u: (m,N,T)
             x: (n, N, T+1)
         """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
+        n = self.config.n
+        m = self.config.m
+        T = self.config.T
+        N = self.config.N
+        track = self.track
+        car_imgs = self.car_img_vec
+
         if (not show) and (not save_gif) and (not save_snapshots):
             return
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T+1)
-        fig, ax = plt.subplots()
 
         car_scale = self.car_scale
-        # draw car sprite
-        car_pose_vec = []
-        for k in range(T+1):
-            states = x[:, :, k]
-            car_pose_vec.append(
-                [[-states[1][i], states[0][i], states[3][i] + np.pi / 2]
-                    for i in range(self.config.N)])
+        cart_traj_vec = []
+        for i in range(N):
+            cart_traj = []
+            for k in range(T+1):
+                curv = CurvilinearState(progress=x[0, i, k],
+                                        lateral_err=x[1, i, k],
+                                        heading_err=x[2, i, k],
+                                        v_forward=x[3, i, k],
+                                        v_sideway=x[4, i, k],
+                                        rel_omega=0.0)
+                cart = track.curv_to_cart(curv)
+                cart_traj.append(cart)
+            cart_traj_vec.append(cart_traj)
+
+        fig, ax = plt.subplots()
+        p = track.data.left_boundary_vec
+        ax.plot(p[:, 0], p[:, 1], color='k')
+        p = track.data.right_boundary_vec
+        ax.plot(p[:, 0], p[:, 1], color='k')
+        p = track.data.r_vec
+        ax.plot(p[:, 0], p[:, 1], color='g')
 
         im_vec = []
         for i in range(self.config.N):
             rotated_car_img = np.clip(
                 rotate(self.car_img_vec[i % len(self.car_img_vec)],
-                       degrees(car_pose_vec[0][i][2]),
+                       degrees(cart_traj_vec[i][0].heading),
                        reshape=True), 0.0, 1.0)
             L, W, _ = rotated_car_img.shape
             im = ax.imshow(rotated_car_img,
                            extent=[
-                               car_pose_vec[0][i][0] - W * car_scale,
-                               car_pose_vec[0][i][0] + W * car_scale,
-                               car_pose_vec[0][i][1] - L * car_scale,
-                               car_pose_vec[0][i][1] + L * car_scale
+                               cart_traj_vec[i][0].x - W/2 * car_scale,
+                               cart_traj_vec[i][0].x + W/2 * car_scale,
+                               cart_traj_vec[i][0].y - L/2 * car_scale,
+                               cart_traj_vec[i][0].y + L/2 * car_scale
                            ])
             im_vec.append(im)
 
@@ -200,34 +217,20 @@ class CarRacingCasadi(CasadiGame):
             for i in range(self.config.N):
                 rotated_car_img = np.clip(
                     rotate(self.car_img_vec[i % len(self.car_img_vec)],
-                           degrees(car_pose_vec[frame][i][2]),
+                           degrees(cart_traj_vec[i][frame].heading),
                            reshape=True), 0.0, 1.0)
                 L, W, _ = rotated_car_img.shape
                 im_vec[i].set_data(rotated_car_img)
                 im_vec[i].set_extent(
-                    (car_pose_vec[frame][i][0] - W * car_scale,
-                        car_pose_vec[frame][i][0] + W * car_scale,
-                        car_pose_vec[frame][i][1] - L * car_scale,
-                        car_pose_vec[frame][i][1] + L * car_scale))
+                    (cart_traj_vec[i][frame].x - W/2 * car_scale,
+                        cart_traj_vec[i][frame].x + W/2 * car_scale,
+                        cart_traj_vec[i][frame].y - L/2 * car_scale,
+                        cart_traj_vec[i][frame].y + L/2 * car_scale))
             return im_vec
 
         # fine-tune dark background to mimic tarmac
         # Set the background color of the plot (axes background)
         ax.set_facecolor((54 / 255, 69 / 255, 79 / 255))
-
-        # lane markings
-        # boundary lines
-        ax.vlines(x=-self.config.track_width,
-                  ymin=self.visual_y_lim[0],
-                  ymax=self.visual_y_lim[1],
-                  colors='white')
-        ax.vlines(x=self.config.track_width,
-                  ymin=self.visual_y_lim[0],
-                  ymax=self.visual_y_lim[1],
-                  colors='white')
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i, ymax=i + 1, colors='white')
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
