@@ -20,8 +20,9 @@ logger.setLevel(logging.INFO)
 np.random.seed(5)
 # np.random.seed()
 cpp = True
-x0_i = np.array([[1.0, 0.1, radians(10), 1.0, 0.0]])
-game_config = CarRacingCasadiConfig(x0=np.zeros((5, 3)))
+x0_i = np.array([[2.8, 0.1, radians(10), 1.0, 0.0]], order='F').T
+x0 = np.hstack([x0_i, x0_i, x0_i])
+game_config = CarRacingCasadiConfig(x0=x0)
 n = game_config.n
 N = game_config.N
 m = game_config.m

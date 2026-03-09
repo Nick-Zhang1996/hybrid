@@ -318,6 +318,7 @@ class CarRacingCasadi(CasadiGame):
 
         this problem has homogeneous agents, so [i] is irrelevant"""
         param = self.car_param
+        track = self.track
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
@@ -327,7 +328,7 @@ class CarRacingCasadi(CasadiGame):
                                 v_forward=x_k_i[3, 0],
                                 v_sideway=x_k_i[4, 0])
         control = SimpleNamespace(steering=u_k_i[0, 0], throttle=u_k_i[1, 0])
-        curvature = self.curvature_fun(state.progress)
+        curvature = self.curvature_fun(state.progress % track.data.raceline_len_m)
 
         beta = cas.arctan(cas.tan(control.steering) * param.lr / (param.lf + param.lr))
 
@@ -337,7 +338,8 @@ class CarRacingCasadi(CasadiGame):
             state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
         # TODO new sysid
-        acc_rw = 6.17 * (control.throttle - state.v_forward / 15.2 - 0.333)
+        # acc_rw = 6.17 * (control.throttle - state.v_forward / 15.2 - 0.333)
+        acc_rw = control.throttle * 3.0
         acc_cg = acc_rw / cas.cos(beta)
         d_v_forward_dt = acc_cg * cas.cos(beta)
         d_v_sideway_dt = acc_cg * cas.sin(beta)
