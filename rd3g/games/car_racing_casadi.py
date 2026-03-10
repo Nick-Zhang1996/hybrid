@@ -2,7 +2,7 @@
 import os
 import logging
 from typing import Any
-from math import degrees
+from math import degrees, radians
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -16,6 +16,8 @@ import casadi as cas
 from buzzracer.types import CurvilinearState, CartesianState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car import CarConfig
+from buzzracer.tracks.track import TrackConfig
+from buzzracer.tracks.nascar_track import NascarTrack
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
 from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
@@ -34,11 +36,17 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     m: int = 2
     n_hi: int = 3*20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
 
-    collision_radius: float = 2.0  # TODO use BuzzRacer size
+    collision_radius: float = 80e-3
     """ Minimum distance between two cars"""
+    double_circle_h: bool = False
+    """ Use two circles instead of one for collision"""
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
+    target_x_ref: Any = None
+    """ Target state for all agents, dim: (n,N)"""
+    J_Qr: Any = None
+    """ Cost matrix for tracking reference state dim: (n,n)"""
     J_R: Any = None
     """ Cost matrix for control effort dim: (m,m)"""
 
@@ -46,6 +54,9 @@ class CarRacingCasadiConfig(CasadiGameConfig):
         assert self.x0.shape == (self.n, self.N), (
             'Incorrect self.x0 dimension, '
             f'should be {(self.n, self.N)}, but got {self.x0.shape}')
+        assert self.target_x_ref.shape == (self.n, self.N)
+        assert self.J_Qr.shape == (self.n, self.n)
+        assert self.J_R.shape == (self.m, self.m)
         return super().__post_init__()
 
 
@@ -95,7 +106,13 @@ class CarRacingCasadi(CasadiGame):
 
         # Arguments: (name, plugin, grid, values)
         # 'bspline' creates a cubic B-spline by default, ensuring smooth gradients.
-        self.curvature_fun = cas.interpolant('kappa_spline', 'bspline', s_vec, c_vec)
+        # 'linear' creates a linear lookup, simplifying gradient
+        k_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
+        s = cas.MX.sym('s')
+        # Bspline has complex derivative, the generated c++ file is massive (4M liens)
+        # Disable gradient here, in our experience makes little difference to performance
+        opts = {'is_diff_in': [False], 'is_diff_out': [False]}
+        self.curvature_fun = cas.Function('curvature_no_grad', [s], [k_fun(s)], opts)
 
         color_names = [
             'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan',
@@ -155,7 +172,6 @@ class CarRacingCasadi(CasadiGame):
         if show:
             plt.show()
 
-    # TODO refactor from below
     def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
@@ -279,6 +295,7 @@ class CarRacingCasadi(CasadiGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
+    # TODO refactor from below
     def J(self, x_k, u_k_i, i_onehot):
         """
         Stage cost for an agent, given x,u
@@ -286,8 +303,6 @@ class CarRacingCasadi(CasadiGame):
         u_k_i.shape (m,1) u_k_i
         i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
         """
-        # TODO
-        return 0.0
         assert x_k.shape == (self.config.n, self.config.N)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
@@ -297,21 +312,19 @@ class CarRacingCasadi(CasadiGame):
         J_R = self.config.get_param('J_R')
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
-        M = np.array([[1, 0, 0, 0]], order='F')  # matrix to pick out x coord
 
-        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i + M @ x_k_i - cas.sum(M @ x_k)
+        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i
         return val
 
-    # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    # pylint: disable-next=arguments-renamed
     def f(self, x_k_i, u_k_i, i_onehot):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
             u = [steering, throttle]
             x = [s, n, phi, v_forward, v_sideway]
+            NOTE: 0 < s < track.data.raceline_len_m
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
@@ -321,7 +334,6 @@ class CarRacingCasadi(CasadiGame):
 
         this problem has homogeneous agents, so [i] is irrelevant"""
         param = self.car_param
-        track = self.track
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
@@ -331,7 +343,7 @@ class CarRacingCasadi(CasadiGame):
                                 v_forward=x_k_i[3, 0],
                                 v_sideway=x_k_i[4, 0])
         control = SimpleNamespace(steering=u_k_i[0, 0], throttle=u_k_i[1, 0])
-        curvature = self.curvature_fun(state.progress % track.data.raceline_len_m)
+        curvature = self.curvature_fun(state.progress)
 
         beta = cas.arctan(cas.tan(control.steering) * param.lr / (param.lf + param.lr))
 
@@ -370,42 +382,108 @@ class CarRacingCasadi(CasadiGame):
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
-        # TODO
         h_vec = []
         for i in range(self.N):
             hi_vec = []
-            # Collision constraint collison_h(xi, xj) N*T
+            # Collision constraint collison_h(xi, xj) 4*N*T
             for k in range(1, self.T+1):
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
                 xk = cas.reshape(x[:, k-1], self.n, self.N)
                 h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
-                h_vals[i] = -1
+                # TODO remove this dummy collision
+                if self.config.double_circle_h:
+                    h_vals[i] = cas.SX.zeros(4, 1)
+                else:
+                    h_vals[i] = 0.0
                 h_vals = cas.vertcat(*h_vals)
-                assert h_vals.shape == (self.N, 1)
-                hi_vec.append(h_vals)  # N, agent i vs everyone (N)
+                if self.config.double_circle_h:
+                    assert h_vals.shape == (self.N*4, 1)
+                else:
+                    assert h_vals.shape == (self.N, 1)
+                hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N)
             # Additional constraints for agent i, None here
-            h_vec.append(cas.vertcat(*hi_vec))  # N*T
+            h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.n_hi, self.N)
+        assert h_vec.shape == (self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
         return h_vec
 
     def collision_h(self, x_i, x_j):
-        """ Collision constraint for x_i, anx x_j agent, h <= 0
+        """ Collision constraints for x_i, anx x_j agent, h <= 0
+        Approximate each car as two tangent circles. Creates 4 constraints in total
         Args:
             x_i: (n,1) State of i at time k
             x_j: (n,1) State of j at time k
         Return:
-            h_val: (1,1), h_val <= 0 means no collision
-
+            h_val: (4,1), h_val <= 0 means no collision
         """
-        # TODO
         # car distance larger than 1.2 normalized
         assert x_i.shape == (self.n, 1)
         assert x_j.shape == (self.n, 1)
-        collision_radius = self.config.get_param('collision_radius')
-        val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
-            x_i[1, 0] - x_j[1, 0])**2 + collision_radius**2
-        return val
+        d = self.config.get_param('collision_radius')
+
+        # x = [s, n, phi, v_forward, v_sideway]
+        if self.config.double_circle_h:
+            offset = 45e-3
+            f1x = x_i[0, 0] + offset * cas.cos(x_i[2, 0])
+            f1y = x_i[1, 0] + offset * cas.sin(x_i[2, 0])
+            f2x = x_j[0, 0] + offset * cas.cos(x_j[2, 0])
+            f2y = x_j[1, 0] + offset * cas.sin(x_j[2, 0])
+            r1x = x_i[0, 0] - offset * cas.cos(x_i[2, 0])
+            r1y = x_i[1, 0] - offset * cas.sin(x_i[2, 0])
+            r2x = x_j[0, 0] - offset * cas.cos(x_j[2, 0])
+            r2y = x_j[1, 0] - offset * cas.sin(x_j[2, 0])
+
+            FF = -(f1x - f2x)**2 - (f1y - f2y)**2 + d**2
+            FR = -(f1x - r2x)**2 - (f1y - r2y)**2 + d**2
+            RF = -(r1x - f2x)**2 - (r1y - f2y)**2 + d**2
+            RR = -(r1x - r2x)**2 - (r1y - r2y)**2 + d**2
+            vals = cas.vertcat(FF, FR, RF, RR)
+        else:
+            # Single circle check center to center distance
+            vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] - x_j[1, 0])**2 + d**2
+        return vals
+
+
+def create_random_game(car_count=3, horizon=20):
+    """ Create a Car Racing Game instance with random initial states"""
+    default = CarRacingCasadiConfig
+    T = horizon
+    N: int = car_count
+    n: int = default.n
+    m: int = default.m
+
+    # x = [s, n, phi, v_forward, v_sideway]
+    J_Qr = np.diag([0, 5.0, 0.1, 1.0, 0.1])
+    J_R = np.eye(m) * 0.5
+
+    # TODO resample if cars collide
+    s_vec = np.random.uniform(low=0.0, high=1.0, size=N)
+    v_vec = np.random.uniform(low=1.0, high=2.0, size=N)
+    phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
+    n_vec = np.random.uniform(low=-0.3, high=0.3, size=N)
+    vs_vec = np.zeros(N)
+
+    # n, N
+    x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
+    x_ref = np.zeros((n, N))
+    x_ref[3, :] = v_vec  # target initial speed
+
+    config = CarRacingCasadiConfig(
+        T=T,
+        dt=default.dt,
+        N=N,
+        n=n,
+        m=m,
+        n_hi=4*N*T if default.double_circle_h else N*T,  # Collision constraint only
+        collision_radius=default.collision_radius,
+        x0=x0.copy(order='F'),
+        target_x_ref=x_ref.copy(order='F'),
+        J_Qr=J_Qr.copy(order='F'),
+        J_R=J_R.copy(order='F')
+    )
+    track_config = TrackConfig()
+    track = NascarTrack(track_config)
+    return CarRacingCasadi(config, track)
