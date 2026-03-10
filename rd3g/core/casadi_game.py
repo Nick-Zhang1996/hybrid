@@ -14,76 +14,34 @@ logger = logging.getLogger('Casadi Game')
 logger.setLevel(logging.INFO)
 
 
-# Unused
 @dataclass
 class CasadiGameState:
-    """ Game state with CasADi support. Similar to CasadiGameConfig, but mutable"""
-    _param_dict: dict = field(init=False, repr=False)
-    _double_param_np: dict = field(init=False, repr=False)
-    _double_param_sx: dict = field(init=False, repr=False)
-    _param_shape_dict: dict = field(init=False, repr=False)
+    """ Game state with CasADi SX object.
+    state: (n_s*N, T) Game state, changes between iteration, but constant within iteration. 
+        This contains variables too expensive to AD. 
+        e.g. path curvature at each player position.
+        Correspond to k=0..T-1
+    """
+    state: np.ndarray
+    _state_sx: dict = field(init=False, repr=False)
+    _shape: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
-        double_param = self.get_double_param_np()
-        double_param_sx = cas.SX.sym('double_param', len(double_param))
-        self._double_param_sx = double_param_sx
-        double_offset = 0
-        param_dict = {}
-        param_shape_dict = {}
-        for _field in fields(self):
-            if 'param' in _field.name:
-                logger.debug(f'skipping {_field.name}')
-                continue
-            val = getattr(self, _field.name)
-            if isinstance(val, np.ndarray):
-                if val.dtype == float:
-                    param_dict[_field.name] = double_param_sx[
-                        double_offset:double_offset + val.size].reshape(val.shape)
-                    param_shape_dict[_field.name] = val.shape
-                    double_offset += val.size
-                else:
-                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
-            else:
-                logger.warning(f"{_field.name} has unsupported type {type(val)}")
+        self._state_sx = cas.SX.sym('state', *self.state.shape)
+        self._shape = self.state.shape
 
-        self._param_dict = param_dict
-        self._param_shape_dict = param_shape_dict
+    def set_state(self, value):
+        assert value.shape == self._shape
+        assert value.flags['F_CONTIGUOUS']
+        self.state = value
 
-    def __setattr__(self, name, value):
-        """ Set new numerical value to param. do necessary checks"""
-        if name.startswith('_'):
-            super().__setattr__(name, value)
-            return
-        assert name in self._param_dict.keys()
-        assert value.shape == self._param_shape_dict[name]
-        assert value.flags['C_CONTIGUOUS']
-        super().__setattr__(name, value)
+    def get_state_np(self):
+        """ Create current state as a flattened np array"""
+        return np.asarray(self.state.flatten(), order='F')
 
-    def get_double_param_np(self):
-        """ Create a flattened np array of all double params with current value"""
-        double_param_list = []
-        for _field in fields(self):
-            if 'param' in _field.name:
-                logger.debug(f'skipping {_field.name}')
-                continue
-            val = getattr(self, _field.name)
-            if isinstance(val, np.ndarray):
-                if val.dtype == float:
-                    double_param_list.append(val.flatten(order='F'))
-                else:
-                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
-            else:
-                logger.warning(f"{_field.name} has unsupported type {type(val)}")
-        double_param = np.asarray(np.hstack(double_param_list), order='F')
-        return double_param
-
-    def get_double_param_sx(self):
-        """ Get flattened CasADi SX parameter of all double params"""
-        return self._double_param_sx
-
-    def get_param(self, param_name):
-        """ Get CasADi SX parameter by name """
-        return self._param_dict[param_name]
+    def get_state_sx(self):
+        """ Get CasADi SX parameter for the state"""
+        return self._state_sx
 
 
 @dataclass(frozen=True)
@@ -200,8 +158,20 @@ class CasadiGame(ABC):
         self.T = config.T
         self.N = config.N
         self.n = config.n
+        self.n_hi = config.n_hi
+        self.n_s = config.n_s
         self.m = config.m
         self.x0 = config.x0
+
+        x_k_i = cas.SX.sym('x_k_i', self.n, 1)
+        u_k_i = cas.SX.sym('u_k_i', self.m, 1)
+        i_onehot = cas.SX.sym('i_onehot', self.N, 1)
+        state_i_k = cas.SX.sym('state_i_k', self.n_s, 1)
+        f_args = [x_k_i, u_k_i, i_onehot, state_i_k]
+        gc = self.config
+        config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
+        x_next_val = self.f(*f_args)
+        self.f_casadi = cas.Function('f', f_args+config_params, [x_next_val])
 
     @abstractmethod
     def visualize(self, u, x, show=True, save=False):
@@ -225,43 +195,60 @@ class CasadiGame(ABC):
         """
 
     def F(self, x_k, u_k):
-        """ Dynamics for all agents
+        """ Dynamics for all agents. 
+        This is use only in rollout, not in residual.
+        Therefore, this calls the external get_state() function
         Args:
             x_k: (n,N)
             u_k: (m,N)
         Return:
             x_k_next: (n,N)
         """
+        raise NotImplementedError
         x_k_next_vec = []
         for i in range(self.N):
             i_onehot = cas.SX.eye(self.N)[:, i]
-            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
+            state_k_i = self.get_state(x_k[:, i])
+            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot, state_k_i))
         retval = cas.horzcat(*x_k_next_vec)
         assert retval.shape == (self.n, self.N)
         return retval
 
     def rollout(self, x0, u):
-        """ Rollout control to get state trajectory, casadi compatible
+        """ Rollout control to get state trajectory
         Args:
             x0: (n,N)
             u: (m*N, T), u0..u_T-1
+            state: (n_s*N, T)
         Return:
             X: (n*N, T) x1..xT
         """
-        assert u.shape == (self.m*self.N, self.T)
-        assert x0.shape == (self.n, self.N)
+        m = self.m
+        n = self.n
+        N = self.N
+        T = self.T
+        gc = self.config
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
+        params_dm = [int_param_dm, double_param_dm]
+        u = u.reshape((m, N, T), order='F')
+        x_vec = [x0]
+        for k in range(T):
+            x_k_vec = []
+            for i in range(N):
+                xki = x_vec[-1][:, i]
+                uki = u[:, i, k]
+                state_i_k = self.get_state(xki)
+                i_onehot = cas.DM.eye(self.N)[:, i]
+                xi_next = self.f_casadi(cas.DM(xki),
+                                        cas.DM(uki),
+                                        i_onehot,
+                                        cas.DM(state_i_k),
+                                        *params_dm)
+                x_k_vec.append(np.array(xi_next).flatten())
+            x_vec.append(np.array(x_k_vec).T)
 
-        x_k = cas.SX.sym('x_k_', (self.n*self.N))
-        u_k = cas.SX.sym('u_k_', (self.m*self.N))
-        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.n, self.N),
-                                  cas.reshape(u_k, self.m, self.N)))
-        config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
-        config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
-        accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
-        rollout_fun = accum_fun.mapaccum(self.T)
-
-        X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
-        assert X.shape == (self.n*self.N, self.T)
+        X = np.array(x_vec[1:]).reshape((T, n*N)).T
         return X
 
     @abstractmethod
@@ -283,12 +270,13 @@ class CasadiGame(ABC):
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
     @abstractmethod
-    def f(self, x, u, i):
+    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
-            i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            i_onehot: (N, 1) agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            state_i_k: (n_s,) Game state
         Return:
             (n,1) The next state, progressed by self.dt
         """
@@ -303,3 +291,39 @@ class CasadiGame(ABC):
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
+
+    @abstractmethod
+    def get_state(self, x_k_i):
+        """ Calculate game state for one agent at one step
+        Args:
+            x_k_i: (n, 1) 
+        Return:
+            Curvature, scalar
+        """
+        return np.empty(0)
+
+    def get_full_state(self, x):
+        """ Create game state. This function needs a corresponding CPP implementation
+        Args:
+            x: (n*N,T), states, casadi.SX symbolic variable
+            u: (m*N,T), controls, casadi.SX symbolic variable
+        Returns:
+            state: (n_s*N, T) external states
+        """
+        c_vec = []
+        c0_vec = []
+        for i in range(self.N):
+            c0i = self.get_state(self.config.x0[:, i])
+            c0_vec.append(c0i)
+        c_vec.append(c0_vec)
+
+        for k in range(1, self.T):
+            ck_vec = []
+            for i in range(self.N):
+                xki = cas.reshape(x[:, k-1], self.n, self.N)[:, i]
+                cki = self.get_state(xki)
+                ck_vec.append(cki)
+        # TODO continue debugging here...
+            c_vec.append(ck_vec)
+        state = np.array(c_vec, order='F').reshape((self.n_s*self.N, self.T))
+        return state

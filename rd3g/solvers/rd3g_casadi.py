@@ -246,6 +246,7 @@ class RD3GCasadi(BaseSolver):
         self.n = self.game.config.n
         self.m = self.game.config.m
         self.n_hi = self.game.config.n_hi
+        self.n_s = self.game.config.n_s
         self.x0 = self.game.config.x0
 
         self.guess = np.zeros((self.m, self.N, self.T), order='F')
@@ -289,7 +290,12 @@ class RD3GCasadi(BaseSolver):
         m = self.m
         T = self.T
         n_hi = self.n_hi
+        n_s = self.n_s
         gc = self.game.config
+        # state: (n_s*N, T) Game state, changes between iteration, but constant within iteration.
+        #     This contains variables too expensive to AD.
+        #     e.g. path curvature at each player position.
+        state = self.game.state.get_state_sx()
         logger.info('Constructing CasADi functions... ')
 
         # NOTE: casadi only works with 2D matrices, we combine n,N into first dimension
@@ -309,7 +315,7 @@ class RD3GCasadi(BaseSolver):
         x0 = cas.SX.sym('x0', n, N)
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
 
-        args = [x, u, lamda, mu]
+        args = [x, u, lamda, mu, state]
         y = cas.vertcat(*[cas.vec(val) for val in args])
 
         self.get_n_fun = cas.Function('get_n', [], [self.n])
@@ -324,8 +330,8 @@ class RD3GCasadi(BaseSolver):
         dr_dy = cas.jacobian(r_val, y)
         self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
 
-        X = self.game.rollout(x0, u)
-        self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
+        # X = self.game.rollout(x0, u)
+        # self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
         xki = cas.SX.sym('xki', n, 1)
         xkj = cas.SX.sym('xkj', n, 1)
@@ -347,7 +353,7 @@ class RD3GCasadi(BaseSolver):
             args_i = [xi, ui, lamdai, mui]
             hi_vals = h_val[:, i]
             yi = cas.vertcat(*[cas.vec(val) for val in args_i])
-            L = self.LLi(x, u, lamda, mu, i, hi_vals)
+            L = self.LLi(x, u, lamda, mu, i, hi_vals, state)
             ri = cas.jacobian(L, yi)
             self.ri_casadi_vec.append(cas.Function(f'r_{i}', args+config_params, [ri]))
             Ki = cas.jacobian(ri, yi)
@@ -409,7 +415,7 @@ class RD3GCasadi(BaseSolver):
         u_ref = np.zeros((self.m*self.N, self.T), order='F')
         assert np.isfortran(self.x0)
         assert np.isfortran(u_ref)
-        # FIXME x0 is in params_np and also passed explicitly here
+        # NOTE x0 is in params_np and also passed explicitly here
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
         # Although they are identical, there should be a single source of truth.
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
@@ -489,9 +495,7 @@ class RD3GCasadi(BaseSolver):
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         # return: (n*N, T)
         gc = self.game.config
-        int_param_dm = cas.DM(gc.get_int_param_np())
-        double_param_dm = cas.DM(gc.get_double_param_np())
-        x_ref = self.rollout_casadi(self.x0, u_ref, int_param_dm, double_param_dm)
+        x_ref = self.game.rollout(self.x0, u_ref)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         lambda_ref = cas.DM.zeros((n*N, T))
@@ -536,14 +540,12 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         N = self.N
         gc = self.game.config
-        int_param_dm = cas.DM(gc.get_int_param_np())
-        double_param_dm = cas.DM(gc.get_double_param_np())
         assert u_ref.shape == (m, N, T)
 
         # n*N, T
         u_cat = u_ref.reshape((m*N, T), order='F')
         try:
-            x_ref = self.rollout_casadi(self.x0, u_cat, int_param_dm, double_param_dm)
+            x_ref = self.game.rollout(self.x0, u_cat)
         except AttributeError:
             logger.error('cpp_only must be False to populate rollout_casadi()')
             raise
@@ -595,10 +597,13 @@ class RD3GCasadi(BaseSolver):
         u = u_ref
         lamda = lambda_ref
         mu = mu_ref
+        state = self.game.state
+        state.set_state(self.game.get_full_state(x))
+
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
-        args = [x, u, lamda, mu, *params_dm]
+        args = [x, u, lamda, mu, state.state, *params_dm]
         p.e('prep')
 
         p.s('Form KKT')
@@ -836,7 +841,7 @@ class RD3GCasadi(BaseSolver):
     # ----- derivatives and other generic math functions ----
     # NOTE revised for casadi
 
-    def L(self, x_k, u_k_i, x_k1_i, lamda_k, mu_i, i):
+    def L(self, x_k, u_k_i, x_k1_i, lamda_k, mu_i, i, state_k):
         ''' Lagrangian for agent i at time k, excluding inequality constraints
         Args:
             x_k: (n, N) state vector at step k
@@ -845,6 +850,7 @@ class RD3GCasadi(BaseSolver):
             lamda_k: (n, N) Multiplier for dynamics constraint
             mu_i: (n_hi, 1),  (unused) multiplier for inequality constraint h()
             i: agent index i
+            state_k: (n_s, N) state at step k
         Return:
             val: scalar value of lagrangian
         '''
@@ -860,12 +866,13 @@ class RD3GCasadi(BaseSolver):
 
         i_onehot = cas.SX.eye(self.N)[:, i]
         # NOTE it may be better to store lamda_k_T to take advantage of col-major storage
-        dynamics_val = lamda_k[:, i].T @ (self.game.f(x_k[:, i], u_k_i, i_onehot) - x_k1_i)
+        dynamics_val = lamda_k[:, i].T @ (self.game.f(x_k[:, i],
+                                          u_k_i, i_onehot, state_k[:, i]) - x_k1_i)
         val = self.game.J(x_k, u_k_i, i_onehot) + dynamics_val
         assert val.shape == (1, 1)
         return val
 
-    def LLi(self, x, u, lamda, mu, i, hi_vals):
+    def LLi(self, x, u, lamda, mu, i, hi_vals, state):
         ''' Lagrangian for agent i across all time steps
         Args:
             x: (n*N, T) Agent states
@@ -874,6 +881,7 @@ class RD3GCasadi(BaseSolver):
             mu: (n_hi*N, 1) Multiplier for positive h
             i: agent index
             hi_vals: (n_hi, 1) h() values for agent i
+            state: (n_s*N, T) constant state of game
         Return:
             val: scalar value of Lagrangian
         '''
@@ -882,12 +890,14 @@ class RD3GCasadi(BaseSolver):
         m = self.m
         n = self.n
         n_hi = self.n_hi
+        n_s = self.n_s
         LLi_val = sum([self.L(cas.reshape(x[:, k - 1], n, N),
                               cas.reshape(u[:, k], m, N)[:, i],
                               cas.reshape(x[:, k], n, N)[:, i],
                               cas.reshape(lamda[:, k], n, N),
                               cas.reshape(mu, n_hi, N)[:, i],
-                              i)
+                              i,
+                              cas.reshape(state[:, k], n_s, N))
                       for k in range(1, T)])
 
         # feasibility for h>0
@@ -905,8 +915,9 @@ class RD3GCasadi(BaseSolver):
         lamda_0_i = cas.reshape(lamda[:, 0], n, N)[:, i]  # k=0
         i_onehot = cas.SX.eye(self.N)[:, i]
         u0_i = cas.reshape(u[:, 0], m, N)[:, i]
+        state_i_0 = cas.reshape(state[:, 0], n_s, N)[:, i]
         LLi_val += (self.game.J(x0, u0_i, i_onehot) +
-                    cas.dot(lamda_0_i, self.game.f(x0[:, i], u0_i, i_onehot)
+                    cas.dot(lamda_0_i, self.game.f(x0[:, i], u0_i, i_onehot, state_i_0)
                     - cas.reshape(x[:, 0], n, N)[:, i]))
         # x_T related terms
         x_T = cas.reshape(x[:, T-1], n, N)
@@ -915,13 +926,16 @@ class RD3GCasadi(BaseSolver):
         assert LLi_val.shape == (1, 1)
         return LLi_val
 
-    def r(self, x, u, lamda, mu):
+    def r(self, x, u, lamda, mu, state):
         ''' Residual for the game
         Args:
             x: (n*N, T) Agent states
             u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
             mu: (n_hi*N, 1) Multiplier for positive h
+            state: (n_s*N, T) Game state, changes between iteration, but constant within iteration. 
+                This contains variables too expensive to AD. 
+                e.g. path curvature at each player position.
         Return:
             r_val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
             h_val: (n_hi, N) Result of h(x, u), which is needed for active set on constraints
@@ -931,6 +945,7 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         n_hi = self.n_hi
+        n_s = self.n_s
         # elements are column vectors
         r_vec = []
         eye = cas.SX.eye(self.N)
@@ -949,21 +964,23 @@ class RD3GCasadi(BaseSolver):
         #             assert dLLi_dxki.shape == (n, 1)
 
         # dLLi_dx n*N*T
+        # TODO vertcat x, then do jacobian once
         for k in range(T):
             for i in range(N):  # dLLi_dx[k][i]
                 hi_val = h_val[:, i]
                 xki = cas.reshape(x[:, k], n, N)[:, i]
-                dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val), xki).T
+                dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val, state), xki).T
                 r_vec.append(dLLi_dxki)  # n
                 assert dLLi_dxki.shape == (n, 1)
 
         # dLLi_dui for all i, m*N*T
         # Unlike dLLi_dx, dLL[i]_du[i] only applies to the same index set, dLLi_du{-i} != 0
+        # TODO vertcat x, then do jacobian once
         for k in range(T):
             for i in range(N):
                 hi_val = h_val[:, i]
                 uki = cas.reshape(u[:, k], m, N)[:, i]
-                dLLi_duki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val), uki).T
+                dLLi_duki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val, state), uki).T
                 r_vec.append(dLLi_duki)  # m
                 assert dLLi_duki.shape == (m, 1)
 
@@ -972,18 +989,21 @@ class RD3GCasadi(BaseSolver):
             i_onehot = eye[:, i]
             x0 = self.game.config.get_param('x0')
             u0 = cas.reshape(u[:, 0], m, N)
-            f0 = self.game.f(x0[:, i], u0[:, i], i_onehot) - cas.reshape(x[:, 0], n, N)[:, i]
+            state_i_0 = cas.reshape(state[:, 0], n_s, N)
+            f0 = self.game.f(x0[:, i], u0[:, i], i_onehot, state_i_0[:, i]) - \
+                cas.reshape(x[:, 0], n, N)[:, i]
             assert f0.shape == (n, 1)
             r_vec.append(f0)  # n
 
         # Dynamics residual for f(xk,uk) = x_{k+1} n*N*(T-1)
         for k in range(1, self.T):
+            state_i_k = cas.reshape(state[:, k], n_s, N)
             for i in range(N):
                 i_onehot = eye[:, i]
                 xk = cas.reshape(x[:, k-1], n, N)
                 xk1 = cas.reshape(x[:, k], n, N)
                 uk = cas.reshape(u[:, k], m, N)
-                fk = self.game.f(xk[:, i], uk[:, i], i_onehot) - xk1[:, i]
+                fk = self.game.f(xk[:, i], uk[:, i], i_onehot, state_i_k[:, i]) - xk1[:, i]
                 assert fk.shape == (n, 1)
                 r_vec.append(fk)  # n
 
@@ -1007,7 +1027,6 @@ class RD3GCasadi(BaseSolver):
         """
         tol = 1e-2
         T = self.T
-        N = self.N
         n = self.n
         m = self.m
         primal_n = (n+m)*T  # primal variables for agent i
@@ -1277,7 +1296,8 @@ class RD3GCasadi(BaseSolver):
         solver = qdldl.Solver(upper, upper=True)
 
         #  C = P @ A @ P.T, C = L @ D @ L.T
-        L_zero_diag, D_diag, P_vec = solver.factors()
+        # L_zero_diag, D_diag, P_vec = solver.factors()
+        _, D_diag, _ = solver.factors()
         pos = np.sum(D_diag > 0)
         neg = np.sum(D_diag < 0)
         zero = len(D_diag) - pos - neg

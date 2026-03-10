@@ -12,15 +12,16 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 import casadi as cas
+from scipy.interpolate import splev
 
-from buzzracer.types import CurvilinearState, CartesianState
+from buzzracer.types import CurvilinearState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car import CarConfig
 from buzzracer.tracks.track import TrackConfig
 from buzzracer.tracks.nascar_track import NascarTrack
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig, CasadiGameState
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,6 +36,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     n: int = 5
     m: int = 2
     n_hi: int = 3*20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_s: int = 1  # Number of external states per agent per stage
 
     collision_radius: float = 80e-3
     """ Minimum distance between two cars"""
@@ -81,12 +83,15 @@ class CarRacingCasadi(CasadiGame):
     '''
 
     def __init__(self, config: CarRacingCasadiConfig, track: CurvilinearTrack):
-        super().__init__(config)
         self.track = track
+        self.car_param = CarConfig.porsche_18.value
+        super().__init__(config)
+        empty = np.zeros((self.config.N, self.config.T), order='F')
+        self.state = CasadiGameState(state=empty)
 
         # n_hi is a new concept
         self.n_hi = config.n_hi
-        self.car_param = CarConfig.porsche_18.value
+        self.n_s = config.n_hi
 
         # bounds for visualization
 
@@ -96,23 +101,21 @@ class CarRacingCasadi(CasadiGame):
         # Image wheelbase: 300px, car wheelbase 98e-3 m
         self.car_scale = 98e-3 / 300
 
-        s_vec = [track.data.s_vec.tolist()]
-        c_vec = track.data.curvature_vec.tolist()
+        # Moved to state, outside of casadi because the code generated is too long
 
-        s = np.array(s_vec[0])
-        c = np.array(c_vec)
-        assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
-        assert not np.isnan(c).any(), "No NaNs"
+        # Curvature function
+        # s_vec = [track.data.s_vec.tolist()]
+        # c_vec = track.data.curvature_vec.tolist()
+
+        # s = np.array(s_vec[0])
+        # c = np.array(c_vec)
+        # assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
+        # assert not np.isnan(c).any(), "No NaNs"
 
         # Arguments: (name, plugin, grid, values)
         # 'bspline' creates a cubic B-spline by default, ensuring smooth gradients.
         # 'linear' creates a linear lookup, simplifying gradient
-        k_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
-        s = cas.MX.sym('s')
-        # Bspline has complex derivative, the generated c++ file is massive (4M liens)
-        # Disable gradient here, in our experience makes little difference to performance
-        opts = {'is_diff_in': [False], 'is_diff_out': [False]}
-        self.curvature_fun = cas.Function('curvature_no_grad', [s], [k_fun(s)], opts)
+        # curvature_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
 
         color_names = [
             'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan',
@@ -216,7 +219,7 @@ class CarRacingCasadi(CasadiGame):
         im_vec = []
         for i in range(self.config.N):
             rotated_car_img = np.clip(
-                rotate(self.car_img_vec[i % len(self.car_img_vec)],
+                rotate(car_imgs[i % len(car_imgs)],
                        degrees(cart_traj_vec[i][0].heading),
                        reshape=True), 0.0, 1.0)
             L, W, _ = rotated_car_img.shape
@@ -232,7 +235,7 @@ class CarRacingCasadi(CasadiGame):
         def update(frame):
             for i in range(self.config.N):
                 rotated_car_img = np.clip(
-                    rotate(self.car_img_vec[i % len(self.car_img_vec)],
+                    rotate(car_imgs[i % len(car_imgs)],
                            degrees(cart_traj_vec[i][frame].heading),
                            reshape=True), 0.0, 1.0)
                 L, W, _ = rotated_car_img.shape
@@ -295,7 +298,16 @@ class CarRacingCasadi(CasadiGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
-    # TODO refactor from below
+    def get_state(self, x_k_i):
+        """ Calculate game state for one agent at one step
+        Args:
+            x_k_i: (n,) 
+        Return:
+            Curvature, scalar
+        """
+        c = splev(x_k_i[0], self.track.data.curvature_s, der=0)
+        return c[0].item()
+
     def J(self, x_k, u_k_i, i_onehot):
         """
         Stage cost for an agent, given x,u
@@ -320,7 +332,7 @@ class CarRacingCasadi(CasadiGame):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    def f(self, x_k_i, u_k_i, i_onehot):
+    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
             u = [steering, throttle]
             x = [s, n, phi, v_forward, v_sideway]
@@ -329,6 +341,7 @@ class CarRacingCasadi(CasadiGame):
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            state_i_k: (n_s=1,) Signed curvature value
         Return:
             (n,1) The next state, progressed by self.dt
 
@@ -343,7 +356,8 @@ class CarRacingCasadi(CasadiGame):
                                 v_forward=x_k_i[3, 0],
                                 v_sideway=x_k_i[4, 0])
         control = SimpleNamespace(steering=u_k_i[0, 0], throttle=u_k_i[1, 0])
-        curvature = self.curvature_fun(state.progress)
+        # curvature = self.curvature_fun(state.progress)
+        curvature = state_i_k
 
         beta = cas.arctan(cas.tan(control.steering) * param.lr / (param.lf + param.lr))
 
