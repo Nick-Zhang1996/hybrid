@@ -14,6 +14,78 @@ logger = logging.getLogger('Casadi Game')
 logger.setLevel(logging.INFO)
 
 
+# Unused
+@dataclass
+class CasadiGameState:
+    """ Game state with CasADi support. Similar to CasadiGameConfig, but mutable"""
+    _param_dict: dict = field(init=False, repr=False)
+    _double_param_np: dict = field(init=False, repr=False)
+    _double_param_sx: dict = field(init=False, repr=False)
+    _param_shape_dict: dict = field(init=False, repr=False)
+
+    def __post_init__(self):
+        double_param = self.get_double_param_np()
+        double_param_sx = cas.SX.sym('double_param', len(double_param))
+        self._double_param_sx = double_param_sx
+        double_offset = 0
+        param_dict = {}
+        param_shape_dict = {}
+        for _field in fields(self):
+            if 'param' in _field.name:
+                logger.debug(f'skipping {_field.name}')
+                continue
+            val = getattr(self, _field.name)
+            if isinstance(val, np.ndarray):
+                if val.dtype == float:
+                    param_dict[_field.name] = double_param_sx[
+                        double_offset:double_offset + val.size].reshape(val.shape)
+                    param_shape_dict[_field.name] = val.shape
+                    double_offset += val.size
+                else:
+                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
+            else:
+                logger.warning(f"{_field.name} has unsupported type {type(val)}")
+
+        self._param_dict = param_dict
+        self._param_shape_dict = param_shape_dict
+
+    def __setattr__(self, name, value):
+        """ Set new numerical value to param. do necessary checks"""
+        if name.startswith('_'):
+            super().__setattr__(name, value)
+            return
+        assert name in self._param_dict.keys()
+        assert value.shape == self._param_shape_dict[name]
+        assert value.flags['C_CONTIGUOUS']
+        super().__setattr__(name, value)
+
+    def get_double_param_np(self):
+        """ Create a flattened np array of all double params with current value"""
+        double_param_list = []
+        for _field in fields(self):
+            if 'param' in _field.name:
+                logger.debug(f'skipping {_field.name}')
+                continue
+            val = getattr(self, _field.name)
+            if isinstance(val, np.ndarray):
+                if val.dtype == float:
+                    double_param_list.append(val.flatten(order='F'))
+                else:
+                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
+            else:
+                logger.warning(f"{_field.name} has unsupported type {type(val)}")
+        double_param = np.asarray(np.hstack(double_param_list), order='F')
+        return double_param
+
+    def get_double_param_sx(self):
+        """ Get flattened CasADi SX parameter of all double params"""
+        return self._double_param_sx
+
+    def get_param(self, param_name):
+        """ Get CasADi SX parameter by name """
+        return self._param_dict[param_name]
+
+
 @dataclass(frozen=True)
 class CasadiGameConfig(BaseGameConfig):
     """ Game config with support for CasADi compatible flat param vector"""
@@ -223,7 +295,7 @@ class CasadiGame(ABC):
 
     @abstractmethod
     def h(self, x, u):
-        """ Construct the inequality constraint function.
+        """ Inequality constraint function.
         h() is a mapping from (x,u) to all constraints.
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
