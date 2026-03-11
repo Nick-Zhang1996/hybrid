@@ -35,7 +35,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     N: int = 3
     n: int = 5
     m: int = 2
-    n_hi: int = 3*20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_hi: int = 3 * 20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
     n_s: int = 1  # Number of external states per agent per stage
 
     collision_radius: float = 80e-3
@@ -91,7 +91,7 @@ class CarRacingCasadi(CasadiGame):
 
         # n_hi is a new concept
         self.n_hi = config.n_hi
-        self.n_s = config.n_hi
+        self.n_s = config.n_s
 
         # bounds for visualization
 
@@ -123,8 +123,8 @@ class CarRacingCasadi(CasadiGame):
         ]
         self.car_img_vec = [
             mpimg.imread(
-                os.path.join(BASEDIR, 'rd3g', 'resources', f'porsche_{color}.png'))
-            for color in color_names
+                os.path.join(BASEDIR, 'rd3g', 'resources',
+                             f'porsche_{color}.png')) for color in color_names
         ]
 
     def visualize(self, u, x, show=True, save=False):
@@ -142,7 +142,7 @@ class CarRacingCasadi(CasadiGame):
         if (not show) and (not save):
             return
         assert u.shape == (m, N, T)
-        assert x.shape == (n, N, T+1)
+        assert x.shape == (n, N, T + 1)
 
         fig, ax = plt.subplots()
         p = track.data.left_boundary_vec
@@ -154,7 +154,7 @@ class CarRacingCasadi(CasadiGame):
 
         for i in range(N):
             cart_traj = []
-            for k in range(T+1):
+            for k in range(T + 1):
                 curv = CurvilinearState(progress=x[0, i, k],
                                         lateral_err=x[1, i, k],
                                         heading_err=x[2, i, k],
@@ -191,13 +191,13 @@ class CarRacingCasadi(CasadiGame):
         if (not show) and (not save_gif) and (not save_snapshots):
             return
         assert u.shape == (m, N, T)
-        assert x.shape == (n, N, T+1)
+        assert x.shape == (n, N, T + 1)
 
         car_scale = self.car_scale
         cart_traj_vec = []
         for i in range(N):
             cart_traj = []
-            for k in range(T+1):
+            for k in range(T + 1):
                 curv = CurvilinearState(progress=x[0, i, k],
                                         lateral_err=x[1, i, k],
                                         heading_err=x[2, i, k],
@@ -225,10 +225,10 @@ class CarRacingCasadi(CasadiGame):
             L, W, _ = rotated_car_img.shape
             im = ax.imshow(rotated_car_img,
                            extent=[
-                               cart_traj_vec[i][0].x - W/2 * car_scale,
-                               cart_traj_vec[i][0].x + W/2 * car_scale,
-                               cart_traj_vec[i][0].y - L/2 * car_scale,
-                               cart_traj_vec[i][0].y + L/2 * car_scale
+                               cart_traj_vec[i][0].x - W / 2 * car_scale,
+                               cart_traj_vec[i][0].x + W / 2 * car_scale,
+                               cart_traj_vec[i][0].y - L / 2 * car_scale,
+                               cart_traj_vec[i][0].y + L / 2 * car_scale
                            ])
             im_vec.append(im)
 
@@ -241,10 +241,10 @@ class CarRacingCasadi(CasadiGame):
                 L, W, _ = rotated_car_img.shape
                 im_vec[i].set_data(rotated_car_img)
                 im_vec[i].set_extent(
-                    (cart_traj_vec[i][frame].x - W/2 * car_scale,
-                        cart_traj_vec[i][frame].x + W/2 * car_scale,
-                        cart_traj_vec[i][frame].y - L/2 * car_scale,
-                        cart_traj_vec[i][frame].y + L/2 * car_scale))
+                    (cart_traj_vec[i][frame].x - W / 2 * car_scale,
+                     cart_traj_vec[i][frame].x + W / 2 * car_scale,
+                     cart_traj_vec[i][frame].y - L / 2 * car_scale,
+                     cart_traj_vec[i][frame].y + L / 2 * car_scale))
             return im_vec
 
         # fine-tune dark background to mimic tarmac
@@ -266,33 +266,32 @@ class CarRacingCasadi(CasadiGame):
         if show:
             plt.show()
         if show and save_snapshots:
-            logger.error(
-                'When show and save_snapshots are both on,'
-                ' matplotlib has weird problems, do one at a time')
+            logger.error('When show and save_snapshots are both on,'
+                         ' matplotlib has weird problems, do one at a time')
         # NOTE save initial, middle, final snapshots
         if save_snapshots:
             from PIL import Image
             folder = os.path.join(BASEDIR, 'pics')
             update(0)
             fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
+                                    fig.canvas.tostring_rgb())
             filename = os.path.join(folder, f'merge_{self.N}car_initial.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T//2)
+            update(self.T // 2)
             fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
+                                    fig.canvas.tostring_rgb())
             filename = os.path.join(folder, f'merge_{self.N}car_middle.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T-1)
+            update(self.T - 1)
             fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+            frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
+                                    fig.canvas.tostring_rgb())
             filename = os.path.join(folder, f'merge_{self.N}car_final.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
@@ -359,10 +358,12 @@ class CarRacingCasadi(CasadiGame):
         # curvature = self.curvature_fun(state.progress)
         curvature = state_i_k
 
-        beta = cas.arctan(cas.tan(control.steering) * param.lr / (param.lf + param.lr))
+        beta = cas.arctan(
+            cas.tan(control.steering) * param.lr / (param.lf + param.lr))
 
-        dsdt = (state.v_forward * cas.cos(state.heading_err) - state.v_sideway *
-                cas.sin(state.heading_err))/(1-state.lateral_err*curvature)
+        dsdt = (state.v_forward * cas.cos(state.heading_err) -
+                state.v_sideway * cas.sin(state.heading_err)) / (
+                    1 - state.lateral_err * curvature)
         dndt = state.v_forward * cas.sin(state.heading_err) + \
             state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
@@ -374,6 +375,7 @@ class CarRacingCasadi(CasadiGame):
         d_v_sideway_dt = acc_cg * cas.sin(beta)
 
         total_v = cas.sqrt(state.v_forward**2 + state.v_sideway**2)
+        # FIXME somehow this gives nan, WHY?????
         d_heading_dt = total_v / param.lr * cas.sin(beta)
         d_rel_heading_dt = d_heading_dt - curvature * dsdt
 
@@ -383,7 +385,8 @@ class CarRacingCasadi(CasadiGame):
         heading_err = state.heading_err + d_rel_heading_dt * dt
         v_forward = state.v_forward + d_v_forward_dt * dt
         v_sideway = state.v_sideway + d_v_sideway_dt * dt
-        next_x = cas.vertcat(progress, lateral_err, heading_err, v_forward, v_sideway)
+        next_x = cas.vertcat(progress, lateral_err, heading_err, v_forward,
+                             v_sideway)
 
         return next_x
 
@@ -400,11 +403,13 @@ class CarRacingCasadi(CasadiGame):
         for i in range(self.N):
             hi_vec = []
             # Collision constraint collison_h(xi, xj) 4*N*T
-            for k in range(1, self.T+1):
+            for k in range(1, self.T + 1):
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
-                xk = cas.reshape(x[:, k-1], self.n, self.N)
-                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
+                xk = cas.reshape(x[:, k - 1], self.n, self.N)
+                h_vals = [
+                    self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)
+                ]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 # TODO remove this dummy collision
                 if self.config.double_circle_h:
@@ -413,7 +418,7 @@ class CarRacingCasadi(CasadiGame):
                     h_vals[i] = 0.0
                 h_vals = cas.vertcat(*h_vals)
                 if self.config.double_circle_h:
-                    assert h_vals.shape == (self.N*4, 1)
+                    assert h_vals.shape == (self.N * 4, 1)
                 else:
                     assert h_vals.shape == (self.N, 1)
                 hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N)
@@ -421,7 +426,8 @@ class CarRacingCasadi(CasadiGame):
             h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
+        assert h_vec.shape == (
+            self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -457,7 +463,8 @@ class CarRacingCasadi(CasadiGame):
             vals = cas.vertcat(FF, FR, RF, RR)
         else:
             # Single circle check center to center distance
-            vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] - x_j[1, 0])**2 + d**2
+            vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] -
+                                                          x_j[1, 0])**2 + d**2
         return vals
 
 
@@ -491,13 +498,13 @@ def create_random_game(car_count=3, horizon=20):
         N=N,
         n=n,
         m=m,
-        n_hi=4*N*T if default.double_circle_h else N*T,  # Collision constraint only
+        n_hi=4 * N * T if default.double_circle_h else N *
+        T,  # Collision constraint only
         collision_radius=default.collision_radius,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),
-        J_R=J_R.copy(order='F')
-    )
+        J_R=J_R.copy(order='F'))
     track_config = TrackConfig()
     track = NascarTrack(track_config)
     return CarRacingCasadi(config, track)

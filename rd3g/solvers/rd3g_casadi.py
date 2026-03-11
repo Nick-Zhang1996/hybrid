@@ -321,14 +321,16 @@ class RD3GCasadi(BaseSolver):
         self.get_n_fun = cas.Function('get_n', [], [self.n])
         self.get_m_fun = cas.Function('get_m', [], [self.m])
 
+        # TODO debug only
+        opts = {'regularity_check':True}
         h_val = self.game.h(x, u)
-        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val])
+        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val], opts)
 
         r_val, h_val = self.r(*args)
-        self.r_casadi = cas.Function('r', args+config_params, [r_val, h_val])
+        self.r_casadi = cas.Function('r', args+config_params, [r_val, h_val], opts)
 
         dr_dy = cas.jacobian(r_val, y)
-        self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy])
+        self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy], opts)
 
         # X = self.game.rollout(x0, u)
         # self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])

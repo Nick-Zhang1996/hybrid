@@ -85,13 +85,16 @@ class CasadiGameConfig(BaseGameConfig):
                 elif val.dtype == int:
                     int_param_list.append(val.flatten(order='F'))
                 else:
-                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
+                    logger.warning(
+                        f"{_field.name} has unsupported numpy type {val.dtype}"
+                    )
             elif isinstance(val, float):
                 double_param_list.append([val])
             elif isinstance(val, int):
                 int_param_list.append([val])
             else:
-                logger.warning(f"{_field.name} has unsupported type {type(val)}")
+                logger.warning(
+                    f"{_field.name} has unsupported type {type(val)}")
         int_param = np.asarray(np.hstack(int_param_list), order='F')
         double_param = np.asarray(np.hstack(double_param_list), order='F')
         object.__setattr__(self, '_int_param_np', int_param)
@@ -111,25 +114,31 @@ class CasadiGameConfig(BaseGameConfig):
             if isinstance(val, np.ndarray):
                 if val.dtype == float:
                     param_dict[_field.name] = double_param_sx[
-                        double_offset:double_offset + val.size].reshape(val.shape)
+                        double_offset:double_offset + val.size].reshape(
+                            val.shape)
                     double_offset += val.size
 
                 elif val.dtype == int:
-                    param_dict[_field.name] = int_param_sx[
-                        int_offset:int_offset + val.size].reshape(val.shape)
+                    param_dict[
+                        _field.name] = int_param_sx[int_offset:int_offset +
+                                                    val.size].reshape(
+                                                        val.shape)
                     int_offset += val.size
                 else:
-                    logger.warning(f"{_field.name} has unsupported numpy type {val.dtype}")
+                    logger.warning(
+                        f"{_field.name} has unsupported numpy type {val.dtype}"
+                    )
             elif isinstance(val, float):
                 param_dict[_field.name] = double_param_sx[
                     double_offset:double_offset + 1]
                 double_offset += 1
             elif isinstance(val, int):
-                param_dict[_field.name] = int_param_sx[
-                    int_offset:int_offset + 1]
+                param_dict[_field.name] = int_param_sx[int_offset:int_offset +
+                                                       1]
                 int_offset += 1
             else:
-                logger.warning(f"{_field.name} has unsupported type {type(val)}")
+                logger.warning(
+                    f"{_field.name} has unsupported type {type(val)}")
         object.__setattr__(self, '_param_dict', param_dict)
 
     def get_param(self, param_name):
@@ -171,7 +180,7 @@ class CasadiGame(ABC):
         gc = self.config
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
         x_next_val = self.f(*f_args)
-        self.f_casadi = cas.Function('f', f_args+config_params, [x_next_val])
+        self.f_casadi = cas.Function('f', f_args + config_params, [x_next_val])
 
     @abstractmethod
     def visualize(self, u, x, show=True, save=False):
@@ -209,7 +218,8 @@ class CasadiGame(ABC):
         for i in range(self.N):
             i_onehot = cas.SX.eye(self.N)[:, i]
             state_k_i = self.get_state(x_k[:, i])
-            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot, state_k_i))
+            x_k_next_vec.append(
+                self.f(x_k[:, i], u_k[:, i], i_onehot, state_k_i))
         retval = cas.horzcat(*x_k_next_vec)
         assert retval.shape == (self.n, self.N)
         return retval
@@ -240,15 +250,12 @@ class CasadiGame(ABC):
                 uki = u[:, i, k]
                 state_i_k = self.get_state(xki)
                 i_onehot = cas.DM.eye(self.N)[:, i]
-                xi_next = self.f_casadi(cas.DM(xki),
-                                        cas.DM(uki),
-                                        i_onehot,
-                                        cas.DM(state_i_k),
-                                        *params_dm)
+                xi_next = self.f_casadi(cas.DM(xki), cas.DM(uki), i_onehot,
+                                        cas.DM(state_i_k), *params_dm)
                 x_k_vec.append(np.array(xi_next).flatten())
             x_vec.append(np.array(x_k_vec).T)
 
-        X = np.array(x_vec[1:]).reshape((T, n*N)).T
+        X = np.array(x_vec[1:]).reshape((T, n * N)).T
         return X
 
     @abstractmethod
@@ -303,27 +310,23 @@ class CasadiGame(ABC):
         return np.empty(0)
 
     def get_full_state(self, x):
-        """ Create game state. This function needs a corresponding CPP implementation
+        """ Create external game state. 
+        This function needs a corresponding CPP implementation
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
             u: (m*N,T), controls, casadi.SX symbolic variable
         Returns:
             state: (n_s*N, T) external states
         """
-        c_vec = []
-        c0_vec = []
+        full_state = np.zeros((self.n_s, self.N, self.T), order='F')
         for i in range(self.N):
             c0i = self.get_state(self.config.x0[:, i])
-            c0_vec.append(c0i)
-        c_vec.append(c0_vec)
+            full_state[:, i, 0] = c0i
 
         for k in range(1, self.T):
-            ck_vec = []
             for i in range(self.N):
-                xki = cas.reshape(x[:, k-1], self.n, self.N)[:, i]
+                xki = x[:, k - 1].reshape((self.n, self.N), order='F')[:, i]
                 cki = self.get_state(xki)
-                ck_vec.append(cki)
-        # TODO continue debugging here...
-            c_vec.append(ck_vec)
-        state = np.array(c_vec, order='F').reshape((self.n_s*self.N, self.T))
-        return state
+                full_state[:, i, k] = cki
+        retval = full_state.reshape((self.n_s * self.N, self.T), order='F')
+        return retval
