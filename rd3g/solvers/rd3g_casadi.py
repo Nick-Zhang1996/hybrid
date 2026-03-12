@@ -361,6 +361,25 @@ class RD3GCasadi(BaseSolver):
             Ki = cas.jacobian(ri, yi)
             self.Ki_casadi_vec.append(cas.Function(f'K_{i}', args+config_params, [Ki]))
 
+        state_val = self.game.get_state(xki)
+        # Get game state for one state (n,1) -> (1,1)
+        self.get_state_casadi = cas.Function('get_state', [xki], [state_val])
+
+        # (n, N) -> (1, N)
+        get_state_n_N = self.get_state_casadi.map(N)
+
+        def get_state_nN(xnN):
+            x_n_N = cas.reshape(xnN, n, N)
+            return get_state_n_N(x_n_N).T
+        xnN = cas.SX.sym('xnN', n*N, 1)
+        get_state_nN_casadi = cas.Function('get_state_nN', [xnN], [get_state_nN(xnN)])
+        # (nN, T) -> (N, T)
+        get_state_nN_T = get_state_nN_casadi.map(T)
+        full_state_val = get_state_nN_T(x)
+
+        # Get game state for whole state (nN, T) -> (N, T)
+        self.get_full_state_casadi = cas.Function('get_full_state', [x], [full_state_val])
+
         logger.info('Constructing CasADi functions... Done')
 
     def init(self):
@@ -599,13 +618,12 @@ class RD3GCasadi(BaseSolver):
         u = u_ref
         lamda = lambda_ref
         mu = mu_ref
-        state = self.game.state
-        state.set_state(self.game.get_full_state(x))
 
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
-        args = [x, u, lamda, mu, state.state, *params_dm]
+        state_dm = self.get_full_state_casadi(x)
+        args = [x, u, lamda, mu, state_dm, *params_dm]
         p.e('prep')
 
         p.s('Form KKT')
@@ -783,12 +801,12 @@ class RD3GCasadi(BaseSolver):
                 new_u = u+step_size*cas.reshape(du, m*N, T)
                 new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
                 new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
-                state.set_state(self.game.get_full_state(new_x))
+                new_state = self.get_full_state_casadi(new_x)
                 r_val, h_val = self.r_casadi(new_x,
                                              new_u,
                                              new_lamda,
                                              new_mu,
-                                             state.state,
+                                             new_state,
                                              int_param_dm, double_param_dm
                                              )
                 r_norm = norm(r_val)

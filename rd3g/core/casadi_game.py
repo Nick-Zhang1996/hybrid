@@ -299,35 +299,43 @@ class CasadiGame(ABC):
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
 
-    @abstractmethod
     def get_state(self, x_k_i):
         """ Calculate game state for one agent at one step
         Args:
-            x_k_i: (n, 1) 
+            x_k_i: (n, 1), cas.DM
         Return:
-            Curvature, scalar
+            State vector for this state, (n_s, 10
         """
-        return np.empty(0)
+        return cas.SX.zeros(0, 1)
 
-    def get_full_state(self, x):
+    def get_full_state_np(self, x):
         """ Create external game state. 
         This function needs a corresponding CPP implementation
         Args:
-            x: (n*N,T), states. cas.DM or ndarray
+            x: (n*N,T), states. cas.DM or ndarray TODO update
         Returns:
             state: (n_s*N, T) external states
         """
-        if isinstance(x, cas.DM):
-            x = x.full()
-        full_state = np.zeros((self.n_s, self.N, self.T), order='F')
-        for i in range(self.N):
-            c0i = self.get_state(self.config.x0[:, i])
-            full_state[:, i, 0] = c0i
+        n = self.n
+        N = self.N
+        m = self.m
+        T = self.T
+        n_s = self.n_s
 
-        for k in range(1, self.T):
-            for i in range(self.N):
-                xki = x[:, k - 1].reshape((self.n, self.N), order='F')[:, i]
-                cki = self.get_state(xki)
-                full_state[:, i, k] = cki
-        retval = full_state.reshape((self.n_s * self.N, self.T), order='F')
-        return retval
+        if isinstance(x, np.ndarray):
+            # Numpy version
+            full_state = np.zeros((n_s, N, T), order='F')
+            for i in range(N):
+                c0i = self.get_state(self.config.x0[:, i])
+                full_state[:, i, 0] = c0i
+
+            for k in range(1, T):
+                for i in range(N):
+                    xki = x[:, k - 1].reshape((n, N), order='F')[:, i]
+                    cki = self.get_state(xki)
+                    full_state[:, i, k] = cki
+            retval = full_state.reshape((n_s * N, T), order='F')
+            return retval
+        else:
+            raise NotImplementedError
+        

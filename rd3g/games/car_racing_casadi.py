@@ -104,18 +104,18 @@ class CarRacingCasadi(CasadiGame):
         # Moved to state, outside of casadi because the code generated is too long
 
         # Curvature function
-        # s_vec = [track.data.s_vec.tolist()]
-        # c_vec = track.data.curvature_vec.tolist()
+        s_vec = [track.data.s_vec.tolist()]
+        c_vec = track.data.curvature_vec.tolist()
 
-        # s = np.array(s_vec[0])
-        # c = np.array(c_vec)
-        # assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
-        # assert not np.isnan(c).any(), "No NaNs"
+        s = np.array(s_vec[0])
+        c = np.array(c_vec)
+        assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
+        assert not np.isnan(c).any(), "No NaNs"
 
         # Arguments: (name, plugin, grid, values)
         # 'bspline' creates a cubic B-spline by default, ensuring smooth gradients.
         # 'linear' creates a linear lookup, simplifying gradient
-        # curvature_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
+        self.curvature_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
 
         color_names = [
             'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan',
@@ -304,8 +304,9 @@ class CarRacingCasadi(CasadiGame):
         Return:
             Curvature, scalar
         """
-        c = splev(x_k_i[0], self.track.data.curvature_s, der=0)
-        return c[0].item()
+        # c = splev(x_k_i[0], self.track.data.curvature_s, der=0)
+        # return c[0].item()
+        return self.curvature_fun(x_k_i[0])
 
     def J(self, x_k, u_k_i, i_onehot):
         """
@@ -462,8 +463,7 @@ class CarRacingCasadi(CasadiGame):
             vals = cas.vertcat(FF, FR, RF, RR)
         else:
             # Single circle check center to center distance
-            vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] -
-                                                          x_j[1, 0])**2 + d**2
+            vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] - x_j[1, 0])**2 + d**2
         return vals
 
 

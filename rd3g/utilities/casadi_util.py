@@ -42,6 +42,7 @@ def generate_code(solver):
     cg.add(solver.rollout_casadi)
     cg.add(solver.get_n_fun)
     cg.add(solver.get_m_fun)
+    cg.add(solver.game.get_state)
     for i in range(solver.N):
         cg.add(solver.Ki_casadi_vec[i])
     filename = cg.generate()
