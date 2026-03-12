@@ -332,8 +332,8 @@ class RD3GCasadi(BaseSolver):
         dr_dy = cas.jacobian(r_val, y)
         self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy], opts)
 
-        # X = self.game.rollout(x0, u)
-        # self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
+        X = self.game.rollout(x0, u)
+        self.rollout_casadi = cas.Function('rollout', [x0, u]+config_params, [X])
 
         xki = cas.SX.sym('xki', n, 1)
         xkj = cas.SX.sym('xkj', n, 1)
@@ -514,9 +514,10 @@ class RD3GCasadi(BaseSolver):
 
         u_ref = np.zeros((m*N, T), order='F')
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
-        # return: (n*N, T)
         gc = self.game.config
-        x_ref = self.game.rollout(self.x0, u_ref)
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        # return: (n*N, T)
+        x_ref = self.rollout_casadi(self.x0, u_ref, *params_np)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         lambda_ref = cas.DM.zeros((n*N, T))
@@ -565,8 +566,10 @@ class RD3GCasadi(BaseSolver):
 
         # n*N, T
         u_cat = u_ref.reshape((m*N, T), order='F')
+        gc = self.game.config
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         try:
-            x_ref = self.game.rollout(self.x0, u_cat)
+            x_ref = self.rollout_casadi(self.x0, u_cat, *params_np).full()
         except AttributeError:
             logger.error('cpp_only must be False to populate rollout_casadi()')
             raise

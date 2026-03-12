@@ -225,7 +225,7 @@ class CasadiGame(ABC):
         return retval
 
     def rollout(self, x0, u):
-        """ Rollout control to get state trajectory
+        """ Rollout control to get state trajectory. Casadi compatible
         Args:
             x0: (n,N)
             u: (m*N, T), u0..u_T-1
@@ -237,26 +237,24 @@ class CasadiGame(ABC):
         n = self.n
         N = self.N
         T = self.T
-        gc = self.config
-        int_param_dm = cas.DM(gc.get_int_param_np())
-        double_param_dm = cas.DM(gc.get_double_param_np())
-        params_dm = [int_param_dm, double_param_dm]
-        u = u.reshape((m, N, T), order='F')
-        X = np.zeros((n, N, T), order='F')
+        eye = cas.DM.eye(self.N)
+
         x = x0
+        X = []
         for k in range(T):
+            x_next = []
             for i in range(N):
                 xki = x[:, i]
-                uki = u[:, i, k]
-                state_i_k = self.get_state(xki)
-                i_onehot = cas.DM.eye(self.N)[:, i]
-                xi_next = self.f_casadi(cas.DM(xki), cas.DM(uki), i_onehot,
-                                        cas.DM(state_i_k), *params_dm)
-                X[:, i, k] = np.array(xi_next).flatten()
-            x = X[:, :, k]
+                uki = cas.reshape(u[:, k], m, N)[:, i]
+                stateki = self.get_state(xki)
+                i_onehot = eye[:, i]
+                xi_next = self.f(xki, uki, i_onehot, stateki)
+                x_next.append(xi_next)
+            x = cas.horzcat(*x_next)
+            # (nN, 1)
+            X.append(cas.vertcat(*x_next))
 
-        X = X.reshape((n*N, T), order='F')
-        return X
+        return cas.horzcat(*X)
 
     @abstractmethod
     def J(self, x_k, u_k_i, i_onehot):
@@ -338,4 +336,3 @@ class CasadiGame(ABC):
             return retval
         else:
             raise NotImplementedError
-        
