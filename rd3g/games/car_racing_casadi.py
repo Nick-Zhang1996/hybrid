@@ -375,7 +375,6 @@ class CarRacingCasadi(CasadiGame):
         d_v_sideway_dt = acc_cg * cas.sin(beta)
 
         total_v = cas.sqrt(state.v_forward**2 + state.v_sideway**2)
-        # FIXME somehow this gives nan, WHY?????
         d_heading_dt = total_v / param.lr * cas.sin(beta)
         d_rel_heading_dt = d_heading_dt - curvature * dsdt
 
@@ -478,7 +477,7 @@ def create_random_game(car_count=3, horizon=20):
 
     # x = [s, n, phi, v_forward, v_sideway]
     J_Qr = np.diag([0, 5.0, 0.1, 1.0, 0.1])
-    J_R = np.eye(m) * 0.5
+    J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
     s_vec = np.random.uniform(low=0.0, high=1.0, size=N)

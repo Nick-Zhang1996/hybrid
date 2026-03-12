@@ -242,20 +242,20 @@ class CasadiGame(ABC):
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
         u = u.reshape((m, N, T), order='F')
-        x_vec = [x0]
+        X = np.zeros((n, N, T), order='F')
+        x = x0
         for k in range(T):
-            x_k_vec = []
             for i in range(N):
-                xki = x_vec[-1][:, i]
+                xki = x[:, i]
                 uki = u[:, i, k]
                 state_i_k = self.get_state(xki)
                 i_onehot = cas.DM.eye(self.N)[:, i]
                 xi_next = self.f_casadi(cas.DM(xki), cas.DM(uki), i_onehot,
                                         cas.DM(state_i_k), *params_dm)
-                x_k_vec.append(np.array(xi_next).flatten())
-            x_vec.append(np.array(x_k_vec).T)
+                X[:, i, k] = np.array(xi_next).flatten()
+            x = X[:, :, k]
 
-        X = np.array(x_vec[1:]).reshape((T, n * N)).T
+        X = X.reshape((n*N, T), order='F')
         return X
 
     @abstractmethod
@@ -313,11 +313,12 @@ class CasadiGame(ABC):
         """ Create external game state. 
         This function needs a corresponding CPP implementation
         Args:
-            x: (n*N,T), states, casadi.SX symbolic variable
-            u: (m*N,T), controls, casadi.SX symbolic variable
+            x: (n*N,T), states. cas.DM or ndarray
         Returns:
             state: (n_s*N, T) external states
         """
+        if isinstance(x, cas.DM):
+            x = x.full()
         full_state = np.zeros((self.n_s, self.N, self.T), order='F')
         for i in range(self.N):
             c0i = self.get_state(self.config.x0[:, i])

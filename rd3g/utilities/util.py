@@ -5,9 +5,19 @@ import inspect
 import functools
 
 import numpy as np
+import pyttsx3
 
 # root folder of repo.
 BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+engine = pyttsx3.init()
+
+
+def talk(text):
+    engine.setProperty('rate', 150)  # Speed in words per minute
+    engine.say(text)
+    engine.runAndWait()
 
 
 def cpp_capable(py_function):

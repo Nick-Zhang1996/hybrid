@@ -316,19 +316,19 @@ class RD3GCasadi(BaseSolver):
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
 
         args = [x, u, lamda, mu, state]
-        y = cas.vertcat(*[cas.vec(val) for val in args])
 
         self.get_n_fun = cas.Function('get_n', [], [self.n])
         self.get_m_fun = cas.Function('get_m', [], [self.m])
 
         # TODO debug only
-        opts = {'regularity_check':True}
+        opts = {'regularity_check': True}
         h_val = self.game.h(x, u)
         self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val], opts)
 
         r_val, h_val = self.r(*args)
         self.r_casadi = cas.Function('r', args+config_params, [r_val, h_val], opts)
 
+        y = cas.vertcat(*[cas.vec(val) for val in [x, u, lamda, mu]])
         dr_dy = cas.jacobian(r_val, y)
         self.dr_dy_casadi = cas.Function('dr_dy', args+config_params, [dr_dy], opts)
 
@@ -553,7 +553,7 @@ class RD3GCasadi(BaseSolver):
             raise
         x = np.dstack(
             [self.x0[:, :, np.newaxis],
-                x_ref.toarray().reshape((n, N, T), order='F')])
+                x_ref.reshape((n, N, T), order='F')])
         assert x.shape == (n, N, T+1)
         return x
 
@@ -783,10 +783,12 @@ class RD3GCasadi(BaseSolver):
                 new_u = u+step_size*cas.reshape(du, m*N, T)
                 new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
                 new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
+                state.set_state(self.game.get_full_state(new_x))
                 r_val, h_val = self.r_casadi(new_x,
                                              new_u,
                                              new_lamda,
                                              new_mu,
+                                             state.state,
                                              int_param_dm, double_param_dm
                                              )
                 r_norm = norm(r_val)
