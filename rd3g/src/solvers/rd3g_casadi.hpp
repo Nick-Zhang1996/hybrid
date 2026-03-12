@@ -14,7 +14,7 @@
 #define SPDLOG_HEADER_ONLY
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ostr.h>
-#include <spdlog/fmt/ranges.h> // <--- Critical for printing containers
+#include <fmt/ranges.h> // <--- Critical for printing containers
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <pybind11/pybind11.h>
@@ -250,6 +250,7 @@ public:
                       py::array_t<double> u,
                       py::array_t<double> lamda,
                       py::array_t<double> mu,
+                      py::array_t<double> state,
                       py::array_t<double> int_param,
                       py::array_t<double> double_param) {
     // Set input args
@@ -257,6 +258,7 @@ public:
     auto u_val = u.request();
     auto lamda_val = lamda.request();
     auto mu_val = mu.request();
+    auto state_val = mu.requres();
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
@@ -264,9 +266,10 @@ public:
     wb_.args[1] = static_cast<double*>(u_val.ptr);
     wb_.args[2] = static_cast<double*>(lamda_val.ptr);
     wb_.args[3] = static_cast<double*>(mu_val.ptr);
-    wb_.args[4] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[5] = static_cast<double*>(double_param_val.ptr);
-    assert (dr_dy_.n_in() == 6);
+    wb_.args[4] = static_cast<double*>(state_val.ptr);
+    wb_.args[5] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[6] = static_cast<double*>(double_param_val.ptr);
+    assert (dr_dy_.n_in() == 7);
 
     const casadi::Sparsity& res_sp = dr_dy_.sparsity_out(0); // 0th output sparsity
     // Allocate output buffer
@@ -455,10 +458,10 @@ public:
     auto u_guess_val = u_guess.request();
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
-    //TODO ensure buffer is continuous
-
+    // Do rollout, obtain state in each step
 
     // Call rollout(x0, u_guess, int_param, double_param) -> x
+    /*
     wb_.args[0] = static_cast<double*>(x0_val.ptr);
     wb_.args[1] = static_cast<double*>(u_guess_val.ptr);
     wb_.args[2] = static_cast<double*>(int_param_val.ptr);
@@ -474,6 +477,7 @@ public:
     rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
     wb_.res[0] = nullptr; // Avoid accidentally overwriting the buffer
     Eigen::Map<MatrixXd> x(x_buffer.data(), x_sp.size1(), x_sp.size2());
+    */
 
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();

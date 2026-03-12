@@ -1,3 +1,4 @@
+#include <Python.h> // For testing include
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 
