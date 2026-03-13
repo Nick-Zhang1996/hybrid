@@ -31,5 +31,6 @@ else:
 # Say something to grep my attention
 text = "Solution Ready"
 talk(text)
+print(f'{sol.elapsed_time=}')
 
 solver.animate(sol.u)

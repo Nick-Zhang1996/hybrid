@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import pyttsx3
 
-from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
+from rd3g.games.car_racing_casadi import create_random_game
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
