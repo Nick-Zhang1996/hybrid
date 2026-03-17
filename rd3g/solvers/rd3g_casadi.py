@@ -290,7 +290,6 @@ class RD3GCasadi(BaseSolver):
         m = self.m
         T = self.T
         n_hi = self.n_hi
-        n_s = self.n_s
         gc = self.game.config
         # state: (n_s*N, T) Game state, changes between iteration, but constant within iteration.
         #     This contains variables too expensive to AD.
@@ -389,8 +388,9 @@ class RD3GCasadi(BaseSolver):
 
     def init_cpp_backend(self):
         """ Load CPP solver"""
-        # pylint:disable-next=import-outside-toplevel
-        from rd3g.src.build.lib import rd3g_casadi
+        # logger.error("Build directory %s not found. Did you compile?", build_dir)
+        # pylint:disable-next=import-outside-toplevel, no-name-in-module
+        from build.lib import rd3g_casadi
         # The source code need to be generated and compiled before the following code can be run
 
         # Load compiled solver, compare results
@@ -561,7 +561,6 @@ class RD3GCasadi(BaseSolver):
         m = self.m
         T = self.T
         N = self.N
-        gc = self.game.config
         assert u_ref.shape == (m, N, T)
 
         # n*N, T

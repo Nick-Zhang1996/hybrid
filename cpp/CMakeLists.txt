@@ -72,7 +72,7 @@ pybind11_add_module(unicycle games/unicycle.cpp)
 # --- CasADi compatible games ---
 # add_library(car_merge_kinematic_bicycle_casadi_N3_T20 SHARED
 #            games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N3_T20.cpp)
-file(GLOB CASADI_SOURCES "games/casadi_codegen/*.cpp")
+file(GLOB CASADI_SOURCES "../casadi_codegen/*.cpp")
 
 foreach(SOURCE_FILE ${CASADI_SOURCES})
     # Extract the filename without extension

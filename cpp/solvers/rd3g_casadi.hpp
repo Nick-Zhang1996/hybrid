@@ -199,8 +199,7 @@ class Rd3gCasadi {
     // game (module name), N, T -> this determines a unique dll name.
     std::stringstream ss;
     ss << "lib" << casadi_module_name << "_N" << N << "_T" << T << ".so";
-    fs::path lib_path =
-        fs::path(base_dir) / "rd3g" / "src" / "build" / "lib" / ss.str();
+    fs::path lib_path = fs::path(base_dir) / "build" / "lib" / ss.str();
 
     r_ = safe_load_fun("r", lib_path);
     dr_dy_ = safe_load_fun("dr_dy", lib_path);

@@ -25,7 +25,7 @@ def generate_code(solver):
     config = game.config
 
     # Switch working directory
-    codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'games', 'casadi_codegen')
+    codegen_dir = os.path.join(BASEDIR, 'casadi_codegen')
     if not os.path.exists(codegen_dir):
         os.makedirs(codegen_dir)
     old_cwd = os.getcwd()
@@ -39,7 +39,6 @@ def generate_code(solver):
     cg.add(solver.dr_dy_casadi)
     cg.add(solver.h_casadi)
     cg.add(solver.collision_h_casadi)
-    cg.add(solver.rollout_casadi)
     cg.add(solver.get_n_fun)
     cg.add(solver.get_m_fun)
     cg.add(solver.get_state_casadi)
