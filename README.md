@@ -11,10 +11,10 @@ To build and run the project, first clone the repository, then do the following 
 * The code can run with just python, To use the python version, set `USE_CPP = False`
 
 To build the cpp code
-* Generate code with casadi, run `uv run scripts/generate_casadi`
+* Generate code with casadi, run `uv run scripts/generate_casadi_code.py`, the generated code is under `/casadi_codegen`
 * From the root directory `mkdir build`, `cd build`. This is where you will build the cpp code and create the cython library. 
-* build the cpp libraries, from `build/`, do `uv run cmake ../cpp`, then `uv run cmake --build`
-* if everything goes well you will see a `cython-xxxx.so` in `build/lib/`
+* build the cpp libraries, from `/build/`, do `uv run cmake ../cpp`, then `uv run cmake --build`
+* if everything goes well you will see a `cython-xxxx.so` in `/build/lib/`
 * go back to root, and run `uv run scripts/solve_merge.py` You should see some plots and an animation.
 
 * If running from WSL, make sure you have external window client running such as Xming to see the visualization. Then export the display to whatever server is running the window (e.g. export DISPLAY=0:0)
