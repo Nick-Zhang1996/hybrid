@@ -14,10 +14,10 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed()
+np.random.seed(1)
 cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
-game = create_random_game(car_count=4, horizon=20)
+game = create_random_game(car_count=4, horizon=40)
 solver = RD3GCasadi(solver_config, game, cpp_only=False)
 gc = game.config
 # u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
@@ -33,4 +33,4 @@ text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}')
 
-solver.animate(sol.u)
+solver.animate(sol.u, save_gif=True)

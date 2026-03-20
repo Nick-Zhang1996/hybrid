@@ -18,6 +18,7 @@ from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car import CarConfig
 from buzzracer.tracks.nascar_track import NascarTrack
 from buzzracer.tracks.track_factory import TrackFactory
+from buzzracer.tracks.track import TrackConfig
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
 from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
@@ -34,11 +35,15 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     N: int = 3
     n: int = 5
     m: int = 2
-    n_hi: int = 3 * 20  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_hi: int = 3 * 20
+    """ Total number of constraints for EACH agent, 
+    e.g. pairwise collision only: N*T
+    two-circle collision model 4 * N * T
+    """
     n_s: int = 1  # Number of external states per agent per stage
 
     collision_radius: float = 80e-3
-    """ Minimum distance between two cars"""
+    """ Minimum distance between the origin of two cars"""
     double_circle_h: bool = False
     """ Use two circles instead of one for collision"""
 
@@ -256,7 +261,7 @@ class CarRacingCasadi(CasadiGame):
         anim = FuncAnimation(fig, update, frames=self.T, blit=False)
 
         folder = os.path.join(BASEDIR, 'gifs')
-        gif_filename = os.path.join(folder, f'merge_{self.N}car.gif')
+        gif_filename = os.path.join(folder, f'racing_{self.N}car.gif')
         if save_gif:
             anim.save(gif_filename, writer='pillow')
             logger.info(f'Gif saved to {gif_filename}')
@@ -473,12 +478,14 @@ def create_random_game(car_count=3, horizon=20):
     m: int = default.m
 
     # x = [s, n, phi, v_forward, v_sideway]
-    J_Qr = np.diag([0, 5.0, 0.1, 1.0, 0.1])
+    # J_Qr = np.diag([0, 5.0, 0.1, 1.0, 0.1])
+    # J_R = np.eye(m) * 1.0
+    J_Qr = np.diag([0, 5.0, 0.5, 2.0, 0.1])
     J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
     s_vec = np.random.uniform(low=0.0, high=2.0, size=N)
-    v_vec = np.random.uniform(low=0.5, high=2.0, size=N)
+    v_vec = np.random.uniform(low=0.5, high=1.5, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
     n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
     vs_vec = np.zeros(N)
