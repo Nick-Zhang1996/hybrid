@@ -171,6 +171,9 @@ class CasadiGame(ABC):
         self.n_s = config.n_s
         self.m = config.m
         self.x0 = config.x0
+        c = config
+        empty = np.zeros((c.n_s*c.N, c.T), order='F')
+        self.state = CasadiGameState(state=empty)
 
         x_k_i = cas.SX.sym('x_k_i', self.n, 1)
         u_k_i = cas.SX.sym('u_k_i', self.m, 1)

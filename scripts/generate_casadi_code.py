@@ -41,6 +41,8 @@ def codegen_racing(car_count, horizon):
 
 if __name__ == "__main__":
     codegen_racing(4, 20)
+    codegen_merge(4, 40)
+    codegen_intersection(4, 40)
     for T in [20]:
         for i in range(2, 9):
             # codegen_merge(i, T)

@@ -15,7 +15,7 @@ logger.setLevel(logging.INFO)
 np.random.seed(5)
 # np.random.seed()
 cpp = True
-game = create_random_game(car_count=8, horizon=20)
+game = create_random_game(car_count=4, horizon=40)
 solver_config = RD3GCasadiConfig(inertia_correction=True)
 solver = RD3GCasadi(solver_config, game, cpp_only=False)
 if cpp:

@@ -12,16 +12,15 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.animation import FuncAnimation
 import casadi as cas
-from scipy.interpolate import splev
 
 from buzzracer.types import CurvilinearState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car import CarConfig
-from buzzracer.tracks.track import TrackConfig
 from buzzracer.tracks.nascar_track import NascarTrack
+from buzzracer.tracks.track_factory import TrackFactory
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig, CasadiGameState
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -86,8 +85,6 @@ class CarRacingCasadi(CasadiGame):
         self.track = track
         self.car_param = CarConfig.porsche_18.value
         super().__init__(config)
-        empty = np.zeros((self.config.N, self.config.T), order='F')
-        self.state = CasadiGameState(state=empty)
 
         # n_hi is a new concept
         self.n_hi = config.n_hi
@@ -480,10 +477,10 @@ def create_random_game(car_count=3, horizon=20):
     J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
-    s_vec = np.random.uniform(low=0.0, high=1.0, size=N)
-    v_vec = np.random.uniform(low=1.0, high=2.0, size=N)
+    s_vec = np.random.uniform(low=0.0, high=2.0, size=N)
+    v_vec = np.random.uniform(low=0.5, high=2.0, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
-    n_vec = np.random.uniform(low=-0.3, high=0.3, size=N)
+    n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
     vs_vec = np.zeros(N)
 
     # n, N
@@ -504,6 +501,7 @@ def create_random_game(car_count=3, horizon=20):
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),
         J_R=J_R.copy(order='F'))
-    track_config = TrackConfig()
-    track = NascarTrack(track_config)
+    # track_config = TrackConfig()
+    # track = NascarTrack(track_config)
+    track = TrackFactory.build('saved')
     return CarRacingCasadi(config, track)

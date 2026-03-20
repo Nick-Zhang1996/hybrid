@@ -30,6 +30,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     n: int = 4
     m: int = 2
     n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_s: int = 0  # Number of external states per agent per stage, unused in this game
 
     lane_width: float = 2.2  # Each lane width
     hori_lanes: int = 2  # Number of horizontal lanes
@@ -276,23 +277,6 @@ class IntersectionCasadi(CasadiGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
-    def F(self, x_k, u_k):
-        """ Dynamics for all agents
-        Args:
-            x_k: (n,N)
-            u_k: (m,N)
-        Return:
-            x_k_next: (n,N)
-        """
-        x_k_next_vec = []
-        for i in range(self.N):
-            i_onehot = cas.SX.eye(self.N)[:, i]
-            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
-        retval = cas.horzcat(*x_k_next_vec)
-        assert retval.shape == (self.n, self.N)
-        return retval
-
-    # pylint: disable-next=arguments-renamed
     def J(self, x_k, u_k_i, i_onehot):
         """
         Stage cost for an agent, given x,u
@@ -314,22 +298,22 @@ class IntersectionCasadi(CasadiGame):
         val = cas.sum(dx**2 * J_Qr_diag) + u_k_i.T @ J_R @ u_k_i
         return val
 
-    # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    # pylint: disable-next=arguments-renamed
-    def f(self, x_k_i, u_k_i, i_onehot):
+    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i [x,y,v,theta]
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            state_i_k: (n_s=1,) Signed curvature value
         Return:
             (n,1) The next state, progressed by self.dt
 
         this problem has homogeneous agents, so [i] is irrelevant"""
+        del state_i_k
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)

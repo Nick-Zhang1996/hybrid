@@ -29,6 +29,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     n: int = 4
     m: int = 2
     n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_s: int = 0  # Number of external states per agent per stage, unused in this game
     track_width: float = 2.2
     collision_radius: float = 2.0
 
@@ -307,8 +308,6 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
-    # pylint: disable-next=arguments-renamed
-
     def J(self, x_k, u_k_i, i_onehot):
         """
         Stage cost for an agent, given
@@ -330,18 +329,17 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i + M @ x_k_i - cas.sum(M @ x_k)
         return val
 
-    # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    # pylint: disable-next=arguments-renamed
-    def f(self, x_k_i, u_k_i, i_onehot):
+    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            state_i_k: (n_s=0,), unused
         Return:
             (n,1) The next state, progressed by self.dt
 
@@ -349,6 +347,7 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
+        del state_i_k
         lf = 1.0
         lr = 1.0
         beta = cas.atan(cas.tan(u_k_i[1]) * lr / (lf + lr))
