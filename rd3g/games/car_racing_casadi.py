@@ -15,7 +15,7 @@ import casadi as cas
 
 from buzzracer.types import CurvilinearState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
-from buzzracer.cars.car import CarConfig
+from buzzracer.cars.car_param import CarConfig
 from buzzracer.tracks.nascar_track import NascarTrack
 from buzzracer.tracks.track_factory import TrackFactory
 from buzzracer.tracks.track import TrackConfig
@@ -32,19 +32,19 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
     T: int = 20
     dt: float = 0.05
-    N: int = 3
+    N: int = 4
     n: int = 5
     m: int = 2
-    n_hi: int = 3 * 20
-    """ Total number of constraints for EACH agent, 
+    n_hi: int = 4 * 3 * 20
+    """ Total number of constraints for EACH agent,
     e.g. pairwise collision only: N*T
     two-circle collision model 4 * N * T
     """
-    n_s: int = 1  # Number of external states per agent per stage
+    n_s: int = 3  # Number of external states per agent per stage
 
     collision_radius: float = 80e-3
     """ Minimum distance between the origin of two cars"""
-    double_circle_h: bool = False
+    double_circle_h: bool = True
     """ Use two circles instead of one for collision"""
 
     x0: Any = None
@@ -106,18 +106,22 @@ class CarRacingCasadi(CasadiGame):
         # Moved to state, outside of casadi because the code generated is too long
 
         # Curvature function
-        s_vec = [track.data.s_vec.tolist()]
+        s_vec = track.data.s_vec.tolist()
         c_vec = track.data.curvature_vec.tolist()
+        left_vec = track.data.left_width_vec.tolist()
+        right_vec = track.data.right_width_vec.tolist()
 
-        s = np.array(s_vec[0])
-        c = np.array(c_vec)
-        assert np.all(np.diff(s) > 0), "s_vec must be monotonic"
-        assert not np.isnan(c).any(), "No NaNs"
+        assert np.all(np.diff(np.asarray(s_vec)) > 0), "s_vec must be monotonic"
+        assert not np.isnan(np.asarray(c_vec)).any(), "No NaNs in curvature"
+        assert not np.isnan(np.asarray(left_vec)).any(), "No NaNs in left width"
+        assert not np.isnan(np.asarray(right_vec)).any(), "No NaNs in right width"
 
         # Arguments: (name, plugin, grid, values)
         # 'bspline' creates a cubic B-spline by default, ensuring smooth gradients.
         # 'linear' creates a linear lookup, simplifying gradient
-        self.curvature_fun = cas.interpolant('curvature', 'bspline', s_vec, c_vec)
+        self.curvature_fun = cas.interpolant('curvature', 'bspline', [s_vec], c_vec)
+        self.left_width_fun = cas.interpolant('left_width', 'bspline', [s_vec], left_vec)
+        self.right_width_fun = cas.interpolant('right_width', 'bspline', [s_vec], right_vec)
 
         color_names = [
             'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan',
@@ -302,13 +306,13 @@ class CarRacingCasadi(CasadiGame):
     def get_state(self, x_k_i):
         """ Calculate game state for one agent at one step
         Args:
-            x_k_i: (n,) 
+            x_k_i: (n,)
         Return:
-            Curvature, scalar
+            state: (n_s=3, ) curvature, lateral offset low_bound, high bound
         """
-        # c = splev(x_k_i[0], self.track.data.curvature_s, der=0)
-        # return c[0].item()
-        return self.curvature_fun(x_k_i[0])
+        return cas.vertcat(self.curvature_fun(x_k_i[0]),
+                           self.left_width_fun(x_k_i[0]),
+                           self.right_width_fun(x_k_i[0]))
 
     def J(self, x_k, u_k_i, i_onehot):
         """
@@ -366,7 +370,7 @@ class CarRacingCasadi(CasadiGame):
 
         dsdt = (state.v_forward * cas.cos(state.heading_err) -
                 state.v_sideway * cas.sin(state.heading_err)) / (
-                    1 - state.lateral_err * curvature)
+            1 - state.lateral_err * curvature)
         dndt = state.v_forward * cas.sin(state.heading_err) + \
             state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
@@ -411,7 +415,7 @@ class CarRacingCasadi(CasadiGame):
                 xk = cas.reshape(x[:, k - 1], self.n, self.N)
                 h_vals = [
                     self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)
-                ]
+                ] + [self.boundary_h(xk[:, i])]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 # TODO remove this dummy collision
                 if self.config.double_circle_h:
@@ -423,7 +427,7 @@ class CarRacingCasadi(CasadiGame):
                     assert h_vals.shape == (self.N * 4, 1)
                 else:
                     assert h_vals.shape == (self.N, 1)
-                hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N)
+                hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N) + 2 (boundary)
             # Additional constraints for agent i, None here
             h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
 
@@ -468,6 +472,17 @@ class CarRacingCasadi(CasadiGame):
             vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] - x_j[1, 0])**2 + d**2
         return vals
 
+    def boundary_h(self, x, state):
+        """ Boundary violation constraints
+        Args:
+            x: (n,1) State
+            state: (n_s, 1) Context, [curvature, left_margin, right_margin]
+        Return:
+            h_val: (2,1) h_val <=0 means car is 
+        """
+        h_val = cas.vertcat(x[1] - state[1],  -x[1] - state[2])
+        return h_val
+
 
 def create_random_game(car_count=3, horizon=20):
     """ Create a Car Racing Game instance with random initial states"""
@@ -484,7 +499,7 @@ def create_random_game(car_count=3, horizon=20):
     J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
-    s_vec = np.random.uniform(low=0.0, high=2.0, size=N)
+    s_vec = np.random.uniform(low=2.0, high=3.0, size=N)
     v_vec = np.random.uniform(low=0.5, high=1.5, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
     n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
@@ -492,6 +507,14 @@ def create_random_game(car_count=3, horizon=20):
 
     # n, N
     x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
+
+    # DEBUG
+    x0 = np.array([[0.41009245,  0.14780548, 10.88458678, 10.62686613],
+                   [-0.3288734, -0.30820081, -0.26015946, -0.17200984],
+                   [-0.05212877, -0.12586385, -0.29974721, -0.45952665],
+                   [1.,  1.,  1.,  1.],
+                   [0.,  0.,  0.,  0.]])
+
     x_ref = np.zeros((n, N))
     x_ref[3, :] = v_vec  # target initial speed
 

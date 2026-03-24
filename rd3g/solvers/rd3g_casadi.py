@@ -425,7 +425,7 @@ class RD3GCasadi(BaseSolver):
                 logger.error('CasADi Failed to load dll, make sure its compiled')
             raise
 
-    def solve_cpp_backend(self):
+    def solve_cpp_backend(self, u_ref=None):
         if self.cpp_solver is None:
             logger.error('Call init_cpp_backend() first')
             raise RuntimeError
@@ -433,10 +433,11 @@ class RD3GCasadi(BaseSolver):
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
 
-        u_ref = np.zeros((self.m*self.N, self.T), order='F')
+        if u_ref is None:
+            u_ref = np.zeros((self.m*self.N, self.T), order='F')
         assert np.isfortran(self.x0)
         assert np.isfortran(u_ref)
-        # NOTE x0 is in params_np and also passed explicitly here
+        # TODO NOTE x0 is in params_np and also passed explicitly here
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
         # Although they are identical, there should be a single source of truth.
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
@@ -501,7 +502,7 @@ class RD3GCasadi(BaseSolver):
                         has_converged=has_converged,
                         is_optimal=is_optimal)
 
-    def solve(self):
+    def solve(self, u_ref=None):
         N = self.N
         T = self.T
         n = self.n
@@ -509,10 +510,11 @@ class RD3GCasadi(BaseSolver):
         n_hi = self.n_hi
         # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
         logger.debug(
-            f'primal variables:{(T*N*n) +(T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
+            f'primal variables:{(T*N*n) + (T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
         )
 
-        u_ref = np.zeros((m*N, T), order='F')
+        if u_ref is None:
+            u_ref = np.zeros((m*N, T), order='F')
         # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]

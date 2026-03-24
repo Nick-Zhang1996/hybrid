@@ -17,7 +17,7 @@ logger.setLevel(logging.INFO)
 np.random.seed(1)
 cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
-game = create_random_game(car_count=4, horizon=40)
+game = create_random_game(car_count=4, horizon=20)
 solver = RD3GCasadi(solver_config, game, cpp_only=False)
 gc = game.config
 # u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
@@ -31,6 +31,6 @@ else:
 # Say something to grep my attention
 text = "Solution Ready"
 talk(text)
-print(f'{sol.elapsed_time=}')
+print(f'{sol.elapsed_time=}, {sol.residual=}')
 
-solver.animate(sol.u, save_gif=True)
+solver.animate(sol.u, save_gif=False)
