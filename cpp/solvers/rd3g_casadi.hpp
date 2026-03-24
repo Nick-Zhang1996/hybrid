@@ -134,7 +134,7 @@ class Rd3gCasadi {
   cas::Function rollout_;
   cas::Function h_;
   cas::Function collision_h_;
-  cas::Function get_full_state_;
+  cas::Function get_full_context_;
   std::vector<cas::Function> Ki_vec_;
   // std::vector<cas::Function> ri_vec_;
 
@@ -206,7 +206,7 @@ class Rd3gCasadi {
     rollout_ = safe_load_fun("rollout", lib_path);
     h_ = safe_load_fun("h", lib_path);
     collision_h_ = safe_load_fun("collision_h", lib_path);
-    get_full_state_ = safe_load_fun("get_full_state", lib_path);
+    get_full_context_ = safe_load_fun("get_full_context", lib_path);
 
     cas::Function get_n = safe_load_fun("get_n", lib_path);
     cas::Function get_m = safe_load_fun("get_m", lib_path);
@@ -219,7 +219,7 @@ class Rd3gCasadi {
     }
 
     wb_ = get_max_buffer({r_, dr_dy_, rollout_, h_, collision_h_,
-                          get_full_state_, get_n, get_m});
+                          get_full_context_, get_n, get_m});
 
     std::vector<double> n_buffer(get_n.sparsity_out(0).nnz());
     wb_.res[0] = n_buffer.data();
@@ -243,10 +243,11 @@ class Rd3gCasadi {
 
   // Evaluate dr_dy function from casadi using python arguments.
   // Demonstrating data representation conversion and call procedure
-  SparseMatrixResult casadi_dr_dy(py::array_t<double> x, py::array_t<double> u,
+  SparseMatrixResult casadi_dr_dy(py::array_t<double> x,
+                                  py::array_t<double> u,
                                   py::array_t<double> lamda,
                                   py::array_t<double> mu,
-                                  py::array_t<double> state,
+                                  py::array_t<double> context,
                                   py::array_t<double> int_param,
                                   py::array_t<double> double_param) {
     // Set input args
@@ -254,7 +255,7 @@ class Rd3gCasadi {
     auto u_val = u.request();
     auto lamda_val = lamda.request();
     auto mu_val = mu.request();
-    auto state_val = mu.request();
+    auto context_val = context.request();
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
@@ -262,7 +263,7 @@ class Rd3gCasadi {
     wb_.args[1] = static_cast<double*>(u_val.ptr);
     wb_.args[2] = static_cast<double*>(lamda_val.ptr);
     wb_.args[3] = static_cast<double*>(mu_val.ptr);
-    wb_.args[4] = static_cast<double*>(state_val.ptr);
+    wb_.args[4] = static_cast<double*>(context_val.ptr);
     wb_.args[5] = static_cast<double*>(int_param_val.ptr);
     wb_.args[6] = static_cast<double*>(double_param_val.ptr);
     assert(dr_dy_.n_in() == 7);
@@ -516,29 +517,29 @@ class Rd3gCasadi {
     // Call h_val(), r(), dr_dy() to get full_r0 and full_KKT
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
-    // Get game state
-    // Call get_full_state_(x)
+    // Get game context
+    // Call get_full_context_(x)
     wb_.args[0] = static_cast<double*>(x.data());
-    assert(get_full_state_.n_in() == 1);
-    assert(get_full_state_.sparsity_in(0).is_dense());
-    casadi::Sparsity full_state_sp = get_full_state_.sparsity_out(0);
-    assert(full_state_sp.is_dense());
-    std::vector<double> full_state_buffer(full_state_sp.nnz());
-    wb_.res[0] = full_state_buffer.data();
-    assert(get_full_state_.n_out() == 1);
+    assert(get_full_context_.n_in() == 1);
+    assert(get_full_context_.sparsity_in(0).is_dense());
+    casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
+    assert(full_context_sp.is_dense());
+    std::vector<double> full_context_buffer(full_context_sp.nnz());
+    wb_.res[0] = full_context_buffer.data();
+    assert(get_full_context_.n_out() == 1);
 
-    get_full_state_(wb_.args.data(), wb_.res.data(), wb_.iw.data(),
+    get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(),
                     wb_.w.data(), 0);
     wb_.res[0] = nullptr;
 
     // logger_->debug("Getting r0 and KKT matrix...");
     // Get residual
-    // full_r0 = r(x, u, lamda, mu, state, int_param, double_param)
+    // full_r0 = r(x, u, lamda, mu, context, int_param, double_param)
     wb_.args[0] = static_cast<double*>(x.data());
     wb_.args[1] = static_cast<double*>(u.data());
     wb_.args[2] = static_cast<double*>(lamda.data());
     wb_.args[3] = static_cast<double*>(mu.data());
-    wb_.args[4] = static_cast<double*>(full_state_buffer.data());
+    wb_.args[4] = static_cast<double*>(full_context_buffer.data());
     wb_.args[5] = static_cast<double*>(int_param_val.ptr);
     wb_.args[6] = static_cast<double*>(double_param_val.ptr);
     assert(r_.n_in() == 7);
@@ -555,9 +556,9 @@ class Rd3gCasadi {
     if (u.hasNaN()) logger_->warn("u has nan");
     if (lamda.hasNaN()) logger_->warn("lamda has nan");
     if (mu.hasNaN()) logger_->warn("mu has nan");
-    if (std::any_of(full_state_buffer.begin(), full_state_buffer.end(),
+    if (std::any_of(full_context_buffer.begin(), full_context_buffer.end(),
                     [](double x) { return std::isnan(x); })) {
-      logger_->warn("full_state has nan");
+      logger_->warn("full_context has nan");
     }
 
     casadi::Sparsity full_r0_sp = r_.sparsity_out(0);
@@ -582,7 +583,7 @@ class Rd3gCasadi {
                                h_val_sp.size2());
 
     // Get Game Jacobian
-    // Call full_KKT = dr_dy(x, u, lamda, mu, state, int_param, double_param)
+    // Call full_KKT = dr_dy(x, u, lamda, mu, context, int_param, double_param)
     // Same input as r() call
     assert(dr_dy_.n_in() == 7);
     assert(dr_dy_.sparsity_in(0).is_dense());

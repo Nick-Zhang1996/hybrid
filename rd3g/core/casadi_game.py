@@ -15,33 +15,33 @@ logger.setLevel(logging.INFO)
 
 
 @dataclass
-class CasadiGameState:
-    """ Game state with CasADi SX object.
-    state: (n_s*N, T) Game state, changes between iteration, but constant within iteration. 
+class CasadiGameContext:
+    """ Game context with CasADi SX object.
+    context: (n_s*N, T) Game context, changes between iteration, but constant within iteration. 
         This contains variables too expensive to AD. 
         e.g. path curvature at each player position.
         Correspond to k=0..T-1
     """
-    state: np.ndarray
-    _state_sx: dict = field(init=False, repr=False)
+    context: np.ndarray
+    _context_sx: dict = field(init=False, repr=False)
     _shape: tuple = field(init=False, repr=False)
 
     def __post_init__(self):
-        self._state_sx = cas.SX.sym('state', *self.state.shape)
-        self._shape = self.state.shape
+        self._context_sx = cas.SX.sym('context', *self.context.shape)
+        self._shape = self.context.shape
 
-    def set_state(self, value):
+    def set_context(self, value):
         assert value.shape == self._shape
         assert value.flags['F_CONTIGUOUS']
-        self.state = value
+        self.context = value
 
-    def get_state_np(self):
-        """ Create current state as a flattened np array"""
-        return np.asarray(self.state.flatten(), order='F')
+    def get_context_np(self):
+        """ Create current context as a flattened np array"""
+        return np.asarray(self.context.flatten(), order='F')
 
-    def get_state_sx(self):
-        """ Get CasADi SX parameter for the state"""
-        return self._state_sx
+    def get_context_sx(self):
+        """ Get CasADi SX parameter for the context"""
+        return self._context_sx
 
 
 @dataclass(frozen=True)
@@ -168,17 +168,17 @@ class CasadiGame(ABC):
         self.N = config.N
         self.n = config.n
         self.n_hi = config.n_hi
-        self.n_s = config.n_s
+        self.n_c = config.n_c
         self.m = config.m
         self.x0 = config.x0
         c = config
-        empty = np.zeros((c.n_s*c.N, c.T), order='F')
-        self.state = CasadiGameState(state=empty)
+        empty = np.zeros((c.n_c*c.N, c.T), order='F')
+        self.context = CasadiGameContext(context=empty)
 
         x_k_i = cas.SX.sym('x_k_i', self.n, 1)
         u_k_i = cas.SX.sym('u_k_i', self.m, 1)
         i_onehot = cas.SX.sym('i_onehot', self.N, 1)
-        state_i_k = cas.SX.sym('state_i_k', self.n_s, 1)
+        state_i_k = cas.SX.sym('state_i_k', self.n_c, 1)
         f_args = [x_k_i, u_k_i, i_onehot, state_i_k]
         gc = self.config
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
@@ -206,38 +206,16 @@ class CasadiGame(ABC):
             save_snapshots:
         """
 
-    def F(self, x_k, u_k):
-        """ Dynamics for all agents. 
-        This is use only in rollout, not in residual.
-        Therefore, this calls the external get_state() function
-        Args:
-            x_k: (n,N)
-            u_k: (m,N)
-        Return:
-            x_k_next: (n,N)
-        """
-        raise NotImplementedError
-        x_k_next_vec = []
-        for i in range(self.N):
-            i_onehot = cas.SX.eye(self.N)[:, i]
-            state_k_i = self.get_state(x_k[:, i])
-            x_k_next_vec.append(
-                self.f(x_k[:, i], u_k[:, i], i_onehot, state_k_i))
-        retval = cas.horzcat(*x_k_next_vec)
-        assert retval.shape == (self.n, self.N)
-        return retval
-
     def rollout(self, x0, u):
         """ Rollout control to get state trajectory. Casadi compatible
         Args:
             x0: (n,N)
             u: (m*N, T), u0..u_T-1
-            state: (n_s*N, T)
+            context: (n_c*N, T)
         Return:
             X: (n*N, T) x1..xT
         """
         m = self.m
-        n = self.n
         N = self.N
         T = self.T
         eye = cas.DM.eye(self.N)
@@ -249,9 +227,9 @@ class CasadiGame(ABC):
             for i in range(N):
                 xki = x[:, i]
                 uki = cas.reshape(u[:, k], m, N)[:, i]
-                stateki = self.get_state(xki)
+                contextki = self.get_context(xki)
                 i_onehot = eye[:, i]
-                xi_next = self.f(xki, uki, i_onehot, stateki)
+                xi_next = self.f(xki, uki, i_onehot, contextki)
                 x_next.append(xi_next)
             x = cas.horzcat(*x_next)
             # (nN, 1)
@@ -278,13 +256,13 @@ class CasadiGame(ABC):
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
     @abstractmethod
-    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
+    def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: (N, 1) agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
-            state_i_k: (n_s,) Game state
+            context_i_k: (n_c,) Game context
         Return:
             (n,1) The next state, progressed by self.dt
         """
@@ -300,42 +278,12 @@ class CasadiGame(ABC):
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
 
-    def get_state(self, x_k_i):
-        """ Calculate game state for one agent at one step
+    def get_context(self, x_k_i):
+        """ Calculate game context for one agent at one step
         Args:
             x_k_i: (n, 1), cas.DM
         Return:
-            State vector for this state, (n_s, 10
+            Context vector for this state, (n_s, 10
         """
+        del x_k_i
         return cas.SX.zeros(0, 1)
-
-    def get_full_state_np(self, x):
-        """ Create external game state. 
-        This function needs a corresponding CPP implementation
-        Args:
-            x: (n*N,T), states. cas.DM or ndarray TODO update
-        Returns:
-            state: (n_s*N, T) external states
-        """
-        n = self.n
-        N = self.N
-        m = self.m
-        T = self.T
-        n_s = self.n_s
-
-        if isinstance(x, np.ndarray):
-            # Numpy version
-            full_state = np.zeros((n_s, N, T), order='F')
-            for i in range(N):
-                c0i = self.get_state(self.config.x0[:, i])
-                full_state[:, i, 0] = c0i
-
-            for k in range(1, T):
-                for i in range(N):
-                    xki = x[:, k - 1].reshape((n, N), order='F')[:, i]
-                    cki = self.get_state(xki)
-                    full_state[:, i, k] = cki
-            retval = full_state.reshape((n_s * N, T), order='F')
-            return retval
-        else:
-            raise NotImplementedError

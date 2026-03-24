@@ -30,7 +30,7 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     n: int = 4
     m: int = 2
     n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
-    n_s: int = 0  # Number of external states per agent per stage, unused in this game
+    n_c: int = 0  # Size of context var per agent per stage, unused in this game
 
     lane_width: float = 2.2  # Each lane width
     hori_lanes: int = 2  # Number of horizontal lanes
@@ -302,18 +302,18 @@ class IntersectionCasadi(CasadiGame):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
+    def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i [x,y,v,theta]
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
-            state_i_k: (n_s=1,) Signed curvature value
+            context_i_k: (n_c=0,) Unused
         Return:
             (n,1) The next state, progressed by self.dt
 
         this problem has homogeneous agents, so [i] is irrelevant"""
-        del state_i_k
+        del context_i_k
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)

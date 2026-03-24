@@ -40,7 +40,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     e.g. pairwise collision only: N*T
     two-circle collision model 4 * N * T
     """
-    n_s: int = 3  # Number of external states per agent per stage
+    n_c: int = 3  # Size of context variable for per agent per stage
 
     collision_radius: float = 80e-3
     """ Minimum distance between the origin of two cars"""
@@ -93,7 +93,7 @@ class CarRacingCasadi(CasadiGame):
 
         # n_hi is a new concept
         self.n_hi = config.n_hi
-        self.n_s = config.n_s
+        self.n_c = config.n_c
 
         # bounds for visualization
 
@@ -102,8 +102,6 @@ class CarRacingCasadi(CasadiGame):
 
         # Image wheelbase: 300px, car wheelbase 98e-3 m
         self.car_scale = 98e-3 / 300
-
-        # Moved to state, outside of casadi because the code generated is too long
 
         # Curvature function
         s_vec = track.data.s_vec.tolist()
@@ -303,12 +301,12 @@ class CarRacingCasadi(CasadiGame):
             logger.info(f'saved snapshots to {filename}')
         return
 
-    def get_state(self, x_k_i):
-        """ Calculate game state for one agent at one step
+    def get_context(self, x_k_i):
+        """ Calculate game context for one agent at one step
         Args:
             x_k_i: (n,)
         Return:
-            state: (n_s=3, ) curvature, lateral offset low_bound, high bound
+            context: (n_c=3, ) curvature, lateral offset low_bound, high bound
         """
         return cas.vertcat(self.curvature_fun(x_k_i[0]),
                            self.left_width_fun(x_k_i[0]),
@@ -338,7 +336,7 @@ class CarRacingCasadi(CasadiGame):
         """ Final cost"""
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
-    def f(self, x_k_i, u_k_i, i_onehot, state_i_k):
+    def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
             u = [steering, throttle]
             x = [s, n, phi, v_forward, v_sideway]
@@ -347,7 +345,7 @@ class CarRacingCasadi(CasadiGame):
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
-            state_i_k: (n_s=1,) Signed curvature value
+            context_i_k: (n_c=1,) Signed curvature value
         Return:
             (n,1) The next state, progressed by self.dt
 
@@ -363,7 +361,7 @@ class CarRacingCasadi(CasadiGame):
                                 v_sideway=x_k_i[4, 0])
         control = SimpleNamespace(steering=u_k_i[0, 0], throttle=u_k_i[1, 0])
         # curvature = self.curvature_fun(state.progress)
-        curvature = state_i_k
+        curvature = context_i_k[0]
 
         beta = cas.arctan(
             cas.tan(control.steering) * param.lr / (param.lf + param.lr))
@@ -472,15 +470,15 @@ class CarRacingCasadi(CasadiGame):
             vals = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (x_i[1, 0] - x_j[1, 0])**2 + d**2
         return vals
 
-    def boundary_h(self, x, state):
+    def boundary_h(self, x, context):
         """ Boundary violation constraints
         Args:
             x: (n,1) State
-            state: (n_s, 1) Context, [curvature, left_margin, right_margin]
+            context: (n_c, 1) Context, [curvature, left_margin, right_margin]
         Return:
             h_val: (2,1) h_val <=0 means car is 
         """
-        h_val = cas.vertcat(x[1] - state[1],  -x[1] - state[2])
+        h_val = cas.vertcat(x[1] - context[1],  -x[1] - context[2])
         return h_val
 
 
