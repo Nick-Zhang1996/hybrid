@@ -268,12 +268,13 @@ class CasadiGame(ABC):
         """
 
     @abstractmethod
-    def h(self, x, u):
+    def h(self, x, u, context):
         """ Inequality constraint function.
         h() is a mapping from (x,u) to all constraints.
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
             u: (m*N,T), controls, casadi.SX symbolic variable
+            context: (n_c*N, T), context variable. [curvature, left margin, right margin]
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """

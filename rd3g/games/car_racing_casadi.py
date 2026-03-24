@@ -35,10 +35,10 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     N: int = 4
     n: int = 5
     m: int = 2
-    n_hi: int = 4 * 3 * 20
+    n_hi: int = 4 * 4 * 20 + 2*20
     """ Total number of constraints for EACH agent,
-    e.g. pairwise collision only: N*T
     two-circle collision model 4 * N * T
+    boundary 2*T
     """
     n_c: int = 3  # Size of context variable for per agent per stage
 
@@ -394,12 +394,13 @@ class CarRacingCasadi(CasadiGame):
 
         return next_x
 
-    def h(self, x, u):
+    def h(self, x, u, context):
         """ Construct the inequality constraint function.
         h() is a mapping from (x,u) to all constraints.
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
             u: (m*N,T), controls, casadi.SX symbolic variable
+            context: (n_c*N, T), context variable. [curvature, left margin, right margin]
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
@@ -408,12 +409,13 @@ class CarRacingCasadi(CasadiGame):
             hi_vec = []
             # Collision constraint collison_h(xi, xj) 4*N*T
             for k in range(1, self.T + 1):
+                context_i_k = cas.reshape(context[:, k-1], self.n_c, self.N)
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
                 xk = cas.reshape(x[:, k - 1], self.n, self.N)
                 h_vals = [
                     self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)
-                ] + [self.boundary_h(xk[:, i])]
+                ] + [self.boundary_h(xk[:, i], context_i_k[:, i])]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 # TODO remove this dummy collision
                 if self.config.double_circle_h:
@@ -422,16 +424,15 @@ class CarRacingCasadi(CasadiGame):
                     h_vals[i] = 0.0
                 h_vals = cas.vertcat(*h_vals)
                 if self.config.double_circle_h:
-                    assert h_vals.shape == (self.N * 4, 1)
+                    assert h_vals.shape == (self.N * 4 + 2, 1)  # 4 per car-car, 2 for boundary
                 else:
-                    assert h_vals.shape == (self.N, 1)
+                    assert h_vals.shape == (self.N + 2, 1)
                 hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N) + 2 (boundary)
             # Additional constraints for agent i, None here
             h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (
-            self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
+        assert h_vec.shape == (self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -506,15 +507,9 @@ def create_random_game(car_count=3, horizon=20):
     # n, N
     x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
 
-    # DEBUG
-    x0 = np.array([[0.41009245,  0.14780548, 10.88458678, 10.62686613],
-                   [-0.3288734, -0.30820081, -0.26015946, -0.17200984],
-                   [-0.05212877, -0.12586385, -0.29974721, -0.45952665],
-                   [1.,  1.,  1.,  1.],
-                   [0.,  0.,  0.,  0.]])
-
     x_ref = np.zeros((n, N))
     x_ref[3, :] = v_vec  # target initial speed
+    n_hi = (4*N*T + 2*T) if default.double_circle_h else (N*T + 2*T)
 
     config = CarRacingCasadiConfig(
         T=T,
@@ -522,8 +517,7 @@ def create_random_game(car_count=3, horizon=20):
         N=N,
         n=n,
         m=m,
-        n_hi=4 * N * T if default.double_circle_h else N *
-        T,  # Collision constraint only
+        n_hi=n_hi,
         collision_radius=default.collision_radius,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),

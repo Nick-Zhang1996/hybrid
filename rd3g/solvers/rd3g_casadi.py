@@ -321,8 +321,8 @@ class RD3GCasadi(BaseSolver):
 
         # TODO debug only
         opts = {'regularity_check': True}
-        h_val = self.game.h(x, u)
-        self.h_casadi = cas.Function('h', [x, u]+config_params, [h_val], opts)
+        h_val = self.game.h(x, u, context)
+        self.h_casadi = cas.Function('h', [x, u, context]+config_params, [h_val], opts)
 
         r_val, h_val = self.r(*args)
         self.r_casadi = cas.Function('r', args+config_params, [r_val, h_val], opts)
@@ -361,22 +361,22 @@ class RD3GCasadi(BaseSolver):
             self.Ki_casadi_vec.append(cas.Function(f'K_{i}', args+config_params, [Ki]))
 
         context_val = self.game.get_context(xki)
-        # Get game context for one state (n,1) -> (1,1)
+        # Get game context for one state (n,1) -> (n_c,1)
         self.get_context_casadi = cas.Function('get_context', [xki], [context_val])
 
-        # (n, N) -> (1, N)
+        # (n, N) -> (n_c, N)
         get_context_n_N = self.get_context_casadi.map(N)
 
         def get_context_nN(xnN):
             x_n_N = cas.reshape(xnN, n, N)
-            return get_context_n_N(x_n_N).T
+            return cas.reshape(get_context_n_N(x_n_N), self.n_c*self.N, 1)
         xnN = cas.SX.sym('xnN', n*N, 1)
         get_context_nN_casadi = cas.Function('get_context_nN', [xnN], [get_context_nN(xnN)])
         # (nN, T) -> (N, T)
         get_context_nN_T = get_context_nN_casadi.map(T)
         full_context_val = get_context_nN_T(x)
 
-        # Get game context for whole state (nN, T) -> (N, T)
+        # Get game context for whole state (nN, T) -> (n_c*N, T)
         self.get_full_context_casadi = cas.Function('get_full_context', [x], [full_context_val])
 
         logger.info('Constructing CasADi functions... Done')
@@ -975,7 +975,7 @@ class RD3GCasadi(BaseSolver):
         # elements are column vectors
         r_vec = []
         eye = cas.SX.eye(self.N)
-        h_val = self.game.h(x, u)
+        h_val = self.game.h(x, u, context)
 
         # dLLi_dx for all i, n*N*N*T
         # for LL_idx in range(N):  # dLL[i]
