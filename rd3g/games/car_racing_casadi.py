@@ -46,6 +46,8 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     """ Minimum distance between the origin of two cars"""
     double_circle_h: bool = True
     """ Use two circles instead of one for collision"""
+    bdry_margin: float = 0.05
+    """ Margin to boundary, use in boundary constraints"""
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
@@ -106,8 +108,8 @@ class CarRacingCasadi(CasadiGame):
         # Curvature function
         s_vec = track.data.s_vec.tolist()
         c_vec = track.data.curvature_vec.tolist()
-        left_vec = track.data.left_width_vec.tolist()
-        right_vec = track.data.right_width_vec.tolist()
+        left_vec = (track.data.left_width_vec-self.config.bdry_margin).tolist()
+        right_vec = (track.data.right_width_vec-self.config.bdry_margin).tolist()
 
         assert np.all(np.diff(np.asarray(s_vec)) > 0), "s_vec must be monotonic"
         assert not np.isnan(np.asarray(c_vec)).any(), "No NaNs in curvature"
@@ -538,12 +540,12 @@ def create_random_game(car_count=3, horizon=20):
     # x = [s, n, phi, v_forward, v_sideway]
     # J_Qr = np.diag([0, 5.0, 0.1, 1.0, 0.1])
     # J_R = np.eye(m) * 1.0
-    J_Qr = np.diag([0, 5.0, 0.5, 2.0, 0.1])
+    J_Qr = np.diag([0, 5.0, 1.0, 1.0, 0.1])
     J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
-    s_vec = np.random.uniform(low=2.0, high=3.0, size=N)
-    v_vec = np.random.uniform(low=0.5, high=1.5, size=N)
+    s_vec = np.random.uniform(low=0.5, high=10.0, size=N)
+    v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
     n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
     vs_vec = np.zeros(N)
