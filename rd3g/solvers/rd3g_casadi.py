@@ -559,6 +559,7 @@ class RD3GCasadi(BaseSolver):
                         is_optimal=is_optimal)
 
     def _rollout_full_x(self, u_ref, x_ref=None):
+        """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0"""
         n = self.n
         m = self.m
         T = self.T
@@ -566,18 +567,24 @@ class RD3GCasadi(BaseSolver):
         assert u_ref.shape == (m, N, T)
 
         # n*N, T
-        u_cat = u_ref.reshape((m*N, T), order='F')
-        gc = self.game.config
-        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         if x_ref is None:
-            try:
-                x_ref = self.rollout_casadi(self.x0, u_cat, *params_np).full()
-            except AttributeError:
-                logger.error('cpp_only must be False to populate rollout_casadi()')
-                raise
-        x = np.dstack([self.x0[:, :, np.newaxis], x_ref.reshape((n, N, T), order='F')])
-        assert x.shape == (n, N, T+1)
-        return x
+            u_cat = u_ref.reshape((m*N, T), order='F')
+            gc = self.game.config
+            params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+            if self.cpp_solver is None:
+                # Use rollout_casadi, pure python
+                try:
+                    x_ref = self.rollout_casadi(self.x0, u_cat, *params_np).full()
+                except AttributeError:
+                    logger.error('cpp_only must be False to populate rollout_casadi()')
+                    raise
+            else:
+                # Use cpp rollout
+                x_ref = self.cpp_solver.rollout(self.x0, u_cat, *params_np)
+
+        full_x = np.dstack([self.x0[:, :, np.newaxis], x_ref.reshape((n, N, T), order='F')])
+        assert full_x.shape == (n, N, T+1)
+        return full_x
 
     def visualize(self, u_ref, x_ref=None, save=False):
         """ Visualize the game with given and control (u) in a single frame.

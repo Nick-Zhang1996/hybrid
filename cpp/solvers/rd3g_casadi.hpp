@@ -963,4 +963,40 @@ class Rd3gCasadi {
     }
     return std::make_tuple(pos, neg, zero);
   }
+
+  // Evaluate rollout function from casadi using python arguments.
+  MatrixXd casadi_rollout(py::array_t<double> x0,
+                                  py::array_t<double> u,
+                                  py::array_t<double> int_param,
+                                  py::array_t<double> double_param) {
+    // Set input args
+    auto x0_val = x0.request();  // py::buffer_info
+    auto u_val = u.request();
+    auto int_param_val = int_param.request();
+    auto double_param_val = double_param.request();
+
+    wb_.args[0] = static_cast<double*>(x0_val.ptr);
+    wb_.args[1] = static_cast<double*>(u_val.ptr);
+    wb_.args[2] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[3] = static_cast<double*>(double_param_val.ptr);
+    assert(dr_dy_.n_in() == 4);
+
+    const casadi::Sparsity& res_sp = rollout_.sparsity_out(0);  // 0th output sparsity
+    // Allocate output buffer
+    std::vector<double> res_buffer(res_sp.nnz());
+    wb_.res[0] = res_buffer.data();
+    assert(dr_dy_.n_out() == 1);
+    assert(res_sp.is_dense());
+
+    // Call work function
+    rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+
+    // SparseMatrixResult res;
+    // res.shape = res_sp.size();
+    // res.data = res_buffer;
+    // res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
+    // res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
+    Eigen::Map<MatrixXd> res(res_buffer.data(), res_sp.size1(), res_sp.size2());
+    return res;
+  }
 };

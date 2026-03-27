@@ -61,6 +61,7 @@ PYBIND11_MODULE(rd3g_casadi, m) {
      py::arg("base_dir"), 
      py::arg("casadi_module_name"))
     .def("dr_dy", &ClassName::casadi_dr_dy)
+    .def("rollout", &ClassName::casadi_rollout)
     .def("solve", &ClassName::solve)
     .def("step", &ClassName::step)
     .def("debug_get_full_KKT", &ClassName::debug_get_full_KKT)

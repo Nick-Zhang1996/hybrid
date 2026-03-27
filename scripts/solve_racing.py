@@ -18,7 +18,7 @@ np.random.seed()
 cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
-solver = RD3GCasadi(solver_config, game, cpp_only=False)
+solver = RD3GCasadi(solver_config, game, cpp_only=True)
 gc = game.config
 # u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 # solver.visualize(u_ref)
@@ -33,6 +33,6 @@ text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}, {sol.residual=}')
 # DEBUG
-game.inspect_h(sol.u, None, solver)
+# game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
 solver.animate(sol.u, None, save_gif=False)

@@ -485,7 +485,6 @@ class CarRacingCasadi(CasadiGame):
 
     def inspect_h(self, u, x=None, solver=None):
         """ Inspect source of constraint residuals."""
-
         # Calculate h
         gc = self.config
         int_param_dm = cas.DM(gc.get_int_param_np())
