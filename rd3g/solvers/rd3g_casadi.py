@@ -574,9 +574,7 @@ class RD3GCasadi(BaseSolver):
         except AttributeError:
             logger.error('cpp_only must be False to populate rollout_casadi()')
             raise
-        x = np.dstack(
-            [self.x0[:, :, np.newaxis],
-                x_ref.reshape((n, N, T), order='F')])
+        x = np.dstack([self.x0[:, :, np.newaxis], x_ref.reshape((n, N, T), order='F')])
         assert x.shape == (n, N, T+1)
         return x
 

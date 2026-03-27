@@ -122,8 +122,7 @@ class CarRacingCasadi(CasadiGame):
         self.right_width_fun = cas.interpolant('right_width', 'bspline', [s_vec], right_vec)
 
         color_names = [
-            'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan',
-            'hot_pink'
+            'purple', 'yellow', 'red', 'green', 'orange', 'pink', 'cyan', 'hot_pink'
         ]
         self.car_img_vec = [
             mpimg.imread(
@@ -222,10 +221,10 @@ class CarRacingCasadi(CasadiGame):
 
         im_vec = []
         for i in range(self.config.N):
-            rotated_car_img = np.clip(
-                rotate(car_imgs[i % len(car_imgs)],
-                       degrees(cart_traj_vec[i][0].heading),
-                       reshape=True), 0.0, 1.0)
+            rotated_car_img = rotate(car_imgs[i % len(car_imgs)],
+                                     degrees(cart_traj_vec[i][0].heading),
+                                     reshape=True)
+            rotated_car_img = np.clip(rotated_car_img, 0.0, 1.0)
             L, W, _ = rotated_car_img.shape
             im = ax.imshow(rotated_car_img,
                            extent=[
@@ -481,6 +480,51 @@ class CarRacingCasadi(CasadiGame):
         """
         h_val = cas.vertcat(x[1] - context[1],  -x[1] - context[2])
         return h_val
+
+    def inspect_h(self, u, x=None, solver=None):
+        """ Inspect source of constraint residuals."""
+
+        # Calculate h
+        gc = self.config
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
+        params_dm = [int_param_dm, double_param_dm]
+        u = cas.DM(u.reshape(self.m*self.N, self.T, order='F'))
+        if x is None:
+            x = solver.rollout_casadi(self.x0, u, *params_dm)
+        else:
+            x = cas.DM(x.reshape(self.n*self.N, self.T, order='F'))
+        context_dm = solver.get_full_context_casadi(x)
+        h_val = solver.h_casadi(x, u, context_dm, *params_dm)
+        tol = 1e-2
+        # Retrieve components
+        collision_res = 0
+        boundary_res = 0
+        for i in range(self.N):
+            # Collision constraint collison_h(xi, xj) 4*N*T
+            for k in range(1, self.T + 1):
+                # i: agent 1
+                # j: agent 2
+                # k: time step
+                # 4 collisions:
+                for j in range(self.N):
+                    col_idx = self.n_hi * i + (4*self.N+2) * (k-1) + j*self.N
+                    col_res = np.linalg.norm(np.clip(h_val[col_idx:col_idx+4], a_min=0, a_max=None))
+                    collision_res += col_res**2
+                    if col_res > tol:
+                        logger.info(f'car {i}, {j}, k={k} collision {col_res}')
+                left_bdry_res = np.clip(h_val[col_idx+4], a_min=0, a_max=None)
+                if left_bdry_res > tol:
+                    logger.info(f'car {i}, k={k} left {left_bdry_res}')
+                right_bdry_res = np.clip(h_val[col_idx+5], a_min=0, a_max=None)
+                if right_bdry_res > tol:
+                    logger.info(f'car {i}, k={k} right {right_bdry_res}')
+                boundary_res += left_bdry_res**2 + right_bdry_res**2
+        h_pos_res = np.sum(np.clip(h_val, a_min=0, a_max=None)**2)
+        inspected_h_pos_res = collision_res + boundary_res
+        logger.info(f'{h_pos_res=}, {inspected_h_pos_res=}')
+
+        return
 
 
 def create_random_game(car_count=3, horizon=20):
