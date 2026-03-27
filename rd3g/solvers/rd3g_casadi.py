@@ -232,7 +232,7 @@ class RD3GCasadi(BaseSolver):
         n (int): Dimension of state for a single agent
         m (int): Dimension of control for a single agent
         x0 (np.ndarray): [N, n] Initial State for all agents
-        guess (np.ndarray): [T,N,m] Initial guess for control traj
+        # guess (np.ndarray): [T,N,m] Initial guess for control traj
 
     """
 
@@ -249,7 +249,7 @@ class RD3GCasadi(BaseSolver):
         self.n_c = self.game.config.n_c
         self.x0 = self.game.config.x0
 
-        self.guess = np.zeros((self.m, self.N, self.T), order='F')
+        # self.guess = np.zeros((self.m, self.N, self.T), order='F')
         self.violations = None
 
         self.rho = self.config.rho_0
@@ -273,10 +273,10 @@ class RD3GCasadi(BaseSolver):
 
     def validate(self):
         """Check the dimension of initial state x0, guess for control."""
-        assert self.guess.shape == (self.m, self.N, self.T), (
-            'Incorrect self.guess dimension, '
-            f'should be {(self.m, self.N, self.T)}, but got {self.guess.shape}'
-        )
+        # assert self.guess.shape == (self.m, self.N, self.T), (
+        #     'Incorrect self.guess dimension, '
+        #     f'should be {(self.m, self.N, self.T)}, but got {self.guess.shape}'
+        # )
         assert isinstance(self.n, int) and self.n > 0
         assert isinstance(self.m, int) and self.m > 0
         assert isinstance(self.T, int) and self.T > 0
