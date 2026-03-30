@@ -422,7 +422,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
-                3,  # 0:error, 1:warning, 2:info, 3:debug
+                0,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name
             )

@@ -543,26 +543,17 @@ def create_random_game(car_count=3, horizon=20):
     J_R = np.eye(m) * 1.0
 
     # TODO resample if cars collide
-    # s_vec = np.random.uniform(low=0.5, high=10.0, size=N)
-    # v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
-    # phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
-    # n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
-    # vs_vec = np.zeros(N)
+    s_vec = np.random.uniform(low=0.5, high=4.0, size=N)
+    v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
+    phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
+    n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
+    vs_vec = np.zeros(N)
 
-    # # n, N
-    # x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
-
-    # debug
-    x0 = [[6.32106813e-01,  2.69573298e+00,  4.85584925e+00,  9.15151749e+00],
-          [-2.28992441e-03, -1.64128415e-02, -2.26423739e-02, -1.32769113e-02],
-          [1.80956462e-03, -3.59233512e-03, -3.35575690e-02, -1.94171870e-02],
-          [1.35083322e+00,  1.35083322e+00,  1.35083322e+00,  1.35083322e+00],
-          [2.42498127e-04,  3.96575618e-02,  2.85052113e-02,  3.08690148e-03]]
-    x0 = np.array(x0, order='F')
+    # n, N
+    x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
 
     x_ref = np.zeros((n, N))
-    # x_ref[3, :] = v_vec  # target initial speed
-    x_ref[3, :] = 1.1  # target initial speed
+    x_ref[3, :] = v_vec  # target initial speed
     n_hi = (4*N*T + 2*T) if default.double_circle_h else (N*T + 2*T)
 
     config = CarRacingCasadiConfig(
