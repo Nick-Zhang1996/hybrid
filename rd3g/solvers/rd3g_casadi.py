@@ -206,6 +206,10 @@ class RD3GCasadiConfig(BaseSolverConfig):
     reg: float = 1e-5
     # Apply inertia correction to each agent KKT
     inertia_correction: bool = True
+    # Remove empty rows and columns from the KKT problem
+    reduce_kkt_system: bool = False
+    # Rollout control to get new state trajectory at the start of each step
+    rollout_each_step: bool = True
     # Inertia correction max iterations
     max_in_reg_iter: int = 10
     # Maximum inertia regularization value
@@ -411,12 +415,14 @@ class RD3GCasadi(BaseSolver):
                 solver_config.bc_b,
                 solver_config.reg,
                 solver_config.inertia_correction,
+                solver_config.reduce_kkt_system,
+                solver_config.rollout_each_step,
                 solver_config.tolerance,
                 solver_config.backtracking_max_iter,
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
-                0,  # 0:error, 1:warning, 2:info, 3:debug
+                3,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name
             )
@@ -519,11 +525,12 @@ class RD3GCasadi(BaseSolver):
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         # return: (n*N, T)
-        x_ref = self.rollout_casadi(self.x0, u_ref, *params_np)
+        x = self.rollout_casadi(self.x0, u_ref, *params_np)
+        # x = self.cpp_solver.rollout(self.x0, u_ref, *params_np)
         # NOTE to convert to np array
         # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
-        lambda_ref = cas.DM.zeros((n*N, T))
-        mu_ref = cas.DM.zeros((n_hi*N, 1))
+        lamda = cas.DM.zeros((n*N, T))
+        mu = cas.DM.zeros((n_hi*N, 1))
 
         i = 0
         has_converged = False
@@ -531,8 +538,9 @@ class RD3GCasadi(BaseSolver):
         t0 = time()
         for i in range(self.config.iterations):
             logger.info(f'--- iter {i} ---')
-            x_ref, u_ref, lambda_ref, mu_ref, res, has_converged, is_optimal = self.step(
-                x_ref, u_ref, lambda_ref, mu_ref)
+            if self.config.rollout_each_step:
+                x = self.rollout_casadi(self.x0, u_ref, *params_np)
+            x, u_ref, lamda, mu, res, has_converged, is_optimal, _ = self.step(x, u_ref, lamda, mu)
             if has_converged:
                 break
         dt = time() - t0
@@ -548,15 +556,72 @@ class RD3GCasadi(BaseSolver):
 
         # u_ref: m*N, T
         # sol.u: T,N,m
-        # x_ref n*N, T
+        # xn*N, T
         # sol.x: T,N,n
         return Solution(elapsed_time=dt,
                         iterations=i,
                         u=u_ref.toarray().reshape((m, N, T), order='F'),
-                        x=x_ref.toarray().reshape((n, N, T), order='F'),
+                        x=x.toarray().reshape((n, N, T), order='F'),
                         residual=res,
                         has_converged=has_converged,
                         is_optimal=is_optimal)
+
+    def debug(self, u):
+        self.init_cpp_backend()
+        self.solve_cpp_backend(u)
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        n_hi = self.n_hi
+        gc = self.game.config
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        # return: (n*N, T)
+        x = self.rollout_casadi(self.x0, u, *params_np)
+        lamda = cas.DM.zeros((n*N, T))
+        mu = cas.DM.zeros((n_hi*N, 1))
+        new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
+
+        # Check each intermediate variable
+        context_py = self.get_full_context_casadi(x)
+        context_cpp = self.cpp_solver.debug_get_context()
+        context_cpp = np.array(context_cpp, order='F').reshape((12, 20), order='F')
+        context_diff = np.linalg.norm(context_py - context_py)
+        print(f'{context_diff=}')
+        # Context identical -- verified
+        # r0 = r(x,u, lamda, mu, context)
+        # r0 diff = 60
+        x_cpp = self.cpp_solver.debug_get_x()
+        u_cpp = self.cpp_solver.debug_get_u()
+        print(f'x_diff = {np.linalg.norm(x_cpp-x)}')
+        print(f'u_diff = {np.linalg.norm(u_cpp-u)}')
+        r0_py = debug_dict['full_r0']
+        res = self.cpp_solver.debug_get_full_r0()
+        r0_cpp = csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+        r0_diff = np.linalg.norm(r0_py - r0_cpp)
+        print(f'{r0_diff=}')
+
+        KKT_py = debug_dict['full_KKT']
+        res = self.cpp_solver.debug_get_full_KKT()  # SparseMatrixResult
+        KKT_cpp = csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+        KKT_diff = scipy.sparse.linalg.norm(KKT_py - KKT_cpp)
+        print(f'{KKT_diff=}')
+
+        dy_py = debug_dict['full_dy']
+        dy_cpp = self.cpp_solver.debug_get_full_dy()
+        dy_diff = np.sum(np.abs(dy_py - dy_cpp))
+        print(f'{dy_diff=}')
+        res_py = scipy.linalg.norm(KKT_py @ dy_py + r0_py)
+        res_cpp = scipy.linalg.norm(KKT_cpp @ dy_cpp + r0_cpp)
+        print(f'{res_py=}')
+        print(f'{res_cpp=}')
+        breakpoint()
 
     def _rollout_full_x(self, u_ref, x_ref=None):
         """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0"""
@@ -612,8 +677,9 @@ class RD3GCasadi(BaseSolver):
             lamda: n*N,T
             mu: n_hi*N, 1
         Return:
-            x_ref, u_ref, lamda, mu: updated
+            x_ref, u_ref, lamda, mu: updated primal/dual variables
             res: residual
+            debug_dict: Dict of process variables
         """
         p = self.profiler
         p.s()
@@ -749,7 +815,7 @@ class RD3GCasadi(BaseSolver):
         # reg_matrix[ind, ind] = -self.reg
         # full_KKT += reg_matrix
 
-        if False:  # active set
+        if self.config.reduce_kkt_system:  # active set
             p.s('Reduce KKT')
             # Remove inactive constraints and their multiplier
             # h < 0 -> inactive cosntraint
@@ -791,14 +857,14 @@ class RD3GCasadi(BaseSolver):
             # Recover full dy
             dy = np.zeros(full_KKT.shape[1])
             dy[active_y_rows] = reduced_dy
-
-        p.s('Solve Linear (full KKT)')
-        t0 = time()
-        dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
-        dt = time() - t0
-        logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-        del residual
-        p.e('Solve Linear (full KKT)')
+        else:
+            p.s('Solve Linear (full KKT)')
+            t0 = time()
+            dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
+            dt = time() - t0
+            logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+            del residual
+            p.e('Solve Linear (full KKT)')
 
         p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
@@ -859,8 +925,10 @@ class RD3GCasadi(BaseSolver):
         p.e()
 
         has_converged = r_norm < self.config.tolerance
+        debug_dict = {'full_KKT': full_KKT, 'full_dy': dy, 'full_r0': r0_np}
+        dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
 
-        return new_x, new_u, new_lamda, new_mu, r_norm, has_converged, is_optimal
+        return new_x, new_u, new_lamda, new_mu, r_norm, has_converged, is_optimal, debug_dict
 
     def final(self):
         self.profiler.summary()

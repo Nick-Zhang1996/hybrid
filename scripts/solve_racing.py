@@ -18,7 +18,7 @@ np.random.seed()
 cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
-solver = RD3GCasadi(solver_config, game, cpp_only=True)
+solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 gc = game.config
 # u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 # solver.visualize(u_ref)
@@ -63,6 +63,9 @@ u_ref = [[-7.18457255e-03, -5.88213868e-03,  1.02648045e-03, -4.10134627e-03,
           8.00000000e-01,  8.00000000e-01,  8.00000000e-01,  7.72938621e-01,
           5.72130095e-01,  6.94358669e-01,  8.00000000e-01,  8.00000000e-01]]
 u_ref = np.array(u_ref, order='F')
+# solver.debug(u_ref)
+# exit(0)
+
 if cpp:
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()
@@ -76,4 +79,4 @@ print(f'{sol.elapsed_time=}, {sol.residual=}')
 # DEBUG
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
-solver.animate(sol.u, None, save_gif=False)
+# solver.animate(sol.u, None, save_gif=False)

@@ -8,6 +8,10 @@ message(STATUS "DEBUG: CMake is using Python at: ${PYTHON_EXECUTABLE}")
 add_compile_options(-flto=auto)
 add_link_options(-flto=auto)
 
+# Force asserts to stay ON, even if pybind11 forces a Release build.
+# This way the asserts will fire, remove at release
+add_compile_options(-UNDEBUG)
+
 project(residual_game)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
