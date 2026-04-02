@@ -31,7 +31,7 @@ logger.setLevel(logging.INFO)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
     T: int = 20
-    dt: float = 0.05
+    dt: float = 0.02
     N: int = 4
     n: int = 5
     m: int = 2
@@ -338,7 +338,7 @@ class CarRacingCasadi(CasadiGame):
         return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
 
     def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
-        """ Dynamics function x_{t+1} = f(x_t,u,i)
+        """ Dynamics function x_{t+1} = f(x_t,u,i) for kinematic bicycle, frenet
             u = [steering, throttle]
             x = [s, n, phi, v_forward, v_sideway]
             NOTE: 0 < s < track.data.raceline_len_m
@@ -346,7 +346,7 @@ class CarRacingCasadi(CasadiGame):
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
-            context_i_k: (n_c=1,) Signed curvature value
+            context_i_k: (n_c=3,) Signed curvature value, left, right margin
         Return:
             (n,1) The next state, progressed by self.dt
 
@@ -368,8 +368,7 @@ class CarRacingCasadi(CasadiGame):
             cas.tan(control.steering) * param.lr / (param.lf + param.lr))
 
         dsdt = (state.v_forward * cas.cos(state.heading_err) -
-                state.v_sideway * cas.sin(state.heading_err)) / (
-            1 - state.lateral_err * curvature)
+                state.v_sideway * cas.sin(state.heading_err)) / (1 - state.lateral_err * curvature)
         dndt = state.v_forward * cas.sin(state.heading_err) + \
             state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
@@ -390,8 +389,7 @@ class CarRacingCasadi(CasadiGame):
         heading_err = state.heading_err + d_rel_heading_dt * dt
         v_forward = state.v_forward + d_v_forward_dt * dt
         v_sideway = state.v_sideway + d_v_sideway_dt * dt
-        next_x = cas.vertcat(progress, lateral_err, heading_err, v_forward,
-                             v_sideway)
+        next_x = cas.vertcat(progress, lateral_err, heading_err, v_forward, v_sideway)
 
         return next_x
 

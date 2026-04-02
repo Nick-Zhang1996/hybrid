@@ -23,7 +23,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 DEBUG = False
 
 
@@ -189,7 +189,8 @@ def solve_linear(A, b, method, profiler):
 
 @dataclass(frozen=True)
 class RD3GCasadiConfig(BaseSolverConfig):
-    """Configs for Residual Game."""
+    """Configs for Residual Game.
+     NOTE Some changes here require codegen and recompiling the cpp program """
     tolerance: float = 5e-4
     iterations: int = 20
     # backtracking line search param
@@ -199,7 +200,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # NOTE this is not implemented in cpp
     dynamics_residual_weight: float = 1.0
     # barrier function scaling schedule
-    rho_0: float = 20.0
+    rho_0: float = 2e4  # 20.0 -> This require re-compiling everything TODO
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
     # Levenberg-Marquardt Regularization Coefficient
@@ -1007,6 +1008,7 @@ class RD3GCasadi(BaseSolver):
         mu_i = cas.reshape(mu, n_hi, N)[:, i]
         mu_h_plus_vals = cas.dot(mu_i, cas.fmax(hi_vals, 0))
         # barrier for h < 0
+        # FIXME
         h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(hi_vals, -1e-100)))
         LLi_val += mu_h_plus_vals + h_neg_barrier_vals
 
