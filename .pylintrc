@@ -1,2 +1,5 @@
 [MESSAGES CONTROL]
-disable=logging-fstring-interpolation,consider-using-enumerate
+disable=logging-fstring-interpolation,
+ consider-using-enumerate,
+ missing-function-docstring,
+ invalid-name

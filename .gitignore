@@ -7,3 +7,6 @@ __pycache__/
 build/
 *.gif
 .vscode/
+CMakeFiles/
+casadi_codegen/
+outputs/

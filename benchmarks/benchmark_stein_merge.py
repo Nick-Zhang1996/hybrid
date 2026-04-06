@@ -8,7 +8,7 @@ if __name__ == '__main__':
     def check_collisions(u_ref):
         """ find total collisions with u_ref"""
         x_ref = main.rollout(main.x0, u_ref)
-        h_plus_mask = main.getHplusMask(x_ref)
+        h_plus_mask = main.get_h_plus_mask(x_ref)
         return np.sum(h_plus_mask)
 
     def display_results(data):

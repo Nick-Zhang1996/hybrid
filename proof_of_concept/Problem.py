@@ -3,7 +3,7 @@ from math import sin,cos
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import collections  as mc
-from utilities.util import *
+from ..utilities.util import *
 import vnoise
 import os
 from PIL import Image
@@ -182,7 +182,7 @@ class PerlinNoise(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return jacobianNumerical(lambda x:self.evaluate(x), val)
+        return jacobian_numerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''
@@ -302,7 +302,7 @@ class ParabolaWithSineNoise2D(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return jacobianNumerical(lambda x:self.evaluate(x), val)
+        return jacobian_numerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''
@@ -397,7 +397,7 @@ class ParabolaWithSineNoise3D(Problem):
 
     def jacobian(self,val):
         ''' return jacobian evaluated at val as a row vector '''
-        return jacobianNumerical(lambda x:self.evaluate(x), val)
+        return jacobian_numerical(lambda x:self.evaluate(x), val)
 
     def hessian(self,val):
         ''' return hessian evaluated at val '''

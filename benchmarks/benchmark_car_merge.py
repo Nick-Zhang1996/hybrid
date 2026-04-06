@@ -1,10 +1,10 @@
 """ benchmark car_merge.py, for different total car count"""
 from time import time
 import numpy as np
-from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
-#from examples.LQGame_CarMergeKinematicBicycle import LQGame_CarMergeKinematicBicycle
+from rd3g.games.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+# from examples.LQGame_CarMergeKinematicBicycle import LQGame_CarMergeKinematicBicycle
 
-#car_count_vec = range(2,10)
+# car_count_vec = range(2,10)
 car_count_vec = [3, 5, 8]
 mean_vec = []
 converged_mean_vec = []
@@ -24,7 +24,7 @@ for car_count in car_count_vec:
         _, _, has_converged = main.solve(save_gif=False,
                                          visualize=False,
                                          animate=False)
-        #_,_, has_converged = main.naive_particle_solve(save_gif=False,visualize=False,animate=False)
+        # _,_, has_converged = main.naive_particle_solve(save_gif=False,visualize=False,animate=False)
         dt = time() - t0
         time_vec.append(dt)
         if (has_converged):

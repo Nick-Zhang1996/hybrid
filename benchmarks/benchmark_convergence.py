@@ -2,7 +2,7 @@
 from time import time
 import pickle
 import numpy as np
-from examples.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
+from rd3g.games.car_merge_kinematic_bicycle import CarMergeKinematicBicycle
 import matplotlib.pyplot as plt
 
 x = np.linspace(0, 10, 100)
@@ -31,7 +31,7 @@ residual_vec_vec = []
 time_vec = []
 for i in range(20):
     main = CarMergeKinematicBicycle(car_count)
-    #main.silent_mode_enable()
+    # main.silent_mode_enable()
     main.setup()
     t0 = time()
     main.solve(save_gif=False, visualize=False, animate=False)
