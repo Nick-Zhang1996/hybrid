@@ -17,19 +17,22 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 np.random.seed()
-cpp = True
+cpp = False
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
 
 gc = game.config
 # load from pickle
-with open('outputs/input.p', 'rb') as f:
-    data = pickle.load(f)
-game.config = replace(gc, x0=data['x0'], target_x_ref=data['target_x_ref'])
-u_ref = data['u_ref']
+load = False
+if load:
+    with open('outputs/input.p', 'rb') as f:
+        data = pickle.load(f)
+    game.config = replace(gc, x0=data['x0'], target_x_ref=data['target_x_ref'])
+    u_ref = data['u_ref']
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
+solver.visualize(u_ref, None)
 
 
 if cpp:

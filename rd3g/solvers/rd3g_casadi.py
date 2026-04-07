@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from itertools import accumulate
 from time import time
+from deprecated import deprecated
 
 import numpy as np
 import casadi as cas
@@ -23,7 +24,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 DEBUG = False
 
 
@@ -151,6 +152,7 @@ def solve_linear(A, b, method, profiler):
         logger.info(f'Reduced-system Inertia: {kkt_inertia}')
         return x, residual, kkt_inertia
     elif method == 'qdldl':
+        # NOTE only works for symmetric A
         t0 = time()
         p.s('pre-process')
         A_upper = scipy.sparse.triu(A, format='csc')
@@ -184,19 +186,17 @@ def solve_linear(A, b, method, profiler):
         logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
 
-# NOTE: changing config requires re-run codegen, since configs are constants
-
 
 @dataclass(frozen=True)
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game.
-     NOTE Some changes here require codegen and recompiling the cpp program """
+     NOTE Some changes here require rerun codegen and recompiling the cpp program """
     tolerance: float = 5e-4
     iterations: int = 20
     # backtracking line search param
-    bc_a: float = 1e-4  # alpha
-    bc_b: float = 0.5  # beta
-    backtracking_max_iter: int = 10
+    bc_a: float = 1e-4  # alpha, minimal necessary improvement in line search
+    bc_b: float = 0.5  # beta, shrink coefficient for step size
+    backtracking_max_iter: int = 20
     # NOTE this is not implemented in cpp
     dynamics_residual_weight: float = 1.0
     # barrier function scaling schedule
@@ -206,11 +206,13 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # Levenberg-Marquardt Regularization Coefficient
     reg: float = 1e-5
     # Apply inertia correction to each agent KKT
-    inertia_correction: bool = True
+    inertia_correction: bool = False
     # Remove empty rows and columns from the KKT problem
     reduce_kkt_system: bool = False
     # Rollout control to get new state trajectory at the start of each step
-    rollout_each_step: bool = True
+    rollout_each_step: bool = False
+    # Resolve all primal infeasibility (violated constraints) before solving
+    strict_constraints: bool = True
     # Inertia correction max iterations
     max_in_reg_iter: int = 10
     # Maximum inertia regularization value
@@ -245,6 +247,7 @@ class RD3GCasadi(BaseSolver):
         """ cpp_only: if True, skip constructing casadi function construction """
         BaseSolver.__init__(self, config, game)
 
+        # TODO take from game.config directly, no alias attributes for this class
         self.N = self.game.config.N
         self.T = self.game.config.T
         self.dt = self.game.config.dt
@@ -253,11 +256,8 @@ class RD3GCasadi(BaseSolver):
         self.n_hi = self.game.config.n_hi
         self.n_c = self.game.config.n_c
         self.x0 = self.game.config.x0
-
-        # self.guess = np.zeros((self.m, self.N, self.T), order='F')
-        self.violations = None
-
         self.rho = self.config.rho_0
+
         # Levenberg-Marquardt Regularization coeff
         # When line search is stuck, larger coeff is used. Re-sets when line search succeeds.
         self.reg = self.config.reg
@@ -273,7 +273,6 @@ class RD3GCasadi(BaseSolver):
             self.construct_casadi_fun()
         if DEBUG:
             logger.warning("DEBUG is ON, more prints, significantly slower")
-
         self.cpp_solver = None
 
     def validate(self):
@@ -385,11 +384,6 @@ class RD3GCasadi(BaseSolver):
         self.get_full_context_casadi = cas.Function('get_full_context', [x], [full_context_val])
 
         logger.info('Constructing CasADi functions... Done')
-
-    def init(self):
-        """Setup solver parameters that changes between iterations, call this
-        funtion to reset the solver."""
-        raise NotImplementedError
 
     def init_cpp_backend(self):
         """ Load CPP solver"""
@@ -519,19 +513,28 @@ class RD3GCasadi(BaseSolver):
         logger.debug(
             f'primal variables:{(T*N*n) + (T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
         )
-
-        if u_ref is None:
-            u_ref = np.zeros((m*N, T), order='F')
-        # x_ref = x_1 .. x_T, NOTE the array index is offset from the math notation
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        # return: (n*N, T)
-        x = self.rollout_casadi(self.x0, u_ref, *params_np)
-        # x = self.cpp_solver.rollout(self.x0, u_ref, *params_np)
-        # NOTE to convert to np array
-        # np.array(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
-        lamda = cas.DM.zeros((n*N, T))
-        mu = cas.DM.zeros((n_hi*N, 1))
+        tau = 0.1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
+
+        if u_ref is None:
+            u = np.zeros((m*N, T), order='F')
+        else:
+            u = u_ref
+        # x = x_1 .. x_T, NOTE the array index is offset from the math notation
+        # (n*N, T)
+        x = self.rollout_casadi(self.x0, u, *params_np)
+        # x = self.cpp_solver.rollout(self.x0, u, *params_np)
+        # To convert to np array
+        # np.asarray(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
+        context = self.get_full_context_casadi(x)
+
+        # self.h_casadi = cas.Function('h', [x, u, context]+config_params, [h_val], opts)
+        h_val = self.h_casadi(x, u, context, *params_np)
+        s = cas.fmax(1e-2, -cas.reshape(h_val, n_hi*N, 1))  # Slack variable h(x,u) + s = 0, s>=0
+        mu = tau / s  # Multiplier for h(x,u) + s (n_hi*N, 1)
+        lamda = cas.DM.zeros((n*N, T))  # Multiplier for dynamics constraints
+        filter_state = []
 
         i = 0
         has_converged = False
@@ -540,15 +543,21 @@ class RD3GCasadi(BaseSolver):
         for i in range(self.config.iterations):
             logger.info(f'--- iter {i} ---')
             if self.config.rollout_each_step:
-                x = self.rollout_casadi(self.x0, u_ref, *params_np)
-            x, u_ref, lamda, mu, res, has_converged, is_optimal, _ = self.step(x, u_ref, lamda, mu)
-            if has_converged:
+                x = self.rollout_casadi(self.x0, u, *params_np)
+            x, u, lamda, mu, s, res, converged, optimal, filter_state, _ = self.step(
+                x, u, lamda, mu, s, filter_state, tau)
+            # TODO add tau scheduling
+            if converged and tau < 1e-4:
+                logger.debug('Converged with tau=%.2f', tau)
                 break
+            if converged:
+                tau = np.sum(s * mu) / (n_hi*N)
+                logger.debug('Converged, reducing tau=%.2f', tau)
         dt = time() - t0
         msg = ''
-        if has_converged and is_optimal:
+        if converged and optimal:
             msg = 'Converged to NE'
-        elif has_converged and not is_optimal:
+        elif converged and not optimal:
             msg = 'Converged to saddle point'
         else:
             msg = 'Max Iteration reached'
@@ -559,6 +568,7 @@ class RD3GCasadi(BaseSolver):
         # sol.u: T,N,m
         # xn*N, T
         # sol.x: T,N,n
+        # TODO add optimality gap
         return Solution(elapsed_time=dt,
                         iterations=i,
                         u=u_ref.toarray().reshape((m, N, T), order='F'),
@@ -567,7 +577,9 @@ class RD3GCasadi(BaseSolver):
                         has_converged=has_converged,
                         is_optimal=is_optimal)
 
+    @deprecated
     def debug(self, u):
+        """ TODO """
         self.init_cpp_backend()
         self.solve_cpp_backend(u)
         N = self.N
@@ -625,7 +637,13 @@ class RD3GCasadi(BaseSolver):
         breakpoint()
 
     def _rollout_full_x(self, u_ref, x_ref=None):
-        """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0"""
+        """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0
+        Args:
+            u_ref: (m, N, T)
+            x_ref: Optional, (n, N, T)
+        Output:
+            full_x: (n, N, T+1)
+        """
         n = self.n
         m = self.m
         T = self.T
@@ -670,31 +688,39 @@ class RD3GCasadi(BaseSolver):
         x_ref = self._rollout_full_x(u_ref, x_ref)
         self.game.animate(u_ref, x_ref, show=True, save_gif=save_gif, save_snapshots=save_snapshots)
 
-    def step(self, x_ref, u_ref, lambda_ref, mu_ref):
+    def step(self, x, u, lamda, mu, s, filter_state, tau):
         """ Solver step function
         Args:
-            x_ref: n*N,T, casadi.DM
-            u_ref: m*N,T
+            x: n*N,T, casadi.DM
+            u: m*N,T
             lamda: n*N,T
             mu: n_hi*N, 1
+            s: (n_hi*N, 1) slack variable
+            filter_state: list[(infeasibility, residual)] Previously rejected states
+            tau: float, Perturbed complementary slackness
         Return:
-            x_ref, u_ref, lamda, mu: updated primal/dual variables
+            x:
+            u:
+            lamda:
+            mu:
+            s: updated primal/dual variables
             res: residual
+            converged: Bool for algorithm converged, residual < threshold
+            is_optimal: Bool for algorithm has correct inertia for PD projected hessian
+            filter_state: Updated filter for line search
             debug_dict: Dict of process variables
         """
         p = self.profiler
         p.s()
         p.s('prep')
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        n_hi = self.n_hi
         gc = self.game.config
-        x = x_ref
-        u = u_ref
-        lamda = lambda_ref
-        mu = mu_ref
+        N = gc.N
+        T = gc.T
+        n = gc.n
+        m = gc.m
+        n_hi = gc.n_hi
+        nNT = n*N*T
+        mNT = m*N*T
 
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
@@ -704,15 +730,21 @@ class RD3GCasadi(BaseSolver):
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val, h_val = self.r_casadi(*args)
+        r0_val, h0_val = self.r_casadi(*args)
         dr_dy_val = self.dr_dy_casadi(*args)
-        r0_np = np.array(r0_val)
-        r0_norm = norm(r0_np)
-        full_KKT = dm_to_csc(dr_dy_val)
+        # Add eliminated slack variable as a function of mu
+        LHS = dr_dy_val
+        mu_offset = nNT + mNT + nNT
+        LHS[mu_offset:, mu_offset:] += - s / mu
+        RHS = -r0_val
+        RHS[mu_offset:, 0] += - tau / mu
+
+        RHS_np = np.asarray(RHS)
         p.e('Form KKT')
 
         p.s('Inertia Checking')
         # Formulate the KKT matrix for each agent's best response game, verify inertia, and solve
+        # TODO this may need updating
         is_optimal = True
         saddle_agent_idx = []
         br_game_vec = []
@@ -792,12 +824,13 @@ class RD3GCasadi(BaseSolver):
 
         p.e('Inertia Checking')
         reg_vec = [val.reg for val in br_game_vec]
-        logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
+        logger.info(f' TODO Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
         if self.config.inertia_correction:
+            # TODO need updating
             # Inertia correcting regularization
             in_reg_mtx = self.make_full_KKT_reg(reg_vec)
-            full_KKT += in_reg_mtx
+            LHS += in_reg_mtx
 
         primal_var_count = (n+m)*N*T
         # size of x, u, lamda, mu
@@ -816,6 +849,7 @@ class RD3GCasadi(BaseSolver):
         # reg_matrix[ind, ind] = -self.reg
         # full_KKT += reg_matrix
 
+        # TODO need updating
         if self.config.reduce_kkt_system:  # active set
             p.s('Reduce KKT')
             # Remove inactive constraints and their multiplier
@@ -827,7 +861,7 @@ class RD3GCasadi(BaseSolver):
             # Starting index of mu, multiplier for h()
             mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
 
-            h_val_np = np.array(h_val, order='F').flatten(order='F')
+            h_val_np = np.array(h0_val, order='F').flatten(order='F')
             neg_h_mask = (h_val_np < 0).nonzero()[0]
             inactive_r_rows = []
             inactive_y_rows = []
@@ -836,15 +870,15 @@ class RD3GCasadi(BaseSolver):
                 inactive_y_rows.append(mu_in_y_offset + idx)
 
             # Remove zero rows & columns in the linear system
-            all_r_indices = np.arange(full_KKT.shape[0])
-            all_y_indices = np.arange(full_KKT.shape[1])
+            all_r_indices = np.arange(LHS.shape[0])
+            all_y_indices = np.arange(LHS.shape[1])
             active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
             active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
 
             # TODO set the relevant mu to 0 to satisfy strict complementarity
             # self.check_KKT(full_KKT)
             KKT_residual = r0_np[active_r_rows, :]
-            KKT = full_KKT[active_r_rows, :][:, active_y_rows]
+            KKT = LHS[active_r_rows, :][:, active_y_rows]
             p.e('Reduce KKT')
 
             p.s('Solve Linear')
@@ -856,29 +890,48 @@ class RD3GCasadi(BaseSolver):
             p.e('Solve Linear')
             # Verify residual reduction with a line search
             # Recover full dy
-            dy = np.zeros(full_KKT.shape[1])
+            dy = np.zeros(LHS.shape[1])
             dy[active_y_rows] = reduced_dy
         else:
             p.s('Solve Linear (full KKT)')
             t0 = time()
-            dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
+            LHS_csc = dm_to_csc(LHS)
+            RHS_np = np.asarray(RHS)
+            dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
             dt = time() - t0
             logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-            del residual
             p.e('Solve Linear (full KKT)')
 
         p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
-        step_size = 1.0
-        step_size_vec = []
-        stepped_r_vec = []
+        ds = -s + (tau - s * dmu)/mu
+        # Fraction to full step, must < 1.0
+        # Step size is upper bounded by s + step_size*ds > 0.05 s, also mu
+        raw = -0.995 * np.asarray(s) / np.asarray(ds)
+        max_ss_s = raw[raw > 0]
+        raw = -0.995 * np.asarray(mu) / np.asarray(dmu)
+        max_ss_mu = raw[raw > 0]
+        step_size = np.min(np.hstack([max_ss_s, max_ss_mu, [1.0]])).item()
+        logger.debug('Max step size %3.2f', step_size)
+
+        # Filter line search
+
+        primal_res = np.linalg.norm(RHS[nNT+mNT:, 0], 1).item()  # Infeasibility residual
+        dual_res = np.linalg.norm(RHS[:nNT+mNT, 0], 1).item()  # Optimality residual
+        logger.debug(f'step_size=0, {primal_res=}(feas), {dual_res=}(opt)')
+
+        # Initialize filter, set upper bound for residual
+        if len(filter_state) == 0:
+            filter_state.append((primal_res*1.2, -np.inf))
         try:
             for _ in range(self.config.backtracking_max_iter):
+                # Evaluate primal/dual residual at trial point
                 new_x = x+step_size*cas.reshape(dx, n*N, T)
                 new_u = u+step_size*cas.reshape(du, m*N, T)
                 new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
                 new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
                 new_context = self.get_full_context_casadi(new_x)
+                # logger.debug(f"Min new_mu at step {step_size}: {cas.mmin(new_mu)}")
                 r_val, h_val = self.r_casadi(new_x,
                                              new_u,
                                              new_lamda,
@@ -886,50 +939,65 @@ class RD3GCasadi(BaseSolver):
                                              new_context,
                                              int_param_dm, double_param_dm
                                              )
-                r_norm = norm(r_val)
-                step_size_vec.append(step_size)
-                stepped_r_vec.append(r_norm)
-                if r_norm > (1 - self.config.bc_a * step_size) * r0_norm:
+                trial_RHS = -r_val
+                trial_RHS[mu_offset:, 0] += - tau / new_mu
+                trial_primal_res = np.linalg.norm(trial_RHS[nNT+mNT:, 0], 1).item()
+                trial_dual_res = np.linalg.norm(trial_RHS[:nNT+mNT, 0], 1).item()
+                logger.debug(f'{step_size=}, {trial_primal_res=}, {trial_dual_res=}')
+                improve_optimality = trial_dual_res < dual_res - self.config.bc_a * primal_res
+                improve_feasibility = trial_primal_res < (1-self.config.bc_a)*primal_res
+                # Dominated by starting point?
+                if (not improve_optimality) and (not improve_feasibility):
+                    # logger.debug('No improvement over initial state')
                     step_size *= self.config.bc_b
-                else:
-                    raise LineSearchSuccess
+                    continue
+
+                # Dominated by filter history?
+                is_dominated = False
+                for _primal_res, _dual_res in filter_state:
+                    _improve_optimality = trial_dual_res < _dual_res - self.config.bc_a * _primal_res
+                    _improve_feasibility = trial_primal_res < (1-self.config.bc_a)*_primal_res
+                    if (not _improve_optimality) and (not _improve_feasibility):
+                        # logger.debug('Dominated by filter')
+                        is_dominated = True
+                        break
+                if is_dominated:
+                    step_size *= self.config.bc_b
+                    continue
+
+                # Successful line search
+                if (not improve_optimality) and improve_feasibility:
+                    # Improved feasibility at the expense of optimality.
+                    # Add to filter so we don't regress in future
+                    filter_state.append((primal_res, dual_res))
+                    # logger.debug('Adding to filter')
+                raise LineSearchSuccess
+            # TODO What if no improvement at all? add infeasibility correction step
             raise LineSearchMaxIter
         except LineSearchMaxIter:
             self.reg = min(self.reg * 10, 0.1)
             step_size = 0.0
-            logger.debug(f"Inflating KKT regularization to {self.reg}")
+            logger.debug(f"Max Iter reached, Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
+            logger.debug("Line search success")
             self.reg = self.config.reg
         p.e('Line Search')
 
-        h_val_np = np.array(h_val, order='F').flatten(order='F')
-        h_sum = np.sum(h_val_np[h_val_np > 0])
-        h_pos = np.sum(h_val_np > 0)
+        h_val_np = np.asarray(h_val, order='F').flatten(order='F')
         logger.info(
-            f'{r0_norm=:.6f}, {self.reg=}, {step_size=:.6f}, {r_norm=:.6f}, {h_sum=:.4f}, {h_pos=}')
+            f'{primal_res=:.6f}, {dual_res=:.6f},'
+            f'{trial_primal_res=:.6f}, {trial_dual_res=:.6f},'
+            f'{self.reg=}, {step_size=:.6f}')
 
-        if DEBUG:
-            p.s('More debug checking')
-            # Where does the residual come from?
-            r_Lx, r_Lu, r_f, r_h = self.residual_components(r_val)
-            logger.info(f'Residual breakdown {r_Lx=}, {r_Lu=}, {r_f=}, {r_h=}')
-
-            # Check the linearization is valid
-            r0_np = np.array(r0_val)
-            r_np = np.array(r_val)
-            expected_r = r0_val * (1-step_size)
-            diff = norm(expected_r - r_np)
-            logger.info(f'Diff in expected r {diff=}')
-            p.e('More debug checking')
-
-        self.residual_vec.append(r0_norm)
+        res = trial_primal_res + trial_dual_res
+        self.residual_vec.append(res)
+        new_s = s + step_size * ds
         p.e()
 
-        has_converged = r_norm < self.config.tolerance
-        debug_dict = {'full_KKT': full_KKT, 'full_dy': dy, 'full_r0': r0_np}
-        dy, istop, itn, residual = lsqr(full_KKT, -r0_np)[:4]
+        converged = res < self.config.tolerance
+        debug_dict = {}
 
-        return new_x, new_u, new_lamda, new_mu, r_norm, has_converged, is_optimal, debug_dict
+        return new_x, new_u, new_lamda, new_mu, new_s, res, converged, is_optimal, filter_state, debug_dict
 
     def final(self):
         self.profiler.summary()
@@ -968,7 +1036,7 @@ class RD3GCasadi(BaseSolver):
         i_onehot = cas.SX.eye(self.N)[:, i]
         # NOTE it may be better to store lamda_k_T to take advantage of col-major storage
         dynamics_val = lamda_k[:, i].T @ (self.game.f(x_k[:, i],
-                                          u_k_i, i_onehot, context_k[:, i]) - x_k1_i)
+                                                      u_k_i, i_onehot, context_k[:, i]) - x_k1_i)
         val = self.game.J(x_k, u_k_i, i_onehot) + dynamics_val
         assert val.shape == (1, 1)
         return val
@@ -999,7 +1067,7 @@ class RD3GCasadi(BaseSolver):
                               cas.reshape(mu, n_hi, N)[:, i],
                               i,
                               cas.reshape(context[:, k], n_c, N))
-                      for k in range(1, T)])
+                       for k in range(1, T)])
 
         # feasibility for h>0
         # NOTE add fmax here for safety,
@@ -1035,8 +1103,8 @@ class RD3GCasadi(BaseSolver):
             u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
             mu: (n_hi*N, 1) Multiplier for positive h
-            context: (n_c*N, T) Game context, changes between iteration, but constant within iteration. 
-                This contains variables too expensive to AD. 
+            context: (n_c*N, T) Game context, changes between iteration, but constant within iteration.
+                This contains variables too expensive to AD.
                 e.g. path curvature at each player position.
         Return:
             r_val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
@@ -1086,7 +1154,7 @@ class RD3GCasadi(BaseSolver):
                 r_vec.append(dLLi_duki)  # m
                 assert dLLi_duki.shape == (m, 1)
 
-        # Dynamics residual for f(x0,u0) = x1 n*N
+        # Dynamics residual for f(x0,u0) - x1  (n*N)
         for i in range(N):
             i_onehot = eye[:, i]
             x0 = self.game.config.get_param('x0')
@@ -1097,7 +1165,7 @@ class RD3GCasadi(BaseSolver):
             assert f0.shape == (n, 1)
             r_vec.append(f0)  # n
 
-        # Dynamics residual for f(xk,uk) = x_{k+1} n*N*(T-1)
+        # Dynamics residual for f(xk,uk) - x_{k+1}  (n*N*(T-1))
         for k in range(1, self.T):
             context_i_k = cas.reshape(context[:, k], n_c, N)
             for i in range(N):
@@ -1109,10 +1177,7 @@ class RD3GCasadi(BaseSolver):
                 assert fk.shape == (n, 1)
                 r_vec.append(fk)  # n
 
-        # Inequality constraint residual , n_hi*N
-        h_pos = cas.fmax(h_val, 0)
-        r_vec.append(cas.vec(h_pos))
-
+        r_vec.append(cas.vec(h_val))  # n_hi * N
         r_val = cas.vertcat(*r_vec)
         assert r_val.shape == (n*N*T+m*N*T+n*N*T+n_hi*N, 1)
         assert h_val.shape == (n_hi, N)
@@ -1212,7 +1277,7 @@ class RD3GCasadi(BaseSolver):
     def dr_to_dri(self, dr):
         """ Slice dr to a vector of dri. Also applies to dy -> dyi
         Args:
-            dr: (dim) column vector 
+            dr: (dim) column vector
         Returns:
             dri_vec: list[ (dim)]"""
         N = self.N
@@ -1256,7 +1321,7 @@ class RD3GCasadi(BaseSolver):
     def dri_to_dr(self, dri_vec):
         """ Construct dr from dri, also works on dy -> dy_i
         Args:
-            dr: (dim) column vector 
+            dr: (dim) column vector
         Returns:
             dri_vec: list[ (dim)]"""
         N = self.N
@@ -1367,7 +1432,7 @@ class RD3GCasadi(BaseSolver):
             return f'mu for h(x,u) {idx=} {Ni=}, {Nj=}, {Ti=}'
 
     def make_full_KKT_reg(self, reg_vec):
-        """ Given a list of regularization value for each agent, 
+        """ Given a list of regularization value for each agent,
         create a regularizaiton matrix for full game KKT"""
         N = self.N
         n = self.n
