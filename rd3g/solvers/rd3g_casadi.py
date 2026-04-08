@@ -210,13 +210,13 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # scaling rate for rho, rho+ = rho * rho_b
     rho_b: float = 1.0
     # Levenberg-Marquardt Regularization Coefficient
-    reg: float = 1e-5
+    reg: float = 0  # 1e-5
     # Apply inertia correction to each agent KKT
     inertia_correction: bool = False
     # Remove empty rows and columns from the KKT problem
     reduce_kkt_system: bool = False
     # Rollout control to get new state trajectory at the start of each step
-    rollout_each_step: bool = False
+    rollout_each_step: bool = True
     # Resolve all primal infeasibility (violated constraints) before solving
     strict_constraints: bool = True
     # Inertia correction max iterations
@@ -599,7 +599,7 @@ class RD3GCasadi(BaseSolver):
         x = self.rollout_casadi(self.x0, u, *params_np)
         lamda = cas.DM.zeros((n*N, T))
         mu = cas.DM.zeros((n_hi*N, 1))
-        new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
+        # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
 
         # Check each intermediate variable
         context_py = self.get_full_context_casadi(x)
@@ -766,10 +766,10 @@ class RD3GCasadi(BaseSolver):
             primal_var_count = (n+m)*T
             ind = np.arange(primal_var_count)
             reg_matrix = scipy.sparse.eye(Ki.shape[0], format="csc")
-            reg_matrix[ind, ind] = self.reg
+            reg_matrix[ind, ind] = 1e-5  # self.reg
             # Apply constraint relaxation to allow AMD permutation in LDL
             ind = np.arange(primal_var_count, Ki.shape[0])
-            reg_matrix[ind, ind] = -self.reg
+            reg_matrix[ind, ind] = -1e-5  # -self.reg
             Ki_reg = Ki + reg_matrix
 
             in_Ki, solver = self.get_inertia(Ki_reg)
@@ -847,13 +847,13 @@ class RD3GCasadi(BaseSolver):
 
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
-        # ind = np.arange(primal_var_count)
-        # reg_matrix = scipy.sparse.eye(LHS.shape[0], format="csc")
-        # reg_matrix[ind, ind] = self.reg
-        # ind = np.arange(primal_var_count, LHS.shape[0])
-        # # Apply constraint relaxation to allow AMD permutation in LDL
-        # reg_matrix[ind, ind] = -self.reg
-        # LHS += reg_matrix
+        ind = np.arange(primal_var_count)
+        reg_matrix = scipy.sparse.eye(LHS.shape[0], format="csc")
+        reg_matrix[ind, ind] = self.reg
+        # Apply constraint relaxation to allow AMD permutation in LDL
+        ind = np.arange(primal_var_count, LHS.shape[0])
+        reg_matrix[ind, ind] = -self.reg
+        LHS += reg_matrix
 
         # TODO need updating
         if self.config.reduce_kkt_system:  # active set
@@ -990,7 +990,7 @@ class RD3GCasadi(BaseSolver):
             # TODO What if no improvement at all? add infeasibility correction step
             raise LineSearchMaxIter
         except LineSearchMaxIter:
-            self.reg = min(self.reg * 10, 0.1)
+            self.reg = np.clip(self.reg * 10, a_min=1e-10, a_max=0.1)
             step_size = 0.0
             new_x = x
             new_u = u
@@ -1007,7 +1007,7 @@ class RD3GCasadi(BaseSolver):
         logger.info(
             f'{primal_res=:.6f}, {dual_res=:.6f},'
             f'{trial_primal_res=:.6f}, {trial_dual_res=:.6f},'
-            f'{h_pos=:.2f},'
+            f'{h_pos=:.5f},'
             f'{self.reg=}, {step_size=:.6f}')
 
         res = trial_primal_res + trial_dual_res
