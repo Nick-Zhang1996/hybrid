@@ -577,7 +577,7 @@ class RD3GCasadi(BaseSolver):
         # TODO add optimality gap
         return Solution(elapsed_time=dt,
                         iterations=i,
-                        u=u_ref.toarray().reshape((m, N, T), order='F'),
+                        u=u.toarray().reshape((m, N, T), order='F'),
                         x=x.toarray().reshape((n, N, T), order='F'),
                         residual=res,
                         has_converged=has_converged,
@@ -848,12 +848,12 @@ class RD3GCasadi(BaseSolver):
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         # ind = np.arange(primal_var_count)
-        # reg_matrix = scipy.sparse.eye(full_KKT.shape[0], format="csc")
+        # reg_matrix = scipy.sparse.eye(LHS.shape[0], format="csc")
         # reg_matrix[ind, ind] = self.reg
-        # ind = np.arange(primal_var_count, full_KKT.shape[0])
-        # Apply constraint relaxation to allow AMD permutation in LDL
+        # ind = np.arange(primal_var_count, LHS.shape[0])
+        # # Apply constraint relaxation to allow AMD permutation in LDL
         # reg_matrix[ind, ind] = -self.reg
-        # full_KKT += reg_matrix
+        # LHS += reg_matrix
 
         # TODO need updating
         if self.config.reduce_kkt_system:  # active set
@@ -915,15 +915,22 @@ class RD3GCasadi(BaseSolver):
         ds = -s + (tau - s * dmu)/mu
         # Fraction to full step, must < 1.0
         # Step size is upper bounded by s + step_size*ds > 0.05 s, also mu
-        raw = -0.995 * np.asarray(s) / np.asarray(ds)
-        max_ss_s = raw[raw > 0]
-        raw = -0.995 * np.asarray(mu) / np.asarray(dmu)
-        max_ss_mu = raw[raw > 0]
-        step_size = np.min(np.hstack([max_ss_s, max_ss_mu, [1.0]])).item()
-        logger.debug('Max step size %.8f', step_size)
+
+        # Primal Step Size (for x, u, s)
+        raw_s = -0.995 * np.asarray(s) / np.asarray(ds)
+        max_ss_s = raw_s[raw_s > 0]
+        alpha_p = np.min(np.hstack([max_ss_s, [1.0]])).item()
+
+        # Dual Step Size (for lamda, mu)
+        raw_mu = -0.995 * np.asarray(mu) / np.asarray(dmu)
+        max_ss_mu = raw_mu[raw_mu > 0]
+        alpha_d = np.min(np.hstack([max_ss_mu, [1.0]])).item()
+
+        alpha_p = alpha_d = np.min([alpha_d, alpha_p]).item()  # Use same step size for primal dual
+        logger.debug('Max step size primal: %.8f, dual: %.8f', alpha_p, alpha_d)
+        step_size = 1.0
 
         # Filter line search
-
         primal_res = np.linalg.norm(RHS[nNT+mNT:, 0], 1).item()  # Infeasibility residual
         dual_res = np.linalg.norm(RHS[:nNT+mNT, 0], 1).item()  # Optimality residual
         logger.debug(f'step_size=0, {primal_res=:.5f}(feas), {dual_res=:.5f}(opt)')
@@ -934,10 +941,10 @@ class RD3GCasadi(BaseSolver):
         try:
             for _ in range(self.config.backtracking_max_iter):
                 # Evaluate primal/dual residual at trial point
-                new_x = x+step_size*cas.reshape(dx, n*N, T)
-                new_u = u+step_size*cas.reshape(du, m*N, T)
-                new_lamda = lamda+step_size*cas.reshape(dlamda, n*N, T)
-                new_mu = mu+step_size*cas.reshape(dmu, n_hi*N, 1)
+                new_x = x+step_size*alpha_p*cas.reshape(dx, n*N, T)
+                new_u = u+step_size*alpha_p*cas.reshape(du, m*N, T)
+                new_lamda = lamda+step_size*alpha_d*cas.reshape(dlamda, n*N, T)
+                new_mu = mu+step_size*alpha_d*cas.reshape(dmu, n_hi*N, 1)
                 new_context = self.get_full_context_casadi(new_x)
                 # logger.debug(f"Min new_mu at step {step_size}: {cas.mmin(new_mu)}")
                 r_val, h_val = self.r_casadi(new_x,
@@ -996,14 +1003,16 @@ class RD3GCasadi(BaseSolver):
         p.e('Line Search')
 
         h_val_np = np.asarray(h_val, order='F').flatten(order='F')
+        h_pos = np.linalg.norm(h_val_np[h_val_np > 0], 1)
         logger.info(
             f'{primal_res=:.6f}, {dual_res=:.6f},'
             f'{trial_primal_res=:.6f}, {trial_dual_res=:.6f},'
+            f'{h_pos=:.2f},'
             f'{self.reg=}, {step_size=:.6f}')
 
         res = trial_primal_res + trial_dual_res
         self.residual_vec.append(res)
-        new_s = s + step_size * ds
+        new_s = s + step_size * alpha_p * ds
         p.e()
 
         converged = res < self.config.tolerance

@@ -32,7 +32,7 @@ if load:
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
-# solver.visualize(u_ref, None)
+solver.visualize(u_ref, None)
 
 
 if cpp:
