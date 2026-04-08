@@ -16,7 +16,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed()
+np.random.seed(0)
 cpp = False
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
@@ -32,7 +32,7 @@ if load:
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
-solver.visualize(u_ref, None)
+# solver.visualize(u_ref, None)
 
 
 if cpp:

@@ -12,7 +12,7 @@ import casadi as cas
 import qdldl
 from scipy.sparse import csc_matrix
 import scipy.sparse  # sparse matrix operations
-from scipy.sparse.linalg import lsqr
+from scipy.sparse.linalg import lsqr, spsolve
 import scipy.linalg
 from scipy.linalg import norm
 import matplotlib.pyplot as plt
@@ -185,6 +185,12 @@ def solve_linear(A, b, method, profiler):
         dt = time() - t0
         logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
+    elif method == 'spsolve':
+        spsolve_x = spsolve(A, b)
+        b_csc = scipy.sparse.csc_matrix(b.reshape(-1, 1))
+        spsolve_x_csc = scipy.sparse.csc_matrix(spsolve_x.reshape(-1, 1))
+        residual = scipy.sparse.linalg.norm(A @ spsolve_x_csc - b_csc)
+        return spsolve_x, residual, None
 
 
 @dataclass(frozen=True)
@@ -196,7 +202,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # backtracking line search param
     bc_a: float = 1e-4  # alpha, minimal necessary improvement in line search
     bc_b: float = 0.5  # beta, shrink coefficient for step size
-    backtracking_max_iter: int = 20
+    backtracking_max_iter: int = 10
     # NOTE this is not implemented in cpp
     dynamics_residual_weight: float = 1.0
     # barrier function scaling schedule
@@ -515,7 +521,7 @@ class RD3GCasadi(BaseSolver):
         )
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        tau = 0.1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
+        tau = 1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
 
         if u_ref is None:
             u = np.zeros((m*N, T), order='F')
@@ -735,7 +741,7 @@ class RD3GCasadi(BaseSolver):
         # Add eliminated slack variable as a function of mu
         LHS = dr_dy_val
         mu_offset = nNT + mNT + nNT
-        LHS[mu_offset:, mu_offset:] += - s / mu
+        LHS[mu_offset:, mu_offset:] += - cas.diag(s / mu)
         RHS = -r0_val
         RHS[mu_offset:, 0] += - tau / mu
 
@@ -897,9 +903,11 @@ class RD3GCasadi(BaseSolver):
             t0 = time()
             LHS_csc = dm_to_csc(LHS)
             RHS_np = np.asarray(RHS)
-            dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
+            # dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
+            dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
             dt = time() - t0
-            logger.info(f'Full KKT :{istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
+            r0_norm = np.linalg.norm(RHS_np)
+            logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
             p.e('Solve Linear (full KKT)')
 
         p.s('Line Search')
@@ -912,13 +920,13 @@ class RD3GCasadi(BaseSolver):
         raw = -0.995 * np.asarray(mu) / np.asarray(dmu)
         max_ss_mu = raw[raw > 0]
         step_size = np.min(np.hstack([max_ss_s, max_ss_mu, [1.0]])).item()
-        logger.debug('Max step size %3.2f', step_size)
+        logger.debug('Max step size %.8f', step_size)
 
         # Filter line search
 
         primal_res = np.linalg.norm(RHS[nNT+mNT:, 0], 1).item()  # Infeasibility residual
         dual_res = np.linalg.norm(RHS[:nNT+mNT, 0], 1).item()  # Optimality residual
-        logger.debug(f'step_size=0, {primal_res=}(feas), {dual_res=}(opt)')
+        logger.debug(f'step_size=0, {primal_res=:.5f}(feas), {dual_res=:.5f}(opt)')
 
         # Initialize filter, set upper bound for residual
         if len(filter_state) == 0:
@@ -943,7 +951,7 @@ class RD3GCasadi(BaseSolver):
                 trial_RHS[mu_offset:, 0] += - tau / new_mu
                 trial_primal_res = np.linalg.norm(trial_RHS[nNT+mNT:, 0], 1).item()
                 trial_dual_res = np.linalg.norm(trial_RHS[:nNT+mNT, 0], 1).item()
-                logger.debug(f'{step_size=}, {trial_primal_res=}, {trial_dual_res=}')
+                logger.debug(f'{step_size=:.8f}, {trial_primal_res=:.5f}, {trial_dual_res=:.5f}')
                 improve_optimality = trial_dual_res < dual_res - self.config.bc_a * primal_res
                 improve_feasibility = trial_primal_res < (1-self.config.bc_a)*primal_res
                 # Dominated by starting point?
@@ -977,6 +985,10 @@ class RD3GCasadi(BaseSolver):
         except LineSearchMaxIter:
             self.reg = min(self.reg * 10, 0.1)
             step_size = 0.0
+            new_x = x
+            new_u = u
+            new_lamda = lamda
+            new_mu = mu
             logger.debug(f"Max Iter reached, Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
             logger.debug("Line search success")
