@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
     T: int = 20
@@ -92,10 +92,6 @@ class CarRacingCasadi(CasadiGame):
         self.track = track
         self.car_param = CarConfig.porsche_18.value
         super().__init__(config)
-
-        # n_hi is a new concept
-        self.n_hi = config.n_hi
-        self.n_c = config.n_c
 
         # bounds for visualization
 
@@ -261,10 +257,10 @@ class CarRacingCasadi(CasadiGame):
         ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=self.T, blit=False)
+        anim = FuncAnimation(fig, update, frames=self.config.T, blit=False)
 
         folder = os.path.join(BASEDIR, 'gifs')
-        gif_filename = os.path.join(folder, f'racing_{self.N}car.gif')
+        gif_filename = os.path.join(folder, f'racing_{self.config.N}car.gif')
         if save_gif:
             anim.save(gif_filename, writer='pillow')
             logger.info(f'Gif saved to {gif_filename}')
@@ -281,23 +277,23 @@ class CarRacingCasadi(CasadiGame):
             fig.canvas.draw()
             frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
                                     fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_initial.png')
+            filename = os.path.join(folder, f'merge_{self.config.N}car_initial.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T // 2)
+            update(self.config.T // 2)
             fig.canvas.draw()
             frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
                                     fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_middle.png')
+            filename = os.path.join(folder, f'merge_{self.config.N}car_middle.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T - 1)
+            update(self.config.T - 1)
             fig.canvas.draw()
             frame = Image.frombytes('RGB', fig.canvas.get_width_height(),
                                     fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_final.png')
+            filename = os.path.join(folder, f'merge_{self.config.N}car_final.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
         return
@@ -335,7 +331,7 @@ class CarRacingCasadi(CasadiGame):
 
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
-        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
+        return self.J(x_T, cas.SX.zeros(self.config.m), i_onehot)
 
     def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i) for kinematic bicycle, frenet
@@ -348,7 +344,7 @@ class CarRacingCasadi(CasadiGame):
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
             context_i_k: (n_c=3,) Signed curvature value, left, right margin
         Return:
-            (n,1) The next state, progressed by self.dt
+            (n,1) The next state, progressed by self.config.dt
 
         this problem has homogeneous agents, so [i] is irrelevant"""
         param = self.car_param
@@ -404,16 +400,17 @@ class CarRacingCasadi(CasadiGame):
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
         h_vec = []
-        for i in range(self.N):
+        gc = self.config
+        for i in range(gc.N):
             hi_vec = []
             # Collision constraint collison_h(xi, xj) 4*N*T
-            for k in range(1, self.T + 1):
-                context_i_k = cas.reshape(context[:, k-1], self.n_c, self.N)
+            for k in range(1, gc.T + 1):
+                context_i_k = cas.reshape(context[:, k-1], gc.n_c, gc.N)
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
-                xk = cas.reshape(x[:, k - 1], self.n, self.N)
+                xk = cas.reshape(x[:, k - 1], gc.n, gc.N)
                 h_vals = [
-                    self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)
+                    self.collision_h(xk[:, i], xk[:, j]) for j in range(gc.N)
                 ] + [self.boundary_h(xk[:, i], context_i_k[:, i])]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 # TODO remove this dummy collision
@@ -422,16 +419,16 @@ class CarRacingCasadi(CasadiGame):
                 else:
                     h_vals[i] = 0.0
                 h_vals = cas.vertcat(*h_vals)
-                if self.config.double_circle_h:
-                    assert h_vals.shape == (self.N * 4 + 2, 1)  # 4 per car-car, 2 for boundary
+                if gc.double_circle_h:
+                    assert h_vals.shape == (gc.N * 4 + 2, 1)  # 4 per car-car, 2 for boundary
                 else:
-                    assert h_vals.shape == (self.N + 2, 1)
+                    assert h_vals.shape == (gc.N + 2, 1)
                 hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N) + 2 (boundary)
             # Additional constraints for agent i, None here
             h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.n_hi, self.N), "n_hi must be consistent to h().shape[0]"
+        assert h_vec.shape == (gc.n_hi, gc.N), "n_hi must be consistent to h().shape[0]"
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -444,8 +441,9 @@ class CarRacingCasadi(CasadiGame):
             h_val: (4,1), h_val <= 0 means no collision
         """
         # car distance larger than 1.2 normalized
-        assert x_i.shape == (self.n, 1)
-        assert x_j.shape == (self.n, 1)
+        gc = self.config
+        assert x_i.shape == (gc.n, 1)
+        assert x_j.shape == (gc.n, 1)
         d = self.config.get_param('collision_radius')
 
         # x = [s, n, phi, v_forward, v_sideway]
@@ -488,26 +486,26 @@ class CarRacingCasadi(CasadiGame):
         int_param_dm = cas.DM(gc.get_int_param_np())
         double_param_dm = cas.DM(gc.get_double_param_np())
         params_dm = [int_param_dm, double_param_dm]
-        u = cas.DM(u.reshape(self.m*self.N, self.T, order='F'))
+        u = cas.DM(u.reshape(gc.m*gc.N, gc.T, order='F'))
         if x is None:
-            x = solver.rollout_casadi(self.x0, u, *params_dm)
+            x = solver.rollout_casadi(gc.x0, u, *params_dm)
         else:
-            x = cas.DM(x.reshape(self.n*self.N, self.T, order='F'))
+            x = cas.DM(x.reshape(gc.n*gc.N, gc.T, order='F'))
         context_dm = solver.get_full_context_casadi(x)
         h_val = solver.h_casadi(x, u, context_dm, *params_dm)
         tol = 1e-2
         # Retrieve components
         collision_res = 0
         boundary_res = 0
-        for i in range(self.N):
+        for i in range(gc.N):
             # Collision constraint collison_h(xi, xj) 4*N*T
-            for k in range(1, self.T + 1):
+            for k in range(1, gc.T + 1):
                 # i: agent 1
                 # j: agent 2
                 # k: time step
                 # 4 collisions:
-                for j in range(self.N):
-                    col_idx = self.n_hi * i + (4*self.N+2) * (k-1) + j*self.N
+                for j in range(gc.N):
+                    col_idx = gc.n_hi * i + (4*gc.N+2) * (k-1) + j*gc.N
                     col_res = np.linalg.norm(np.clip(h_val[col_idx:col_idx+4], a_min=0, a_max=None))
                     collision_res += col_res**2
                     if col_res > tol:

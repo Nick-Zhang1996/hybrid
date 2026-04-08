@@ -44,7 +44,7 @@ class CasadiGameContext:
         return self._context_sx
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class CasadiGameConfig(BaseGameConfig):
     """ Game config with support for CasADi compatible flat param vector"""
     # _int_param: list = field(init=False, repr=False)
@@ -163,24 +163,16 @@ class CasadiGame(ABC):
 
     def __init__(self, config: BaseGameConfig):
         self.config = config
-        self.dt = config.dt
-        self.T = config.T
-        self.N = config.N
-        self.n = config.n
-        self.n_hi = config.n_hi
-        self.n_c = config.n_c
-        self.m = config.m
-        self.x0 = config.x0
-        c = config
-        empty = np.zeros((c.n_c*c.N, c.T), order='F')
+        # TODO remove internal states
+        gc = config
+        empty = np.zeros((gc.n_c*gc.N, gc.T), order='F')
         self.context = CasadiGameContext(context=empty)
 
-        x_k_i = cas.SX.sym('x_k_i', self.n, 1)
-        u_k_i = cas.SX.sym('u_k_i', self.m, 1)
-        i_onehot = cas.SX.sym('i_onehot', self.N, 1)
-        state_i_k = cas.SX.sym('state_i_k', self.n_c, 1)
+        x_k_i = cas.SX.sym('x_k_i', gc.n, 1)
+        u_k_i = cas.SX.sym('u_k_i', gc.m, 1)
+        i_onehot = cas.SX.sym('i_onehot', gc.N, 1)
+        state_i_k = cas.SX.sym('state_i_k', gc.n_c, 1)
         f_args = [x_k_i, u_k_i, i_onehot, state_i_k]
-        gc = self.config
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
         x_next_val = self.f(*f_args)
         self.f_casadi = cas.Function('f', f_args + config_params, [x_next_val])
@@ -215,10 +207,10 @@ class CasadiGame(ABC):
         Return:
             X: (n*N, T) x1..xT
         """
-        m = self.m
-        N = self.N
-        T = self.T
-        eye = cas.DM.eye(self.N)
+        m = self.config.m
+        N = self.config.N
+        T = self.config.T
+        eye = cas.DM.eye(N)
 
         x = x0
         X = []
@@ -253,7 +245,7 @@ class CasadiGame(ABC):
     # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
-        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
+        return self.J(x_T, cas.SX.zeros(self.config.m), i_onehot)
 
     @abstractmethod
     def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
@@ -264,7 +256,7 @@ class CasadiGame(ABC):
             i_onehot: (N, 1) agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
             context_i_k: (n_c,) Game context
         Return:
-            (n,1) The next state, progressed by self.dt
+            (n,1) The next state, progressed by self.config.dt
         """
 
     @abstractmethod

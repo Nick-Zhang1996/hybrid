@@ -24,7 +24,7 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.WARNING)
 DEBUG = False
 
 
@@ -223,6 +223,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     max_in_reg_iter: int = 10
     # Maximum inertia regularization value
     max_in_reg_val: float = 1.0
+    # Number of failed line search before solver stops trying
+    max_failed_line_search: int = 3
 
 
 class LineSearchMaxIter(Exception):
@@ -261,7 +263,6 @@ class RD3GCasadi(BaseSolver):
         self.m = self.game.config.m
         self.n_hi = self.game.config.n_hi
         self.n_c = self.game.config.n_c
-        self.x0 = self.game.config.x0
         self.rho = self.config.rho_0
 
         # Levenberg-Marquardt Regularization coeff
@@ -436,13 +437,14 @@ class RD3GCasadi(BaseSolver):
         if self.cpp_solver is None:
             logger.error('Call init_cpp_backend() first')
             raise RuntimeError
+        x0 = self.game.config.x0
 
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
 
         if u_ref is None:
             u_ref = np.zeros((self.m*self.N, self.T), order='F')
-        assert np.isfortran(self.x0)
+        assert np.isfortran(x0)
         assert np.isfortran(u_ref)
         # TODO NOTE x0 is in params_np and also passed explicitly here
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
@@ -450,8 +452,8 @@ class RD3GCasadi(BaseSolver):
         # Maybe write a function get_x0_from_params() to handle the slicing safely?
 
         t0 = time()
-        # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
-        retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
+        # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
+        retval = self.cpp_solver.solve(x0, u_ref, *params_np)
         x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
         dt = time()-t0
         del lamda
@@ -487,11 +489,11 @@ class RD3GCasadi(BaseSolver):
             # reshaped_samples:  (m, N, T) -> [Agent, Control_Dim, Time]
             reshaped_samples = raw_samples.transpose(2, 0, 1).reshape(self.m * self.N, self.T)
             u_ref = np.array(reshaped_samples, order='F')
-            assert np.isfortran(self.x0)
+            assert np.isfortran(x0)
             assert np.isfortran(u_ref)
 
-            # reduced_dy, res, inertia = self.cpp_solver.solve(self.x0, u_ref, *params_np)
-            retval = self.cpp_solver.solve(self.x0, u_ref, *params_np)
+            # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
+            retval = self.cpp_solver.solve(x0, u_ref, *params_np)
             x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
             del lamda
             del mu
@@ -515,13 +517,14 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         n_hi = self.n_hi
+        x0 = self.game.config.x0
         # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
         logger.debug(
             f'primal variables:{(T*N*n) + (T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
         )
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        tau = 1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
+        tau = 0.1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
 
         if u_ref is None:
             u = np.zeros((m*N, T), order='F')
@@ -529,8 +532,8 @@ class RD3GCasadi(BaseSolver):
             u = u_ref
         # x = x_1 .. x_T, NOTE the array index is offset from the math notation
         # (n*N, T)
-        x = self.rollout_casadi(self.x0, u, *params_np)
-        # x = self.cpp_solver.rollout(self.x0, u, *params_np)
+        x = self.rollout_casadi(x0, u, *params_np)
+        # x = self.cpp_solver.rollout(x0, u, *params_np)
         # To convert to np array
         # np.asarray(x_ref, order='F'),reshape(n,N,T, order='F') -> (n, N, T)
         context = self.get_full_context_casadi(x)
@@ -545,11 +548,13 @@ class RD3GCasadi(BaseSolver):
         i = 0
         has_converged = False
         is_optimal = False
+        self.line_search_fail_count = 0
+        msg = ''
         t0 = time()
         for i in range(self.config.iterations):
             logger.info(f'--- iter {i} ---')
             if self.config.rollout_each_step:
-                x = self.rollout_casadi(self.x0, u, *params_np)
+                x = self.rollout_casadi(x0, u, *params_np)
             x, u, lamda, mu, s, res, converged, optimal, filter_state, _ = self.step(
                 x, u, lamda, mu, s, filter_state, tau)
             # TODO add tau scheduling
@@ -559,14 +564,14 @@ class RD3GCasadi(BaseSolver):
             if converged:
                 tau = np.sum(s * mu) / (n_hi*N)
                 logger.debug('Converged, reducing tau=%.2f', tau)
+            if self.line_search_fail_count >= 3:
+                msg = 'Line search no progress'
+                break
         dt = time() - t0
-        msg = ''
         if converged and optimal:
             msg = 'Converged to NE'
         elif converged and not optimal:
             msg = 'Converged to saddle point'
-        else:
-            msg = 'Max Iteration reached'
 
         logger.info(f'Stop after {i} iteration because {msg}')
 
@@ -582,117 +587,6 @@ class RD3GCasadi(BaseSolver):
                         residual=res,
                         has_converged=has_converged,
                         is_optimal=is_optimal)
-
-    @deprecated
-    def debug(self, u):
-        """ TODO """
-        self.init_cpp_backend()
-        self.solve_cpp_backend(u)
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        n_hi = self.n_hi
-        gc = self.game.config
-        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        # return: (n*N, T)
-        x = self.rollout_casadi(self.x0, u, *params_np)
-        lamda = cas.DM.zeros((n*N, T))
-        mu = cas.DM.zeros((n_hi*N, 1))
-        # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
-
-        # Check each intermediate variable
-        context_py = self.get_full_context_casadi(x)
-        context_cpp = self.cpp_solver.debug_get_context()
-        context_cpp = np.array(context_cpp, order='F').reshape((12, 20), order='F')
-        context_diff = np.linalg.norm(context_py - context_py)
-        print(f'{context_diff=}')
-        # Context identical -- verified
-        # r0 = r(x,u, lamda, mu, context)
-        # r0 diff = 60
-        x_cpp = self.cpp_solver.debug_get_x()
-        u_cpp = self.cpp_solver.debug_get_u()
-        print(f'x_diff = {np.linalg.norm(x_cpp-x)}')
-        print(f'u_diff = {np.linalg.norm(u_cpp-u)}')
-        r0_py = debug_dict['full_r0']
-        res = self.cpp_solver.debug_get_full_r0()
-        r0_cpp = csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-        r0_diff = np.linalg.norm(r0_py - r0_cpp)
-        print(f'{r0_diff=}')
-
-        KKT_py = debug_dict['full_KKT']
-        res = self.cpp_solver.debug_get_full_KKT()  # SparseMatrixResult
-        KKT_cpp = csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-        KKT_diff = scipy.sparse.linalg.norm(KKT_py - KKT_cpp)
-        print(f'{KKT_diff=}')
-
-        dy_py = debug_dict['full_dy']
-        dy_cpp = self.cpp_solver.debug_get_full_dy()
-        dy_diff = np.sum(np.abs(dy_py - dy_cpp))
-        print(f'{dy_diff=}')
-        res_py = scipy.linalg.norm(KKT_py @ dy_py + r0_py)
-        res_cpp = scipy.linalg.norm(KKT_cpp @ dy_cpp + r0_cpp)
-        print(f'{res_py=}')
-        print(f'{res_cpp=}')
-        breakpoint()
-
-    def _rollout_full_x(self, u_ref, x_ref=None):
-        """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0
-        Args:
-            u_ref: (m, N, T)
-            x_ref: Optional, (n, N, T)
-        Output:
-            full_x: (n, N, T+1)
-        """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
-        assert u_ref.shape == (m, N, T)
-
-        # n*N, T
-        if x_ref is None:
-            u_cat = u_ref.reshape((m*N, T), order='F')
-            gc = self.game.config
-            params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-            if self.cpp_solver is None:
-                # Use rollout_casadi, pure python
-                try:
-                    x_ref = self.rollout_casadi(self.x0, u_cat, *params_np).full()
-                except AttributeError:
-                    logger.error('cpp_only must be False to populate rollout_casadi()')
-                    raise
-            else:
-                # Use cpp rollout
-                x_ref = self.cpp_solver.rollout(self.x0, u_cat, *params_np)
-
-        full_x = np.dstack([self.x0[:, :, np.newaxis], x_ref.reshape((n, N, T), order='F')])
-        assert full_x.shape == (n, N, T+1)
-        return full_x
-
-    def visualize(self, u_ref, x_ref=None, save=False):
-        """ Visualize the game with given and control (u) in a single frame.
-        Args:
-            u_ref: (m, N, T, order='F')
-        """
-        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
-        x_ref = self._rollout_full_x(u_ref, x_ref)
-        self.game.visualize(u_ref, x_ref, show=True, save=save)
-
-    def animate(self, u_ref, x_ref=None, save_gif=False, save_snapshots=False):
-        """ Animate the game with given and control (u).
-        Args:
-            u_ref: (m, N, T, order='F')
-        """
-        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
-        x_ref = self._rollout_full_x(u_ref, x_ref)
-        self.game.animate(u_ref, x_ref, show=True, save_gif=save_gif, save_snapshots=save_snapshots)
 
     def step(self, x, u, lamda, mu, s, filter_state, tau):
         """ Solver step function
@@ -945,6 +839,7 @@ class RD3GCasadi(BaseSolver):
                 new_u = u+step_size*alpha_p*cas.reshape(du, m*N, T)
                 new_lamda = lamda+step_size*alpha_d*cas.reshape(dlamda, n*N, T)
                 new_mu = mu+step_size*alpha_d*cas.reshape(dmu, n_hi*N, 1)
+                new_s = s + step_size * alpha_p * ds
                 new_context = self.get_full_context_casadi(new_x)
                 # logger.debug(f"Min new_mu at step {step_size}: {cas.mmin(new_mu)}")
                 r_val, h_val = self.r_casadi(new_x,
@@ -955,7 +850,7 @@ class RD3GCasadi(BaseSolver):
                                              int_param_dm, double_param_dm
                                              )
                 trial_RHS = -r_val
-                trial_RHS[mu_offset:, 0] += - tau / new_mu
+                trial_RHS[mu_offset:, 0] += - new_s
                 trial_primal_res = np.linalg.norm(trial_RHS[nNT+mNT:, 0], 1).item()
                 trial_dual_res = np.linalg.norm(trial_RHS[:nNT+mNT, 0], 1).item()
                 logger.debug(f'{step_size=:.8f}, {trial_primal_res=:.5f}, {trial_dual_res=:.5f}')
@@ -991,6 +886,7 @@ class RD3GCasadi(BaseSolver):
             raise LineSearchMaxIter
         except LineSearchMaxIter:
             self.reg = np.clip(self.reg * 10, a_min=1e-10, a_max=0.1)
+            self.line_search_fail_count += 1
             step_size = 0.0
             new_x = x
             new_u = u
@@ -1000,6 +896,7 @@ class RD3GCasadi(BaseSolver):
         except LineSearchSuccess:
             logger.debug("Line search success")
             self.reg = self.config.reg
+            self.line_search_fail_count = 0
         p.e('Line Search')
 
         h_val_np = np.asarray(h_val, order='F').flatten(order='F')
@@ -1012,13 +909,124 @@ class RD3GCasadi(BaseSolver):
 
         res = trial_primal_res + trial_dual_res
         self.residual_vec.append(res)
-        new_s = s + step_size * alpha_p * ds
         p.e()
 
         converged = res < self.config.tolerance
         debug_dict = {}
 
         return new_x, new_u, new_lamda, new_mu, new_s, res, converged, is_optimal, filter_state, debug_dict
+
+    @deprecated
+    def debug(self, u):
+        """ TODO """
+        self.init_cpp_backend()
+        self.solve_cpp_backend(u)
+        N = self.N
+        T = self.T
+        n = self.n
+        m = self.m
+        n_hi = self.n_hi
+        gc = self.game.config
+        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        # return: (n*N, T)
+        x = self.rollout_casadi(self.game.config.x0, u, *params_np)
+        lamda = cas.DM.zeros((n*N, T))
+        mu = cas.DM.zeros((n_hi*N, 1))
+        # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
+
+        # Check each intermediate variable
+        context_py = self.get_full_context_casadi(x)
+        context_cpp = self.cpp_solver.debug_get_context()
+        context_cpp = np.array(context_cpp, order='F').reshape((12, 20), order='F')
+        context_diff = np.linalg.norm(context_py - context_py)
+        print(f'{context_diff=}')
+        # Context identical -- verified
+        # r0 = r(x,u, lamda, mu, context)
+        # r0 diff = 60
+        x_cpp = self.cpp_solver.debug_get_x()
+        u_cpp = self.cpp_solver.debug_get_u()
+        print(f'x_diff = {np.linalg.norm(x_cpp-x)}')
+        print(f'u_diff = {np.linalg.norm(u_cpp-u)}')
+        r0_py = debug_dict['full_r0']
+        res = self.cpp_solver.debug_get_full_r0()
+        r0_cpp = csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+        r0_diff = np.linalg.norm(r0_py - r0_cpp)
+        print(f'{r0_diff=}')
+
+        KKT_py = debug_dict['full_KKT']
+        res = self.cpp_solver.debug_get_full_KKT()  # SparseMatrixResult
+        KKT_cpp = csc_matrix(
+            (res.data, res.row, res.colind),
+            shape=res.shape
+        )
+        KKT_diff = scipy.sparse.linalg.norm(KKT_py - KKT_cpp)
+        print(f'{KKT_diff=}')
+
+        dy_py = debug_dict['full_dy']
+        dy_cpp = self.cpp_solver.debug_get_full_dy()
+        dy_diff = np.sum(np.abs(dy_py - dy_cpp))
+        print(f'{dy_diff=}')
+        res_py = scipy.linalg.norm(KKT_py @ dy_py + r0_py)
+        res_cpp = scipy.linalg.norm(KKT_cpp @ dy_cpp + r0_cpp)
+        print(f'{res_py=}')
+        print(f'{res_cpp=}')
+        breakpoint()
+
+    def _rollout_full_x(self, u_ref, x_ref=None):
+        """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0
+        Args:
+            u_ref: (m, N, T)
+            x_ref: Optional, (n, N, T)
+        Output:
+            full_x: (n, N, T+1)
+        """
+        n = self.n
+        m = self.m
+        T = self.T
+        N = self.N
+        assert u_ref.shape == (m, N, T)
+        x0 = self.game.config.x0
+
+        # n*N, T
+        if x_ref is None:
+            u_cat = u_ref.reshape((m*N, T), order='F')
+            gc = self.game.config
+            params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+            if self.cpp_solver is None:
+                # Use rollout_casadi, pure python
+                try:
+                    x_ref = self.rollout_casadi(x0, u_cat, *params_np).full()
+                except AttributeError:
+                    logger.error('cpp_only must be False to populate rollout_casadi()')
+                    raise
+            else:
+                # Use cpp rollout
+                x_ref = self.cpp_solver.rollout(x0, u_cat, *params_np)
+
+        full_x = np.dstack([x0[:, :, np.newaxis], x_ref.reshape((n, N, T), order='F')])
+        assert full_x.shape == (n, N, T+1)
+        return full_x
+
+    def visualize(self, u_ref, x_ref=None, save=False):
+        """ Visualize the game with given and control (u) in a single frame.
+        Args:
+            u_ref: (m, N, T, order='F')
+        """
+        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
+        x_ref = self._rollout_full_x(u_ref, x_ref)
+        self.game.visualize(u_ref, x_ref, show=True, save=save)
+
+    def animate(self, u_ref, x_ref=None, save_gif=False, save_snapshots=False):
+        """ Animate the game with given and control (u).
+        Args:
+            u_ref: (m, N, T, order='F')
+        """
+        u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
+        x_ref = self._rollout_full_x(u_ref, x_ref)
+        self.game.animate(u_ref, x_ref, show=True, save_gif=save_gif, save_snapshots=save_snapshots)
 
     def final(self):
         self.profiler.summary()
@@ -1095,11 +1103,12 @@ class RD3GCasadi(BaseSolver):
         # we only want to sum h_val > 0
         # TODO set corresponding mu for inactive constraints to 0 for strict complementarity
         mu_i = cas.reshape(mu, n_hi, N)[:, i]
+        # TODO cleanup
         mu_h_plus_vals = cas.dot(mu_i, cas.fmax(hi_vals, 0))
         # barrier for h < 0
-        # FIXME
         h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(hi_vals, -1e-100)))
         LLi_val += mu_h_plus_vals + h_neg_barrier_vals
+        # LLi_val += cas.dot(mu_i, hi_vals)
 
         x0 = self.game.config.get_param('x0')
         # x0 related terms

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class BaseGameConfig():
     """ Base Class for game configuration"""
     T: int = 0

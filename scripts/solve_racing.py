@@ -23,11 +23,12 @@ game = create_random_game(car_count=4, horizon=20)
 
 gc = game.config
 # load from pickle
-load = False
+load = True
 if load:
     with open('outputs/input.p', 'rb') as f:
         data = pickle.load(f)
-    game.config = replace(gc, x0=data['x0'], target_x_ref=data['target_x_ref'])
+    game.config = data['gc']
+    game.config.__post_init__()
     u_ref = data['u_ref']
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
@@ -48,4 +49,4 @@ print(f'{sol.elapsed_time=}, {sol.residual=}')
 # DEBUG
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
-# solver.animate(sol.u, None, save_gif=False)
+# solver.animate(sol.u, None, save_gif=True)
