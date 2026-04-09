@@ -16,9 +16,7 @@ import casadi as cas
 from buzzracer.types import CurvilinearState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
 from buzzracer.cars.car_param import CarConfig
-from buzzracer.tracks.nascar_track import NascarTrack
 from buzzracer.tracks.track_factory import TrackFactory
-from buzzracer.tracks.track import TrackConfig
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
 from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
@@ -102,10 +100,16 @@ class CarRacingCasadi(CasadiGame):
         self.car_scale = 98e-3 / 300
 
         # Curvature function
-        s_vec = track.data.s_vec.tolist()
-        c_vec = track.data.curvature_vec.tolist()
-        left_vec = (track.data.left_width_vec-self.config.bdry_margin).tolist()
-        right_vec = (track.data.right_width_vec-self.config.bdry_margin).tolist()
+        s_vec = track.data.s_vec
+        c_vec = track.data.curvature_vec
+        left_vec = track.data.left_width_vec-self.config.bdry_margin
+        right_vec = track.data.right_width_vec-self.config.bdry_margin
+        # To handle wrap around when s is outside [0, track.data.track_len_m] Extend the domain
+        max_s = s_vec[-1]
+        s_vec = np.hstack([s_vec[:-1] - max_s, s_vec, s_vec[1:] + max_s]).tolist()
+        c_vec = np.hstack([c_vec[:-1], c_vec, c_vec[1:]]).tolist()
+        left_vec = np.hstack([left_vec[:-1], left_vec, left_vec[1:]]).tolist()
+        right_vec = np.hstack([right_vec[:-1], right_vec, right_vec[1:]]).tolist()
 
         assert np.all(np.diff(np.asarray(s_vec)) > 0), "s_vec must be monotonic"
         assert not np.isnan(np.asarray(c_vec)).any(), "No NaNs in curvature"
@@ -271,7 +275,7 @@ class CarRacingCasadi(CasadiGame):
                          ' matplotlib has weird problems, do one at a time')
         # NOTE save initial, middle, final snapshots
         if save_snapshots:
-            from PIL import Image
+            from PIL import Image  # pylint: disable=import-outside-toplevel
             folder = os.path.join(BASEDIR, 'pics')
             update(0)
             fig.canvas.draw()
@@ -368,8 +372,6 @@ class CarRacingCasadi(CasadiGame):
         dndt = state.v_forward * cas.sin(state.heading_err) + \
             state.v_sideway * cas.cos(state.heading_err)
         # acceleration at rear wheel
-        # TODO new sysid
-        # acc_rw = 6.17 * (control.throttle - state.v_forward / 15.2 - 0.333)
         acc_rw = control.throttle * 3.0
         acc_cg = acc_rw / cas.cos(beta)
         d_v_forward_dt = acc_cg * cas.cos(beta)

@@ -1,5 +1,4 @@
 """ Prototype to solve car racing game with RD3G CasADi """
-from dataclasses import replace
 import logging
 
 import pickle
