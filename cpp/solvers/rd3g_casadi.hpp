@@ -324,7 +324,6 @@ class Rd3gCasadi {
     }
 
     // Construct reduced_r0
-    // TODO should this be sparse?
     MatrixXd reduced_r0(reduced_r_dim, 1);
 
     for (int i = 0; i < full_r0.rows(); i++) {
@@ -375,7 +374,6 @@ class Rd3gCasadi {
 
       MatrixXd x = solver.solve(b);
       if (solver.info() != Eigen::Success) {
-        // TODO use logging
         logger_->info("LSCG solver failed ");
       }
       // NOTE this is relative error |Ax-b|/|Ax|, make sure it's consistent
@@ -491,15 +489,49 @@ class Rd3gCasadi {
 
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();
-
     MatrixXd lamda = MatrixXd::Zero(n_ * N_, T_);
-    MatrixXd mu = MatrixXd::Zero(n_hi_ * N_, 1);
-    bool has_converged = false;
-    bool is_optimal = false;
+    // get context, get h_val, calculate slack variable s, mu
+    // Call get_full_context_(x) -> full_context_buffer
+    wb_.args[0] = static_cast<double *>(x.data());
+    assert(get_full_context_.n_in() == 1);
+    assert(get_full_context_.sparsity_in(0).is_dense());
+    casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
+    assert(full_context_sp.is_dense());
+    std::vector<Scalar> full_context_buffer(full_context_sp.nnz());
+    wb_.res[0] = full_context_buffer.data();
+    assert(get_full_context_.n_out() == 1);
+    get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    wb_.res[0] = nullptr;
+
+    // Call h_(x, u, context, int_params, double_params) -> h_val_buffer
+    wb_.args[0] = static_cast<double *>(x.data());
+    wb_.args[1] = static_cast<double *>(u.data());
+    wb_.args[2] = static_cast<double *>(full_context_buffer.data());
+    wb_.args[3] = static_cast<double *>(int_param_val.ptr);
+    wb_.args[4] = static_cast<double *>(double_param_val.ptr);
+    assert(h_.n_in() == 5);
+    casadi::Sparsity h_val_sp = h_.sparsity_out(0);
+    std::vector<double> h_val_buffer(h_val_sp.nnz());
+    wb_.res[0] = h_val_buffer.data();
+    assert(h_.n_out() == 1);
+    h_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+    wb_.res[0] = nullptr;
+
+    Scalar tau = 0.1;  // Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
+    // Slack variable
+    MatrixXd s = (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), n_hi_ * N_, 1)).cwiseMax(1e-2);
+    MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s (n_hi*N, 1)
+
+    std::vector<std::pair<Scalar, Scalar>> filter_state;  // Primal, dual residual
+    line_search_no_progress_counter_ = 0;
+
+    bool converged = false;
+    bool optimal = false;
     bool stop = false;
     Scalar residual = 1e10;
 
     int iter;
+    std::string msg{"no info"};
     for (iter = 0; iter < max_iterations_; iter++) {
       if (rollout_each_step_) {
         // Call rollout(x0, u_guess, int_param, double_param) -> x
@@ -513,18 +545,31 @@ class Rd3gCasadi {
         rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
         wb_.res[0] = nullptr;  // Avoid accidentally overwriting the buffer
       }
-      std::tie(stop, has_converged, is_optimal, residual) =
-          step(x, u, lamda, mu, int_param, double_param);
-      logger_->info("converged={}, optimal={}, residual={:.5f}", has_converged, is_optimal,
-                    residual);
-      if (has_converged || stop) {
+      std::tie(stop, converged, optimal, residual) =
+          step(x, u, lamda, mu, s, filter_state, tau, int_param, double_param);
+      logger_->info("converged={},optimal={},residual={:.5f}", converged, optimal, residual);
+      if (converged && tau < 1e-4) {
+        break;
+      }
+      if (converged) {
+        tau = s.cwiseProduct(mu).sum() / static_cast<Scalar>(n_hi_ * N_);
+        logger_->debug("Converged, reducing tau={:.5f}", tau);
+      }
+      if (line_search_no_progress_counter_ >= 3 || stop) {
+        msg = "Line search no progress";
         break;
       }
     }
-    // Return: x,  u,  lamda,  mu,  residual, has_converged,  is_optimal,
+    if (msg == "no info") {
+      if (converged && optimal) {
+        msg = "Converged to NE";
+      } else if (converged && !optimal) {
+        msg = "Converged to saddle point";
+      }
+    }
+    // Return: x,  u,  lamda,  mu,  residual, converged,  optimal,
     // iterations,  msg
-    std::string msg{"no info"};
-    return {x, u, lamda, mu, residual, has_converged, is_optimal, iter, msg};
+    return {x, u, lamda, mu, residual, converged, optimal, iter, msg};
   }
 
   // Take one Newton step, modify x,u,lamda,mu IN PLACE
@@ -535,7 +580,9 @@ class Rd3gCasadi {
   // Returns (stop, has_converged, is_optimal, residual)
   std::tuple<bool, bool, bool, Scalar> step(Eigen::Ref<MatrixXd> x, Eigen::Ref<MatrixXd> u,
                                             Eigen::Ref<MatrixXd> lamda, Eigen::Ref<MatrixXd> mu,
-                                            py::array_t<double> &int_param,
+                                            Eigen::Ref<MatrixXd> s,
+                                            std::vector<std::pair<Scalar, Scalar>> &filter_state,
+                                            const Scalar tau, py::array_t<double> &int_param,
                                             py::array_t<double> &double_param) {
     // Solve r0 + H @ dy = 0
     // i.e. full_r0 + full_KKT @ <dx, du, dlambda, dmu> = 0
@@ -609,7 +656,6 @@ class Rd3gCasadi {
     wb_.res[1] = nullptr;
 
     auto full_r0 = get_mapped_spmatrix(full_r0_sp, full_r0_buffer.data());
-    Scalar r0_norm = full_r0.norm();
     assert(h_val_sp.is_dense());
     // auto h_val = get_mapped_spmatrix(h_val_sp, h_val_buffer.data());
     Eigen::Map<MatrixXd> h_val(h_val_buffer.data(), h_val_sp.size1(), h_val_sp.size2());
@@ -638,6 +684,18 @@ class Rd3gCasadi {
     // later
     SpMatrix full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
     check_spmatrix_has_nan(full_KKT, "full_KKT");
+    MatrixXd full_rhs = -MatrixXd(full_r0);
+    const int mu_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
+    for (int i = 0; i < n_hi_ * N_; ++i) {
+      const Scalar slack_ratio = -s(i, 0) / mu(i, 0);
+      full_KKT.coeffRef(mu_offset + i, mu_offset + i) += slack_ratio;
+      full_rhs(mu_offset + i, 0) += -tau / mu(i, 0);
+    }
+    const Scalar primal_res = full_rhs
+                                  .block(n_ * N_ * T_ + m_ * N_ * T_, 0,
+                                         full_rhs.rows() - (n_ * N_ * T_ + m_ * N_ * T_), 1)
+                                  .lpNorm<1>();
+    const Scalar dual_res = full_rhs.block(0, 0, n_ * N_ * T_ + m_ * N_ * T_, 1).lpNorm<1>();
 
     // Check inertia for each agent KKT matrix Ki
     bool is_optimal = true;
@@ -675,7 +733,7 @@ class Rd3gCasadi {
       triplets.reserve(rows);
       for (int k = 0; k < rows; ++k) {
         // Primal (+reg), Dual/Constraints (-reg)
-        double val = (k < primal_n) ? reg_ : -reg_;
+        double val = (k < primal_n) ? 1e-5 : -1e-5;
         triplets.emplace_back(k, k, val);
       }
       SpMatrix reg_matrix(rows, cols);
@@ -687,6 +745,7 @@ class Rd3gCasadi {
       auto inertia = get_inertia(Ki_reg, solver);
       auto expected_inertia = std::make_tuple(primal_n, dual_n, 0);
       if (inertia != expected_inertia) {
+        // TODO use different regularization for inertia checking
         is_optimal = false;
         saddle_agent_vec.push_back(i);
         if (inertia_correction_) {
@@ -749,6 +808,7 @@ class Rd3gCasadi {
     MatrixXd full_dy;
     Scalar residual;
     if (reduce_kkt_system_) {
+      // Deprecated !
       // Apply active set method, skim down full_r0 and full_KKT
       // logger_->debug("Reduce KKT system...");
       SpMatrix reduced_KKT;
@@ -758,7 +818,7 @@ class Rd3gCasadi {
       // Can't use r0 directly, can't differentiate between an inactive h<0 vs a
       // tight h=0 since both are 0 in r
       std::tie(reduced_KKT, reduced_r0, active_h_indices) =
-          reduce_KKT_system(full_KKT, full_r0, h_val.reshaped());
+          reduce_KKT_system(full_KKT, full_rhs.sparseView(), h_val.reshaped());
       assert(reduced_KKT.rows() == reduced_KKT.cols());
       // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
 
@@ -803,34 +863,51 @@ class Rd3gCasadi {
       logger_->debug("reduced_dy sq_norm {:.5f}", pow(reduced_dy.norm(), 2));
       debug_reduced_KKT_ = reduced_KKT;
     } else {
-      std::tie(full_dy, residual) = solve_linear_system(full_KKT, -full_r0, "lscg");
+      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, "lscg");
     }
     // FIXME why are they different???
     logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(), 2));
 
     // Line Search, regularization bloating
     Scalar step = 1.0;
+    const int x_dim = n_ * N_ * T_;
+    const int u_dim = m_ * N_ * T_;
+    const int lamda_dim = n_ * N_ * T_;
+    const int mu_dim = n_hi_ * N_;
+    const MatrixXd dx = full_dy.block(0, 0, x_dim, 1);
+    const MatrixXd du = full_dy.block(x_dim, 0, u_dim, 1);
+    const MatrixXd dlamda = full_dy.block(x_dim + u_dim, 0, lamda_dim, 1);
+    const MatrixXd dmu = full_dy.block(x_dim + u_dim + lamda_dim, 0, mu_dim, 1);
+    MatrixXd ds = -s + (MatrixXd::Constant(mu_dim, 1, tau) - s.cwiseProduct(dmu)).cwiseQuotient(mu);
+    Scalar alpha_p = 1.0;
+    Scalar alpha_d = 1.0;
+    for (int i = 0; i < mu_dim; ++i) {
+      if (ds(i, 0) < 0.0) {
+        alpha_p = min(alpha_p, -0.995 * s(i, 0) / ds(i, 0));
+      }
+      if (dmu(i, 0) < 0.0) {
+        alpha_d = min(alpha_d, -0.995 * mu(i, 0) / dmu(i, 0));
+      }
+    }
+    alpha_p = alpha_d = min(alpha_p, alpha_d);
+    logger_->debug("Max step size primal: {:.8f}, dual: {:.8f}", alpha_p, alpha_d);
     MatrixXd new_x(n_ * N_, T_);
     MatrixXd new_u(m_ * N_, T_);
     MatrixXd new_lamda(n_ * N_, T_);
     MatrixXd new_mu(n_hi_ * N_, 1);
+    MatrixXd new_s(n_hi_ * N_, 1);
     int ls_iter;
-    Scalar new_r_norm = -1;
+    Scalar trial_primal_res = primal_res;
+    Scalar trial_dual_res = dual_res;
+    if (filter_state.empty()) {
+      filter_state.emplace_back(primal_res * 1.2, -std::numeric_limits<Scalar>::infinity());
+    }
     for (ls_iter = 0; ls_iter < line_search_max_iter_; ls_iter++) {
-      // check r(y+step_size*dy).norm()
-      // Construct new x,u,lamda,mu
-      int offset = 0;
-      const int x_dim = n_ * N_ * T_;
-      new_x = x + step * full_dy.block(0, 0, x_dim, 1).reshaped(n_ * N_, T_);
-      offset += x_dim;
-      const int y_dim = m_ * N_ * T_;
-      new_u = u + step * full_dy.block(offset, 0, y_dim, 1).reshaped(m_ * N_, T_);
-      offset += y_dim;
-      const int lamda_dim = n_ * N_ * T_;
-      new_lamda = lamda + step * full_dy.block(offset, 0, lamda_dim, 1).reshaped(n_ * N_, T_);
-      offset += lamda_dim;
-      const int mu_dim = n_hi_ * N_;  // mu is column vector
-      new_mu = mu + step * full_dy.block(offset, 0, mu_dim, 1).reshaped(mu_dim, 1);
+      new_x = x + step * alpha_p * dx.reshaped(n_ * N_, T_);
+      new_u = u + step * alpha_p * du.reshaped(m_ * N_, T_);
+      new_lamda = lamda + step * alpha_d * dlamda.reshaped(n_ * N_, T_);
+      new_mu = mu + step * alpha_d * dmu.reshaped(mu_dim, 1);
+      new_s = s + step * alpha_p * ds;
 
       // Get game context
       // Call get_full_context_(x)
@@ -868,18 +945,54 @@ class Rd3gCasadi {
       wb_.res[0] = nullptr;
 
       auto new_r = get_mapped_spmatrix(full_r0_sp, new_r_buffer.data());
-      new_r_norm = new_r.norm();
-      logger_->debug("Line Search step {:.5f}, new_r_norm {:.5f}", step, new_r_norm);
-      if (new_r_norm > (1 - bc_a_ * step) * r0_norm) {
+      MatrixXd trial_rhs = -MatrixXd(new_r);
+      trial_rhs.block(mu_offset, 0, mu_dim, 1) += -new_s;
+      trial_primal_res = trial_rhs
+                             .block(n_ * N_ * T_ + m_ * N_ * T_, 0,
+                                    trial_rhs.rows() - (n_ * N_ * T_ + m_ * N_ * T_), 1)
+                             .lpNorm<1>();
+      trial_dual_res = trial_rhs.block(0, 0, n_ * N_ * T_ + m_ * N_ * T_, 1).lpNorm<1>();
+      logger_->debug("step={:.8f}, trial_primal_res={:.5f}, trial_dual_res={:.5f}", step,
+                     trial_primal_res, trial_dual_res);
+
+      const bool improve_optimality = trial_dual_res < dual_res - bc_a_ * primal_res;
+      const bool improve_feasibility = trial_primal_res < (1 - bc_a_) * primal_res;
+      if (!improve_optimality && !improve_feasibility) {
         step *= bc_b_;
-      } else {
-        break;
+        continue;
       }
+
+      bool is_dominated = false;
+      for (const auto &[filter_primal_res, filter_dual_res] : filter_state) {
+        const bool filter_improve_optimality =
+            trial_dual_res < filter_dual_res - bc_a_ * filter_primal_res;
+        const bool filter_improve_feasibility = trial_primal_res < (1 - bc_a_) * filter_primal_res;
+        if (!filter_improve_optimality && !filter_improve_feasibility) {
+          is_dominated = true;
+          break;
+        }
+      }
+      if (is_dominated) {
+        step *= bc_b_;
+        continue;
+      }
+
+      if (!improve_optimality && improve_feasibility) {
+        filter_state.emplace_back(primal_res, dual_res);
+      }
+      break;
     }
     if (ls_iter == line_search_max_iter_) {
       reg_ = min(reg_ * 10.0, 0.1);
       step = 0.0;
       line_search_no_progress_counter_++;
+      new_x = x;
+      new_u = u;
+      new_lamda = lamda;
+      new_mu = mu;
+      new_s = s;
+      trial_primal_res = primal_res;
+      trial_dual_res = dual_res;
       logger_->debug("Line Search no progress, inflating reg to {:.5f}", reg_);
     } else {
       reg_ = reg0_;
@@ -888,23 +1001,25 @@ class Rd3gCasadi {
     logger_->debug("Line search stopped after {}/{} iterations", ls_iter + 1,
                    line_search_max_iter_);
     logger_->debug("Step size = {:.5f}", step);
-    bool stop = line_search_no_progress_counter_ >= 2;
+    bool stop = line_search_no_progress_counter_ >= 3;
 
     x = new_x;
     u = new_u;
     lamda = new_lamda;
     mu = new_mu;
+    s = new_s;
 
-    bool has_converged = new_r_norm < tolerance_;
+    const Scalar total_residual = trial_primal_res + trial_dual_res;
+    bool has_converged = total_residual < tolerance_;
     if (!debug_got_vals_) {
       debug_full_KKT_ = full_KKT;
-      debug_full_r0_ = full_r0;
+      debug_full_r0_ = full_rhs.sparseView();
       debug_full_dy = full_dy;
       debug_got_vals_ = true;
     }
 
     // Returns (has_converged, is_optimal, residual)
-    return {stop, has_converged, is_optimal, new_r_norm};
+    return {stop, has_converged, is_optimal, total_residual};
   }
 
   SparseMatrixResult debug_get_full_KKT() { return get_spr(debug_full_KKT_); }
