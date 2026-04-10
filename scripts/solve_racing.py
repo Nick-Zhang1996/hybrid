@@ -15,7 +15,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(2)
+np.random.seed()
 cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
@@ -39,12 +39,11 @@ if cpp:
 else:
     sol = solver.solve()
 
-solver.visualize(u_ref, None)
 # Say something to grep my attention
 text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}, {sol.residual=}')
-# DEBUG
+# solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
 # solver.animate(sol.u, None, save_gif=True)

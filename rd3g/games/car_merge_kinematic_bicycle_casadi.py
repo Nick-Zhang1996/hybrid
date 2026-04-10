@@ -71,8 +71,6 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
     def __init__(self, config: CarMergeKinematicBicycleCasadiConfig):
         super().__init__(config)
 
-        # n_hi is a new concept
-        self.n_hi = config.n_hi
         # bounds for visualization
         self.visual_x_lim = [-2.5, 2.5]
         self.visual_y_lim = [-2, 30]
@@ -101,10 +99,10 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
             u: (m,N,T)
             x: (n, N, T+1)
         """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
+        n = self.config.n
+        m = self.config.m
+        T = self.config.T
+        N = self.config.N
 
         if (not show) and (not save):
             return
@@ -122,7 +120,7 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 10):
             ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
-        for i in range(self.N):
+        for i in range(self.config.N):
             xx = x[0, i, :]
             yy = x[1, i, :]
             ax.plot(-yy, xx, '*-')
@@ -140,10 +138,10 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
             u: (m,N,T)
             x: (n, N, T+1)
         """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
+        n = self.config.n
+        m = self.config.m
+        T = self.config.T
+        N = self.config.N
         if (not show) and (not save_gif) and (not save_snapshots):
             return
         assert u.shape == (m, N, T)
@@ -230,7 +228,7 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
                                fill=False))
 
             def update(frame):
-                for i in range(self.N):
+                for i in range(self.config.N):
                     box_vec[i].set_xy(car_pos_vec[i][frame])
                     box_vec[i].set_angle(car_angle_vec[i][frame])
                     circle_vec[i].set_center(car_pos_vec[i][frame] +
@@ -266,10 +264,10 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=self.T, blit=False)
+        anim = FuncAnimation(fig, update, frames=self.config.T, blit=False)
 
         folder = os.path.join(BASEDIR, 'gifs')
-        gif_filename = os.path.join(folder, f'merge_{self.N}car.gif')
+        gif_filename = os.path.join(folder, f'merge_{self.config.N}car.gif')
         if save_gif:
             anim.save(gif_filename, writer='pillow')
             logger.info(f'Gif saved to {gif_filename}')
@@ -286,24 +284,24 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
             update(0)
             fig.canvas.draw()
             frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_initial.png')
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_initial.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T//2)
+            update(self.config.T // 2)
             fig.canvas.draw()
             frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_middle.png')
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_middle.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
 
-            update(self.T-1)
+            update(self.config.T - 1)
             fig.canvas.draw()
             frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-            filename = os.path.join(folder, f'merge_{self.N}car_final.png')
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_final.png')
             frame.save(filename)
             logger.info(f'saved snapshots to {filename}')
         return
@@ -331,7 +329,7 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
 
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
-        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
+        return self.J(x_T, cas.SX.zeros(self.config.m), i_onehot)
 
     def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
@@ -370,24 +368,24 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
         h_vec = []
-        for i in range(self.N):
+        for i in range(self.config.N):
             hi_vec = []
             # Collision constraint collison_h(xi, xj) N*T
-            for k in range(1, self.T+1):
+            for k in range(1, self.config.T + 1):
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
-                xk = cas.reshape(x[:, k-1], self.n, self.N)
-                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
+                xk = cas.reshape(x[:, k - 1], self.config.n, self.config.N)
+                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.config.N)]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 h_vals[i] = -1
                 h_vals = cas.vertcat(*h_vals)
-                assert h_vals.shape == (self.N, 1)
+                assert h_vals.shape == (self.config.N, 1)
                 hi_vec.append(h_vals)  # N, agent i vs everyone (N)
             # Additional constraints for agent i, None here
             h_vec.append(cas.vertcat(*hi_vec))  # N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.n_hi, self.N)
+        assert h_vec.shape == (self.config.n_hi, self.config.N)
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -400,8 +398,8 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
 
         """
         # car distance larger than 1.2 normalized
-        assert x_i.shape == (self.n, 1)
-        assert x_j.shape == (self.n, 1)
+        assert x_i.shape == (self.config.n, 1)
+        assert x_j.shape == (self.config.n, 1)
         collision_radius = self.config.get_param('collision_radius')
         val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
             x_i[1, 0] - x_j[1, 0])**2 + collision_radius**2

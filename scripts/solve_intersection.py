@@ -19,8 +19,8 @@ cpp = True
 logger.info('Creating game...')
 game = create_random_game(car_count=4, horizon=40)
 logger.info('Setting up solver...')
-solver_config = RD3GCasadiConfig(iterations=50, inertia_correction=True)
-solver = RD3GCasadi(solver_config, game, cpp_only=False)
+solver_config = RD3GCasadiConfig(iterations=50, inertia_correction=False)
+solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 if cpp:
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()

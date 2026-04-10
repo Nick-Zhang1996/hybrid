@@ -28,6 +28,13 @@ logger.setLevel(logging.WARNING)
 DEBUG = False
 
 
+def as_numpy_array(value):
+    """Convert array-like solver state to a dense numpy array."""
+    if hasattr(value, 'toarray'):
+        return value.toarray()
+    return np.asarray(value)
+
+
 @dataclass
 class BrGameResult:
     """ Result of a Best Response game (per agent game) """
@@ -224,7 +231,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # Maximum inertia regularization value
     max_in_reg_val: float = 1.0
     # Sparse linear solver used by the C++ backend
-    linear_solver_method: str = 'sparselu'
+    linear_solver_method: str = 'sparselu'  # lscg, ldl, lsqr, sparselu, superlu, umfpack
     # Number of failed line search before solver stops trying
     max_failed_line_search: int = 3
 
@@ -585,8 +592,8 @@ class RD3GCasadi(BaseSolver):
         # TODO add optimality gap
         return Solution(elapsed_time=dt,
                         iterations=i,
-                        u=u.toarray().reshape((m, N, T), order='F'),
-                        x=x.toarray().reshape((n, N, T), order='F'),
+                        u=as_numpy_array(u).reshape((m, N, T), order='F'),
+                        x=as_numpy_array(x).reshape((n, N, T), order='F'),
                         residual=res,
                         has_converged=has_converged,
                         is_optimal=is_optimal)
