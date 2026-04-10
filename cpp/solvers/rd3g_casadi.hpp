@@ -27,6 +27,9 @@
 #include <Eigen/LU>
 #include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
+#include <Eigen/SparseLU>
+#include <Eigen/SuperLUSupport>
+#include <Eigen/UmfPackSupport>
 
 // sparse solvers
 #include <Eigen/OrderingMethods>
@@ -49,6 +52,7 @@ using std::min;
 // SpMatrix was taken
 using Vector = Eigen::VectorXd;
 using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>;
+using UmfSpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, SuiteSparse_long>;
 using MappedSparseMatrix = Eigen::Map<SpMatrix>;
 
 namespace fs = std::filesystem;
@@ -121,6 +125,7 @@ class Rd3gCasadi {
   const bool inertia_correction_;
   const bool reduce_kkt_system_;
   const bool rollout_each_step_;
+  const std::string linear_solver_method_;
   int line_search_no_progress_counter_;
 
   std::shared_ptr<spdlog::logger> logger_;
@@ -153,7 +158,8 @@ class Rd3gCasadi {
              const bool inertia_correction, const bool reduce_kkt_system,
              const bool rollout_each_step, const Scalar tolerance, const int backtracking_max_iter,
              const int max_iter, const int max_in_reg_iter, const Scalar max_in_reg_val,
-             const int verbose, const std::string base_dir, const std::string casadi_module_name)
+             const std::string linear_solver_method, const int verbose, const std::string base_dir,
+             const std::string casadi_module_name)
       : N_{N},
         T_{T},
         n_hi_{n_hi},
@@ -174,6 +180,7 @@ class Rd3gCasadi {
         max_iterations_{max_iter},
         max_in_reg_iter_{max_in_reg_iter},
         max_in_reg_val_{max_in_reg_val},
+        linear_solver_method_{linear_solver_method},
         verbose_{verbose},
         line_search_no_progress_counter_{0},
         debug_got_vals_{false} {
@@ -442,6 +449,61 @@ class Rd3gCasadi {
 
       if (solver.info() != Eigen::Success) {
         logger_->error("QR solver failed during solve phase");
+      }
+
+      const Scalar residual = (A * x - b).norm();
+      return {x.sparseView(), residual};
+    } else if (method == "sparselu") {
+      // Built-in Eigen direct solver (no external dependencies)
+      Eigen::SparseLU<SpMatrix> solver;
+
+      solver.compute(A);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("SparseLU decomposition failed");
+        throw std::runtime_error("SparseLU decomposition failed");
+      }
+
+      MatrixXd x = solver.solve(b);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("SparseLU solver failed during solve phase");
+      }
+
+      const Scalar residual = (A * x - b).norm();
+      return {x.sparseView(), residual};
+
+    } else if (method == "superlu") {
+      // Requires: #include <Eigen/SuperLUSupport>
+      // Requires linking against the external SuperLU library
+      Eigen::SuperLU<SpMatrix> solver;
+
+      solver.compute(A);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("SuperLU decomposition failed");
+        throw std::runtime_error("SuperLU decomposition failed");
+      }
+
+      MatrixXd x = solver.solve(b);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("SuperLU solver failed during solve phase");
+      }
+
+      const Scalar residual = (A * x - b).norm();
+      return {x.sparseView(), residual};
+    } else if (method == "umfpack") {
+      // Requires: #include <Eigen/UmfPackSupport>
+      // Requires linking against SuiteSparse (umfpack, amd)
+      UmfSpMatrix A_umf = A;
+      Eigen::UmfPackLU<UmfSpMatrix> solver;
+
+      solver.compute(A_umf);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("UMFPACK decomposition failed");
+        throw std::runtime_error("UMFPACK decomposition failed");
+      }
+
+      MatrixXd x = solver.solve(b);
+      if (solver.info() != Eigen::Success) {
+        logger_->error("UMFPACK solver failed during solve phase");
       }
 
       const Scalar residual = (A * x - b).norm();
@@ -847,7 +909,8 @@ class Rd3gCasadi {
       if (reduced_r0.hasNaN()) {
         logger_->warn("reduced_dy has nan");
       }
-      std::tie(reduced_dy, residual) = solve_linear_system(reduced_KKT, -reduced_r0, "lscg");
+      std::tie(reduced_dy, residual) =
+          solve_linear_system(reduced_KKT, -reduced_r0, linear_solver_method_);
       if (reduced_dy.hasNaN()) {
         logger_->warn("reduced_dy has nan");
       }
@@ -863,7 +926,7 @@ class Rd3gCasadi {
       logger_->debug("reduced_dy sq_norm {:.5f}", pow(reduced_dy.norm(), 2));
       debug_reduced_KKT_ = reduced_KKT;
     } else {
-      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, "lscg");
+      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
     }
     // FIXME why are they different???
     logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(), 2));

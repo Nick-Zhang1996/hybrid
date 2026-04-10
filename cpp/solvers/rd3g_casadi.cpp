@@ -39,6 +39,7 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     int,          // max_iter
                     int,          // max_in_reg_iter
                     Scalar,       // max_in_reg_val
+                    std::string,  // linear_solver_method
                     int,          // verbose
                     std::string,  // base_dir
                     std::string   // casadi_module_name
@@ -48,7 +49,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
            py::arg("inertia_correction"), py::arg("reduce_kkt_system"),
            py::arg("rollout_each_step"), py::arg("tolerance"), py::arg("backtracking_max_iter"),
            py::arg("max_iter"), py::arg("max_in_reg_iter"), py::arg("max_in_reg_val"),
-           py::arg("verbose"), py::arg("base_dir"), py::arg("casadi_module_name"))
+           py::arg("linear_solver_method"), py::arg("verbose"), py::arg("base_dir"),
+           py::arg("casadi_module_name"))
       .def("dr_dy", &ClassName::casadi_dr_dy)
       .def("rollout", &ClassName::casadi_rollout)
       .def("solve", &ClassName::solve)

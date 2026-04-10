@@ -20,7 +20,7 @@ logger.setLevel(logging.INFO)
 # TODO: add lane/boundary constraint to h()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class IntersectionCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. 
     Bottom Left of the intersection is the origin. X right, Y up"""

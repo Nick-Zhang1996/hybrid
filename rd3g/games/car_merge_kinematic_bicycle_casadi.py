@@ -20,7 +20,7 @@ logger = logging.getLogger('CarMergeKinematicBicycle')
 logger.setLevel(logging.INFO)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration"""
     T: int = 0

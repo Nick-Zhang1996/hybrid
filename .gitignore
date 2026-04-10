@@ -10,3 +10,4 @@ build/
 CMakeFiles/
 casadi_codegen/
 outputs/
+.codex

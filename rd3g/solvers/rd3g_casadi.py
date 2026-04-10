@@ -223,6 +223,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     max_in_reg_iter: int = 10
     # Maximum inertia regularization value
     max_in_reg_val: float = 1.0
+    # Sparse linear solver used by the C++ backend
+    linear_solver_method: str = 'sparselu'
     # Number of failed line search before solver stops trying
     max_failed_line_search: int = 3
 
@@ -424,6 +426,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
+                solver_config.linear_solver_method,
                 0,  # 0:error, 1:warning, 2:info, 3:debug
                 BASEDIR,
                 module_name

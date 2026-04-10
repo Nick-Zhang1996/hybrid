@@ -3,6 +3,10 @@ This project makes heavy use of casadi generated C source code for performance.
 You need to install cmake, gcc, and Eigen to run the projec with the C++ extensions. 
 However, pure python implementation is also available, though at significantly lower speed performance.
 
+## Dependencies
+# Ubuntu / Debian Installation
+`sudo apt-get install libsuitesparse-dev libsuperlu-dev`
+
 To build and run the project, first clone the repository, then do the following .
 
 * `git submodule update --init ` in the root directory of the repository. this will download pybind11

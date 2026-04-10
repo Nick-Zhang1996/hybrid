@@ -38,9 +38,7 @@ execute_process(
     OUTPUT_VARIABLE CASADI_ROOT
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-
 message(STATUS "Found CasADi via Python at: ${CASADI_ROOT}")
-
 # Headers are usually in site-packages/casadi/include
 set(CASADI_INCLUDE_DIR "${CASADI_ROOT}/include")
 
@@ -51,7 +49,6 @@ find_library(CASADI_LIB
     HINTS "${CASADI_ROOT}" 
     NO_DEFAULT_PATH
 )
-
 if(NOT CASADI_LIB)
     message(FATAL_ERROR "Could not find libcasadi.so in ${CASADI_ROOT}. The pip package might be missing shared libraries.")
 endif()
@@ -65,9 +62,18 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(spdlog)
 find_package(spdlog REQUIRED)
 
+find_library(UMFPACK_LIBRARY NAMES umfpack REQUIRED)
+find_library(AMD_LIBRARY NAMES amd REQUIRED)
+find_library(SUPERLU_LIBRARY NAMES superlu REQUIRED)
+find_path(SUPERLU_INCLUDE_DIR slu_Cnames.h PATH_SUFFIXES superlu REQUIRED)
+find_path(SUITESPARSE_INCLUDE_DIR umfpack.h PATH_SUFFIXES suitesparse REQUIRED)
+
 
 # ---- pybind targets, for games with implementation in c++ directly ----
-add_subdirectory(pybind11)
+get_filename_component(PYBIND11_SOURCE_DIR "${PROJECT_SOURCE_DIR}/../extern/pybind11" REALPATH)
+add_subdirectory("${PYBIND11_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/pybind11" EXCLUDE_FROM_ALL)
+set(PYBIND11_INSTALL OFF CACHE BOOL "" FORCE)
+set(PYBIND11_TEST OFF CACHE BOOL "" FORCE)
 pybind11_add_module(unstructured_driving games/unstructured_driving.cpp)
 pybind11_add_module(car_merge_kinematic_bicycle games/car_merge_kinematic_bicycle.cpp)
 pybind11_add_module(car_racing games/car_racing.cpp)
@@ -75,7 +81,7 @@ pybind11_add_module(unicycle games/unicycle.cpp)
 
 # --- CasADi compatible games ---
 # add_library(car_merge_kinematic_bicycle_casadi_N3_T20 SHARED
-#            games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N3_T20.cpp)
+#            games/casadi_codegen/car_merge_kinematic_bicycle_casadi_N4_T20.cpp)
 file(GLOB CASADI_SOURCES "../casadi_codegen/*.cpp")
 
 foreach(SOURCE_FILE ${CASADI_SOURCES})
@@ -91,6 +97,18 @@ target_link_libraries(casadi_eigen ${CASADI_LIB})
 
 # --- CasADi - RD3G ----
 pybind11_add_module(rd3g_casadi solvers/rd3g_casadi.cpp)
-target_include_directories(rd3g_casadi PUBLIC ${CASADI_INCLUDE_DIR})
-target_link_libraries(rd3g_casadi PRIVATE ${CASADI_LIB})
-target_link_libraries(rd3g_casadi PRIVATE spdlog::spdlog)
+target_include_directories(rd3g_casadi  PUBLIC 
+                                        ${CASADI_INCLUDE_DIR}
+                                        PRIVATE
+                                        ${SUPERLU_INCLUDE_DIR}
+                                        ${SUITESPARSE_INCLUDE_DIR}
+                                        )
+target_link_libraries(rd3g_casadi 
+    PRIVATE 
+    spdlog::spdlog
+    ${CASADI_LIB}
+    ${UMFPACK_LIBRARY} 
+    ${AMD_LIBRARY}
+    ${SUPERLU_LIBRARY}
+)
+

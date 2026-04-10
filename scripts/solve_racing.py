@@ -16,13 +16,13 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 np.random.seed(2)
-cpp = False
+cpp = True
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
 
 gc = game.config
 # load from pickle
-load = True
+load = False
 if load:
     with open('outputs/input.p', 'rb') as f:
         data = pickle.load(f)
@@ -32,8 +32,6 @@ if load:
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
-solver.visualize(u_ref, None)
-
 
 if cpp:
     solver.init_cpp_backend()
@@ -41,6 +39,7 @@ if cpp:
 else:
     sol = solver.solve()
 
+solver.visualize(u_ref, None)
 # Say something to grep my attention
 text = "Solution Ready"
 talk(text)
