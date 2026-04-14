@@ -15,14 +15,15 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed()
 cpp = True
+load = True
+
+np.random.seed()
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)
 game = create_random_game(car_count=4, horizon=20)
 
 gc = game.config
 # load from pickle
-load = False
 if load:
     with open('outputs/input.p', 'rb') as f:
         data = pickle.load(f)
@@ -43,7 +44,7 @@ else:
 text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}, {sol.residual=}')
-# solver.visualize(u_ref, None)
+solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
 # solver.animate(sol.u, None, save_gif=True)

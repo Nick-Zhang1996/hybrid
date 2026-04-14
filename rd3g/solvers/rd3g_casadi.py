@@ -1020,14 +1020,14 @@ class RD3GCasadi(BaseSolver):
         assert full_x.shape == (n, N, T+1)
         return full_x
 
-    def visualize(self, u_ref, x_ref=None, save=False):
+    def visualize(self, u_ref, x_ref=None, save=False, show=True):
         """ Visualize the game with given and control (u) in a single frame.
         Args:
             u_ref: (m, N, T, order='F')
         """
         u_ref = u_ref.reshape((self.m, self.N, self.T), order='F')
         x_ref = self._rollout_full_x(u_ref, x_ref)
-        self.game.visualize(u_ref, x_ref, show=True, save=save)
+        return self.game.visualize(u_ref, x_ref, show=show, save=save)
 
     def animate(self, u_ref, x_ref=None, save_gif=False, save_snapshots=False):
         """ Animate the game with given and control (u).

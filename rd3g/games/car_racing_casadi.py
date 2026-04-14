@@ -40,7 +40,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     """
     n_c: int = 3  # Size of context variable for per agent per stage
 
-    collision_radius: float = 80e-3
+    collision_radius: float = 90e-3  # 80e-3
     """ Minimum distance between the origin of two cars"""
     double_circle_h: bool = True
     """ Use two circles instead of one for collision"""
@@ -144,8 +144,6 @@ class CarRacingCasadi(CasadiGame):
         N = self.config.N
         track = self.track
 
-        if (not show) and (not save):
-            return
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T + 1)
 
@@ -176,9 +174,10 @@ class CarRacingCasadi(CasadiGame):
         if save:
             filename = resolve_logname(suffix='gif')
             fig.savefig(filename)
-            logger.info(f'saved figure to {filename}')
+            logger.info('saved figure to %s', filename)
         if show:
             plt.show()
+        return ax
 
     def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
