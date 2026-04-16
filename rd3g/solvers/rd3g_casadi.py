@@ -223,7 +223,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # Remove empty rows and columns from the KKT problem
     reduce_kkt_system: bool = False
     # Rollout control to get new state trajectory at the start of each step
-    rollout_each_step: bool = True
+    rollout_each_step: bool = False
     # Resolve all primal infeasibility (violated constraints) before solving
     strict_constraints: bool = True
     # Inertia correction max iterations
@@ -567,13 +567,12 @@ class RD3GCasadi(BaseSolver):
                 x = self.rollout_casadi(x0, u, *params_np)
             x, u, lamda, mu, s, res, converged, optimal, filter_state, _ = self.step(
                 x, u, lamda, mu, s, filter_state, tau)
-            # TODO add tau scheduling
-            if converged and tau < 1e-4:
-                logger.debug('Converged with tau=%.2f', tau)
-                break
+
+            current_gap = np.sum(np.asarray(s) * np.asarray(mu)) / (n_hi * N)
+            tau = max(1e-8, 0.2 * current_gap)
+            logger.debug('tau=%.8f', tau)
             if converged:
-                tau = np.sum(s * mu) / (n_hi*N)
-                logger.debug('Converged, reducing tau=%.2f', tau)
+                logger.debug('Converged')
             if self.line_search_fail_count >= 3:
                 msg = 'Line search no progress'
                 break
@@ -830,18 +829,25 @@ class RD3GCasadi(BaseSolver):
         max_ss_mu = raw_mu[raw_mu > 0]
         alpha_d = np.min(np.hstack([max_ss_mu, [1.0]])).item()
 
-        alpha_p = alpha_d = np.min([alpha_d, alpha_p]).item()  # Use same step size for primal dual
         logger.debug('Max step size primal: %.8f, dual: %.8f', alpha_p, alpha_d)
+        alpha_p = alpha_d = np.min([alpha_d, alpha_p]).item()  # Use same step size for primal dual
         step_size = 1.0
 
         # Filter line search
-        primal_res = np.linalg.norm(RHS[nNT+mNT:, 0], 1).item()  # Infeasibility residual
-        dual_res = np.linalg.norm(RHS[:nNT+mNT, 0], 1).item()  # Optimality residual
+        # To simplify the linear problem, we eliminated the complementary slackness
+        # For the line search, we must restore the full residual
+        full_r = np.vstack([r0_val, mu * s - tau])
+        full_r[mu_offset:mu_offset+n_hi*N] += s
+        comp_res = np.linalg.norm(full_r[-n_hi*N:, 0], 1).item()
+        # Infeasibility residual
+        primal_res = np.linalg.norm(full_r[nNT+mNT:-n_hi*N, 0], 1).item()
+        # Optimality residual
+        dual_res = comp_res + np.linalg.norm(full_r[:nNT+mNT, 0], 1).item()
         logger.debug(f'step_size=0, {primal_res=:.5f}(feas), {dual_res=:.5f}(opt)')
 
         # Initialize filter, set upper bound for residual
         if len(filter_state) == 0:
-            filter_state.append((primal_res*1.2, -np.inf))
+            filter_state.append((max(primal_res*1.2, 1e4), -np.inf))
         try:
             for _ in range(self.config.backtracking_max_iter):
                 # Evaluate primal/dual residual at trial point
@@ -859,10 +865,13 @@ class RD3GCasadi(BaseSolver):
                                              new_context,
                                              int_param_dm, double_param_dm
                                              )
-                trial_RHS = -r_val
-                trial_RHS[mu_offset:, 0] += - new_s
-                trial_primal_res = np.linalg.norm(trial_RHS[nNT+mNT:, 0], 1).item()
-                trial_dual_res = np.linalg.norm(trial_RHS[:nNT+mNT, 0], 1).item()
+                full_r = np.vstack([r_val, new_mu * new_s - tau])
+                full_r[mu_offset:mu_offset+n_hi*N] += new_s
+                trial_comp_res = np.linalg.norm(full_r[-n_hi*N:, 0], 1).item()
+                # Infeasibility residual
+                trial_primal_res = np.linalg.norm(full_r[nNT+mNT:-n_hi*N, 0], 1).item()
+                # Optimality residual
+                trial_dual_res = trial_comp_res + np.linalg.norm(full_r[:nNT+mNT, 0], 1).item()
                 logger.debug(f'{step_size=:.8f}, {trial_primal_res=:.5f}, {trial_dual_res=:.5f}')
                 improve_optimality = trial_dual_res < dual_res - self.config.bc_a * primal_res
                 improve_feasibility = trial_primal_res < (1-self.config.bc_a)*primal_res
@@ -889,7 +898,7 @@ class RD3GCasadi(BaseSolver):
                 if (not improve_optimality) and improve_feasibility:
                     # Improved feasibility at the expense of optimality.
                     # Add to filter so we don't regress in future
-                    filter_state.append((primal_res, dual_res))
+                    filter_state.append((max(1e-4, primal_res), dual_res))
                     # logger.debug('Adding to filter')
                 raise LineSearchSuccess
             # TODO What if no improvement at all? add infeasibility correction step
@@ -902,6 +911,7 @@ class RD3GCasadi(BaseSolver):
             new_u = u
             new_lamda = lamda
             new_mu = mu
+            new_s = s
             logger.debug(f"Max Iter reached, Inflating KKT regularization to {self.reg}")
         except LineSearchSuccess:
             logger.debug("Line search success")
@@ -1113,12 +1123,7 @@ class RD3GCasadi(BaseSolver):
         # we only want to sum h_val > 0
         # TODO set corresponding mu for inactive constraints to 0 for strict complementarity
         mu_i = cas.reshape(mu, n_hi, N)[:, i]
-        # TODO cleanup
-        mu_h_plus_vals = cas.dot(mu_i, cas.fmax(hi_vals, 0))
-        # barrier for h < 0
-        h_neg_barrier_vals = -1.0/self.rho * cas.sum(cas.log(-cas.fmin(hi_vals, -1e-100)))
-        LLi_val += mu_h_plus_vals + h_neg_barrier_vals
-        # LLi_val += cas.dot(mu_i, hi_vals)
+        LLi_val += cas.dot(mu_i, hi_vals)
 
         x0 = self.game.config.get_param('x0')
         # x0 related terms
