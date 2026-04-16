@@ -33,5 +33,6 @@ class BaseSolver(ABC):
         self.config = config
         self.game = game
 
+    @abstractmethod
     def solve(self) -> Solution:
         """ Solve game. """

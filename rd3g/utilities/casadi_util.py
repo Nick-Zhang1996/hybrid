@@ -25,7 +25,7 @@ def generate_code(solver):
     config = game.config
 
     # Switch working directory
-    codegen_dir = os.path.join(BASEDIR, 'rd3g', 'src', 'games', 'casadi_codegen')
+    codegen_dir = os.path.join(BASEDIR, 'casadi_codegen')
     if not os.path.exists(codegen_dir):
         os.makedirs(codegen_dir)
     old_cwd = os.getcwd()
@@ -42,6 +42,10 @@ def generate_code(solver):
     cg.add(solver.rollout_casadi)
     cg.add(solver.get_n_fun)
     cg.add(solver.get_m_fun)
+    cg.add(solver.get_context_casadi)
+    cg.add(solver.get_full_context_casadi)
+    for i in range(solver.N):
+        cg.add(solver.Ki_casadi_vec[i])
     filename = cg.generate()
     logger.info(f'CasADi file generated at {filename}')
 

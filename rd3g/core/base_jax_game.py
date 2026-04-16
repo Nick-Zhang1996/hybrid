@@ -1,3 +1,5 @@
+""" Base class for Jax game. This is OBSELETE, jax didn't work well with small, sparse problem.
+Use CasadiGame instead """
 from functools import partial
 from jax.typing import ArrayLike
 from jax.lax import scan

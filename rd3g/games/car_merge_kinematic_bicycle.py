@@ -461,7 +461,8 @@ def create_random_game(car_count=3, horizon=20):
         + np.random.random(main_lane_n)
     )
     x_pos_merge_lane = (
-        (np.random.random() - 0.5) * 2 * 2.5  # overall offset
+        2.7
+        + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
         + np.linspace(0, (merge_lane_n - 1) * 5.4, merge_lane_n)  # spacing
         + np.random.random(merge_lane_n)  # individual random offset
     )

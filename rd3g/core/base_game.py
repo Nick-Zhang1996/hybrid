@@ -1,4 +1,6 @@
-""" Base class for Differential Dynamic Game Problem"""
+""" Base class for Differential Dynamic Game Problem. 
+This is now OBSELETE and only used for the original RD3G solver. 
+New dev should use CasadiGame instead. """
 from abc import ABC, abstractmethod
 from typing import Any
 from functools import lru_cache
@@ -6,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class BaseGameConfig():
     """ Base Class for game configuration"""
     T: int = 0

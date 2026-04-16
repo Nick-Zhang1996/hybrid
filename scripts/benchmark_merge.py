@@ -1,8 +1,13 @@
+""" Benchmark game with RD3G CasADi """
 import logging
 import numpy as np
 
-from rd3g.games.car_merge_kinematic_bicycle import create_random_game
-from rd3g.solvers.rd3g import RD3G, RD3GConfig
+from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
+from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
+logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
@@ -21,9 +26,12 @@ for car_count in range(2, 9):
     for i in range(50):
         np.random.seed(i)
         game = create_random_game(car_count=car_count, horizon=20)
-        solver_config = RD3GConfig(USE_CPP=True)
-        solver = RD3G(solver_config, game)
-        sol = solver.solve()
+        solver_config = RD3GCasadiConfig(inertia_correction=False)
+        solver = RD3GCasadi(solver_config, game, cpp_only=True)
+        # sol = solver.solve()
+        solver.init_cpp_backend()
+        sol = solver.solve_cpp_backend()
+        # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
         # solver.final()
         converge_vec.append(sol.has_converged)

@@ -14,14 +14,13 @@ from matplotlib.animation import FuncAnimation
 import casadi as cas
 
 from rd3g.utilities.util import BASEDIR, resolve_logname
-from rd3g.core.base_casadi_game import CasadiGameConfig
-from rd3g.core.base_jax_game import BaseGame
+from rd3g.core.casadi_game import CasadiGame, CasadiGameConfig
 
 logger = logging.getLogger('CarMergeKinematicBicycle')
 logger.setLevel(logging.INFO)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration"""
     T: int = 0
@@ -30,6 +29,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     n: int = 4
     m: int = 2
     n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_c: int = 0  # Dimension of context var, per agent per stage, unused in this game
     track_width: float = 2.2
     collision_radius: float = 2.0
 
@@ -39,8 +39,6 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     """ Target state for all agents, dim: (n,N)"""
     J_Qr: Any = None
     """ Cost matrix for tracking reference state dim: (n,n)"""
-    J_Q: Any = None
-    """ Cost matrix for penalizing non-zero state dim: (n,n)"""
     J_R: Any = None
     """ Cost matrix for control effort dim: (m,m)"""
 
@@ -50,12 +48,11 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
             f'should be {(self.n, self.N)}, but got {self.x0.shape}')
         assert self.target_x_ref.shape == (self.n, self.N)
         assert self.J_Qr.shape == (self.n, self.n)
-        assert self.J_Q.shape == (self.n, self.n)
         assert self.J_R.shape == (self.m, self.m)
         return super().__post_init__()
 
 
-class CarMergeKinematicBicycleCasadi(BaseGame):
+class CarMergeKinematicBicycleCasadi(CasadiGame):
     ''' Kinematic Bicycle Merging Game, with CasADi
         u = [throttle, steering]
         x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
@@ -74,8 +71,6 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
     def __init__(self, config: CarMergeKinematicBicycleCasadiConfig):
         super().__init__(config)
 
-        # n_hi is a new concept
-        self.n_hi = config.n_hi
         # bounds for visualization
         self.visual_x_lim = [-2.5, 2.5]
         self.visual_y_lim = [-2, 30]
@@ -104,10 +99,10 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
             u: (m,N,T)
             x: (n, N, T+1)
         """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
+        n = self.config.n
+        m = self.config.m
+        T = self.config.T
+        N = self.config.N
 
         if (not show) and (not save):
             return
@@ -125,7 +120,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 10):
             ax.vlines(x=0, ymin=i, ymax=i + 0.5)
 
-        for i in range(self.N):
+        for i in range(self.config.N):
             xx = x[0, i, :]
             yy = x[1, i, :]
             ax.plot(-yy, xx, '*-')
@@ -137,17 +132,17 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         if show:
             plt.show()
 
-    def animate(self, u, x, show=True, save=False):
+    def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
             u: (m,N,T)
             x: (n, N, T+1)
         """
-        n = self.n
-        m = self.m
-        T = self.T
-        N = self.N
-        if (not show) and (not save):
+        n = self.config.n
+        m = self.config.m
+        T = self.config.T
+        N = self.config.N
+        if (not show) and (not save_gif) and (not save_snapshots):
             return
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T+1)
@@ -194,7 +189,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
                          car_pose_vec[frame][i][1] + L * car_scale))
                 return im_vec
         else:
-
+            # Show cars as rectangular blocks
             car_pos_vec = []
             car_angle_vec = []
             box_vec = []
@@ -233,7 +228,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
                                fill=False))
 
             def update(frame):
-                for i in range(self.N):
+                for i in range(self.config.N):
                     box_vec[i].set_xy(car_pos_vec[i][frame])
                     box_vec[i].set_angle(car_angle_vec[i][frame])
                     circle_vec[i].set_center(car_pos_vec[i][frame] +
@@ -269,84 +264,51 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         ax.set_ylim(*self.visual_y_lim)
 
         # Create the animation
-        anim = FuncAnimation(fig, update, frames=self.T, blit=False)
+        anim = FuncAnimation(fig, update, frames=self.config.T, blit=False)
 
-        gif_filename = resolve_logname(suffix='gif')
-        if save:
+        folder = os.path.join(BASEDIR, 'gifs')
+        gif_filename = os.path.join(folder, f'merge_{self.config.N}car.gif')
+        if save_gif:
             anim.save(gif_filename, writer='pillow')
-            logger.info(f'gif saved to {gif_filename}')
+            logger.info(f'Gif saved to {gif_filename}')
         if show:
             plt.show()
+        if show and save_snapshots:
+            logger.error(
+                'When show and save_snapshots are both on,'
+                ' matplotlib has weird problems, do one at a time')
         # NOTE save initial, middle, final snapshots
-        # update(0)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_initial.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+        if save_snapshots:
+            from PIL import Image
+            folder = os.path.join(BASEDIR, 'pics')
+            update(0)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_initial.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
 
-        # update(self.T//2)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_middle.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+            update(self.config.T // 2)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_middle.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
 
-        # update(self.T-1)
-        # fig.canvas.draw()
-        # frame = Image.frombytes('RGB',
-        # fig.canvas.get_width_height(),fig.canvas.tostring_rgb())
-        # filename = f'./pics/merge_{self.N}car_final.png'
-        # self.print_info(f'saved to {filename}')
-        # frame.save(filename)
+            update(self.config.T - 1)
+            fig.canvas.draw()
+            frame = Image.frombytes('RGB',
+                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
+            filename = os.path.join(folder, f'merge_{self.config.N}car_final.png')
+            frame.save(filename)
+            logger.info(f'saved snapshots to {filename}')
         return
 
-    def F(self, x_k, u_k):
-        """ Dynamics for all agents
-        Args:
-            x_k: (n,N)
-            u_k: (m,N)
-        Return:
-            x_k_next: (n,N)
-        """
-        x_k_next_vec = []
-        for i in range(self.N):
-            i_onehot = cas.SX.eye(self.N)[:, i]
-            x_k_next_vec.append(self.f(x_k[:, i], u_k[:, i], i_onehot))
-        retval = cas.horzcat(*x_k_next_vec)
-        assert retval.shape == (self.n, self.N)
-        return retval
-
-    def rollout(self, x0, u):
-        """ Rollout control to get state trajectory, casadi compatible
-        Args:
-            x0: (n,N)
-            u: (m*N, T), u0..u_T-1
-        Return:
-            X: (n*N, T) x1..xT
-        """
-        assert u.shape == (self.m*self.N, self.T)
-        assert x0.shape == (self.n, self.N)
-
-        x_k = cas.SX.sym('x_k_', (self.n*self.N))
-        u_k = cas.SX.sym('u_k_', (self.m*self.N))
-        x_k_next = cas.vec(self.F(cas.reshape(x_k, self.n, self.N),
-                                  cas.reshape(u_k, self.m, self.N)))
-        config_params = [self.config.get_int_param_sx(), self.config.get_double_param_sx()]
-        config_param_repmat = [cas.repmat(param, 1, self.T) for param in config_params]
-        accum_fun = cas.Function('accum_fun', [x_k, u_k]+config_params, [x_k_next, 0])
-        rollout_fun = accum_fun.mapaccum(self.T)
-
-        X, _ = rollout_fun(cas.vec(x0), u, *config_param_repmat)
-        assert X.shape == (self.n*self.N, self.T)
-        return X
-
-    # pylint: disable-next=arguments-renamed
     def J(self, x_k, u_k_i, i_onehot):
         """
-        Stage cost for an agent, given x,u
+        Stage cost for an agent, given
         x_k.shape (n,N) x_k_i
         u_k_i.shape (m,1) u_k_i
         i_onehot: (N,1) agent id in one-hot encoding, i.e. i=1,N=4 -> [0,1,0,0], column vector
@@ -357,27 +319,25 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
         target_x_ref = self.config.get_param('target_x_ref')
         J_Qr = self.config.get_param('J_Qr')
-        J_Q = self.config.get_param('J_Q')
         J_R = self.config.get_param('J_R')
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
+        M = np.array([[1, 0, 0, 0]], order='F')  # matrix to pick out x coord
 
-        val = dx.T @ J_Qr @ dx + \
-            x_k_i.T @ J_Q @ x_k_i + u_k_i.T @ J_R @ u_k_i
+        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i + M @ x_k_i - cas.sum(M @ x_k)
         return val
 
-    # pylint: disable-next=arguments-renamed
     def Jfi(self, x_T, i_onehot):
         """ Final cost"""
-        return self.J(x_T, cas.SX.zeros(self.m), i_onehot)
+        return self.J(x_T, cas.SX.zeros(self.config.m), i_onehot)
 
-    # pylint: disable-next=arguments-renamed
-    def f(self, x_k_i, u_k_i, i_onehot):
+    def f(self, x_k_i, u_k_i, i_onehot, context_i_k):
         """ Dynamics function x_{t+1} = f(x_t,u,i)
         Args:
             x_k_i: (n,1) State for agent i
             u_k_i: (m,1) Control for agent i
             i_onehot: agent id, in one-hot encoding (N), i.e. i=1,N=4 -> [0,1,0,0], column vector
+            context_i_k: (n_s=c,), unused
         Return:
             (n,1) The next state, progressed by self.dt
 
@@ -385,6 +345,7 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         assert x_k_i.shape == (self.config.n, 1)
         assert u_k_i.shape == (self.config.m, 1)
         assert i_onehot.shape == (self.config.N, 1)
+        del context_i_k
         lf = 1.0
         lr = 1.0
         beta = cas.atan(cas.tan(u_k_i[1]) * lr / (lf + lr))
@@ -396,34 +357,35 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
         val = x_k_i + dx * dt
         return val
 
-    def h(self, x, u):
+    def h(self, x, u, context):
         """ Construct the inequality constraint function.
         h() is a mapping from (x,u) to all constraints.
         Args:
             x: (n*N,T), states, casadi.SX symbolic variable
             u: (m*N,T), controls, casadi.SX symbolic variable
+            context: (n_c*N, T), context variable. [curvature, left margin, right margin]
         Returns:
             h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
         """
         h_vec = []
-        for i in range(self.N):
+        for i in range(self.config.N):
             hi_vec = []
             # Collision constraint collison_h(xi, xj) N*T
-            for k in range(1, self.T+1):
+            for k in range(1, self.config.T + 1):
                 # collision residual for h > 0
                 # x[k] -> x_{k+1} due to index alignment
-                xk = cas.reshape(x[:, k-1], self.n, self.N)
-                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.N)]
+                xk = cas.reshape(x[:, k - 1], self.config.n, self.config.N)
+                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.config.N)]
                 # ignore self-collision, but keep this dummy constraint to simplify index counting
                 h_vals[i] = -1
                 h_vals = cas.vertcat(*h_vals)
-                assert h_vals.shape == (self.N, 1)
+                assert h_vals.shape == (self.config.N, 1)
                 hi_vec.append(h_vals)  # N, agent i vs everyone (N)
             # Additional constraints for agent i, None here
             h_vec.append(cas.vertcat(*hi_vec))  # N*T
 
         h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.n_hi, self.N)
+        assert h_vec.shape == (self.config.n_hi, self.config.N)
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -436,8 +398,8 @@ class CarMergeKinematicBicycleCasadi(BaseGame):
 
         """
         # car distance larger than 1.2 normalized
-        assert x_i.shape == (self.n, 1)
-        assert x_j.shape == (self.n, 1)
+        assert x_i.shape == (self.config.n, 1)
+        assert x_j.shape == (self.config.n, 1)
         collision_radius = self.config.get_param('collision_radius')
         val = -((x_i[0, 0] - x_j[0, 0]) / 1.0)**2 - (
             x_i[1, 0] - x_j[1, 0])**2 + collision_radius**2
@@ -452,19 +414,19 @@ def create_random_game(car_count=3, horizon=20):
     n: int = 4
     m: int = 2
 
-    J_Qr = np.diag([0, 0.1, 0.01, 0])
-    J_Q = np.diag([0, 0, 0, 1.0])
+    J_Qr = np.diag([0, 0.1, 0.01, 1.0])
     J_R = np.eye(m) * 0.3
 
     # multiple car merge, car_count: main_lane_n + merge_lane_n
-    main_lane_n = min(int(0.67 * N), N - 1)
+    main_lane_n = min(int(0.5 * N), N - 1)
     merge_lane_n = N - main_lane_n
     x_pos_main_lane = (
         np.linspace(0, (main_lane_n - 1) * 5.4, main_lane_n)
         + np.random.random(main_lane_n)
     )
     x_pos_merge_lane = (
-        (np.random.random() - 0.5) * 2 * 2.5  # overall offset
+        2.7
+        + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
         + np.linspace(0, (merge_lane_n - 1) * 5.4, merge_lane_n)  # spacing
         + np.random.random(merge_lane_n)  # individual random offset
     )
@@ -498,7 +460,6 @@ def create_random_game(car_count=3, horizon=20):
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),
-        J_Q=J_Q.copy(order='F'),
         J_R=J_R.copy(order='F')
     )
     return CarMergeKinematicBicycleCasadi(config)
