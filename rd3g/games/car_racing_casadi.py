@@ -525,7 +525,7 @@ class CarRacingCasadi(CasadiGame):
         return
 
 
-def create_random_game(car_count=3, horizon=20):
+def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved')):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig
     T = horizon
@@ -544,12 +544,32 @@ def create_random_game(car_count=3, horizon=20):
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
     # s represent the progress on frenet/curvilinear frame, it's like the x coordinate
     # n represents the lateral deviation on frenet frame, it's like the y coordinate
-    # TODO: 1. Select n_vec according to track.data.left_width_vec and track.data.right_width_vec
-    # Those define the maximum allowable left (+) and right (-) deviation
-    # For example, do uniform from -1 to 1, then scale to the left/right width at the s_vec
-    # 2. resample if cars collide
-    n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
+    left_width_vec = np.interp(s_vec, track.data.s_vec, track.data.left_width_vec)
+    right_width_vec = np.interp(s_vec, track.data.s_vec, track.data.right_width_vec)
+    n_vec = np.random.uniform(low=-right_width_vec, high=left_width_vec, size=N)
     vs_vec = np.zeros(N)
+    collision_threshold_sq = (2.0 * default.collision_radius) ** 2
+    while True:
+        ds = s_vec[:, None] - s_vec[None, :]
+        dn = n_vec[:, None] - n_vec[None, :]
+        collision_mask = (ds * ds + dn * dn) < collision_threshold_sq
+        np.fill_diagonal(collision_mask, False)
+        colliding_idx = np.flatnonzero(collision_mask.any(axis=1))
+        if colliding_idx.size == 0:
+            break
+
+        s_vec[colliding_idx] = np.random.uniform(low=0.5, high=4.0, size=colliding_idx.size)
+        left_width_vec[colliding_idx] = np.interp(
+            s_vec[colliding_idx], track.data.s_vec, track.data.left_width_vec
+        )
+        right_width_vec[colliding_idx] = np.interp(
+            s_vec[colliding_idx], track.data.s_vec, track.data.right_width_vec
+        )
+        n_vec[colliding_idx] = np.random.uniform(
+            low=-right_width_vec[colliding_idx],
+            high=left_width_vec[colliding_idx],
+            size=colliding_idx.size,
+        )
 
     # n, N
     x0 = np.vstack([s_vec, n_vec, phi_vec, v_vec, vs_vec])
@@ -572,5 +592,4 @@ def create_random_game(car_count=3, horizon=20):
         J_R=J_R.copy(order='F'))
     # track_config = TrackConfig()
     # track = NascarTrack(track_config)
-    track = TrackFactory.build('saved')
     return CarRacingCasadi(config, track)
