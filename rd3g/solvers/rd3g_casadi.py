@@ -205,9 +205,9 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game.
      NOTE Some changes here require rerun codegen and recompiling the cpp program """
-    tolerance: float = 1e-5  # 5e-4 in benchmark
+    tolerance: float = 5e-4  # 1e-5  # 5e-4 in benchmark
     """ The residual threhold for stopping solver iterations. """
-    iterations: int = 30  # 20 in benchmark
+    iterations: int = 20  # 20 in benchmark
     """ Maximum solver iterations before giving up. """
     # Line search params
     bc_a: float = 1e-4
@@ -223,6 +223,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     Necessary for AMD pivoting to work. """
     inertia_correction: bool = False
     """ Apply inertia correction to each agent KKT """
+    reduce_kkt_system: bool = False
+    """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
     max_in_reg_iter: int = 10
@@ -265,17 +267,14 @@ class RD3GCasadi(BaseSolver):
         """ cpp_only: if True, skip constructing casadi function construction """
         BaseSolver.__init__(self, config, game)
 
-        # TODO take from game.config directly, avoid alias attributes for this class
-        # do this:
-        # gc = self.game.config
-        # N = gc.N
-        self.N = self.game.config.N
-        self.T = self.game.config.T
-        self.dt = self.game.config.dt
-        self.n = self.game.config.n
-        self.m = self.game.config.m
-        self.n_hi = self.game.config.n_hi
-        self.n_c = self.game.config.n_c
+        gc = self.game.config
+        self.N = gc.N
+        self.T = gc.T
+        self.dt = gc.dt
+        self.n = gc.n
+        self.m = gc.m
+        self.n_hi = gc.n_hi
+        self.n_c = gc.n_c
 
         # Levenberg-Marquardt Regularization
         # When line search is stuck, coeff is increased. Re-sets when line search succeeds.
@@ -303,13 +302,12 @@ class RD3GCasadi(BaseSolver):
 
     def construct_casadi_fun(self):
         """ Construct functions based on CasADi autodiff"""
-        # TODO use self.game.config = gc
-        N = self.N
-        n = self.n
-        m = self.m
-        T = self.T
-        n_hi = self.n_hi
         gc = self.game.config
+        N = gc.N
+        n = gc.n
+        m = gc.m
+        T = gc.T
+        n_hi = gc.n_hi
         # context: (n_c*N, T) Game context, changes between iteration, but constant within iteration.
         #     This contains variables too expensive to AD.
         #     e.g. path curvature at each player position.
@@ -421,8 +419,6 @@ class RD3GCasadi(BaseSolver):
                 game.config.T,
                 game.config.n_hi,
                 game.config.dt,
-                1.0,  # TODO remove rho_0 from Cpp side
-                0,  # TODO ditto
                 solver_config.bc_a,
                 solver_config.bc_b,
                 solver_config.reg,
@@ -431,6 +427,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.rollout_each_step,
                 solver_config.tolerance,
                 solver_config.line_search_max_iter,
+                solver_config.max_failed_line_search,
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
@@ -457,10 +454,8 @@ class RD3GCasadi(BaseSolver):
             u_ref = np.zeros((self.m*self.N, self.T), order='F')
         assert np.isfortran(x0)
         assert np.isfortran(u_ref)
-        # TODO x0 is in params_np and also passed explicitly here
-        # explicit x0 is used for generating initial trajectory, param x0 is used in L function
-        # Although they are identical, there should be a single source of truth.
-        # Remove u_ref from parameter list, and instead get x0 from gc.
+        # x0 is still passed explicitly for rollout generation, while the config parameters
+        # provide the symbolic x0 used inside the generated CasADi functions.
 
         t0 = time()
         # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
@@ -489,6 +484,7 @@ class RD3GCasadi(BaseSolver):
 
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+        x0 = gc.x0
         # NOTE this is specific to car merge game
         logger.info('Solving game with 10 random restarts')
         logger.warning("Using sample u specific to car merging game")
@@ -502,10 +498,9 @@ class RD3GCasadi(BaseSolver):
             # reshaped_samples:  (m, N, T) -> [Agent, Control_Dim, Time]
             reshaped_samples = raw_samples.transpose(2, 0, 1).reshape(self.m * self.N, self.T)
             u_ref = np.array(reshaped_samples, order='F')
-            assert np.isfortran(x0)  # TODO get x0 from gc
+            assert np.isfortran(x0)
             assert np.isfortran(u_ref)
 
-            # TODO get x0 from gc
             # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
             retval = self.cpp_solver.solve(x0, u_ref, *params_np)
             x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
@@ -526,14 +521,13 @@ class RD3GCasadi(BaseSolver):
                         is_optimal=is_optimal)
 
     def solve(self, u_ref=None):
-        # TODO use gc.N, T, ...
         gc = self.game.config
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        n_hi = self.n_hi
-        x0 = self.game.config.x0
+        N = gc.N
+        T = gc.T
+        n = gc.n
+        m = gc.m
+        n_hi = gc.n_hi
+        x0 = gc.x0
         # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
         logger.debug(
             f'Primal variables:{(T*N*n) + (T*N*m)} Dual variables:{(N*T*n)+n_hi*N}'
@@ -561,8 +555,8 @@ class RD3GCasadi(BaseSolver):
         filter_state = []
 
         i = 0
-        has_converged = False
-        is_optimal = False
+        converged = False
+        optimal = False
         self.line_search_fail_count = 0
         msg = 'Max iteration has been reached'
         t0 = time()
@@ -578,7 +572,7 @@ class RD3GCasadi(BaseSolver):
             logger.debug('Perturbed Complementary Slackness: tau=%.8f', tau)
             if converged:
                 break
-            if self.line_search_fail_count >= 3:
+            if self.line_search_fail_count >= self.config.max_failed_line_search:
                 msg = 'Line search no progress'
                 break
         dt = time() - t0
@@ -598,8 +592,8 @@ class RD3GCasadi(BaseSolver):
                         u=as_numpy_array(u).reshape((m, N, T), order='F'),
                         x=as_numpy_array(x).reshape((n, N, T), order='F'),
                         residual=res,
-                        has_converged=has_converged,
-                        is_optimal=is_optimal)
+                        has_converged=converged,
+                        is_optimal=optimal)
 
     def step(self, x, u, lamda, mu, s, filter_state, tau):
         """ Solver step function
@@ -898,7 +892,7 @@ class RD3GCasadi(BaseSolver):
 
     @deprecated
     def debug(self, u):
-        """ TODO """
+        """Compare selected Python and C++ intermediate quantities for debugging."""
         self.init_cpp_backend()
         self.solve_cpp_backend(u)
         N = self.N
@@ -1081,7 +1075,6 @@ class RD3GCasadi(BaseSolver):
         # feasibility for h>0
         # NOTE add fmax here for safety,
         # we only want to sum h_val > 0
-        # TODO set corresponding mu for inactive constraints to 0 for strict complementarity
         mu_i = cas.reshape(mu, n_hi, N)[:, i]
         LLi_val += cas.dot(mu_i, hi_vals)
 
@@ -1138,24 +1131,31 @@ class RD3GCasadi(BaseSolver):
         #             r_vec.append(dLLi_dxki)  # n
         #             assert dLLi_dxki.shape == (n, 1)
 
+        x_vec = cas.vec(x)
+        u_vec = cas.vec(u)
+
         # dLLi_dx n*N*T
-        # TODO vertcat x, then do jacobian once
+        dLLi_dx_vec = []
+        dLLi_du_vec = []
+        for i in range(N):
+            hi_val = h_val[:, i]
+            lagrangian_i = self.LLi(x, u, lamda, mu, i, hi_val, context)
+            dLLi_dx_vec.append(cas.jacobian(lagrangian_i, x_vec).T)
+            dLLi_du_vec.append(cas.jacobian(lagrangian_i, u_vec).T)
+
         for k in range(T):
+            xk_offset = k * n * N
             for i in range(N):  # dLLi_dx[k][i]
-                hi_val = h_val[:, i]
-                xki = cas.reshape(x[:, k], n, N)[:, i]
-                dLLi_dxki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val, context), xki).T
+                dLLi_dxki = dLLi_dx_vec[i][xk_offset + i*n:xk_offset + (i+1)*n]
                 r_vec.append(dLLi_dxki)  # n
                 assert dLLi_dxki.shape == (n, 1)
 
         # dLLi_dui for all i, m*N*T
         # Unlike dLLi_dx, dLL[i]_du[i] only applies to the same index set, dLLi_du{-i} != 0
-        # TODO vertcat x, then do jacobian once
         for k in range(T):
+            uk_offset = k * m * N
             for i in range(N):
-                hi_val = h_val[:, i]
-                uki = cas.reshape(u[:, k], m, N)[:, i]
-                dLLi_duki = cas.jacobian(self.LLi(x, u, lamda, mu, i, hi_val, context), uki).T
+                dLLi_duki = dLLi_du_vec[i][uk_offset + i*m:uk_offset + (i+1)*m]
                 r_vec.append(dLLi_duki)  # m
                 assert dLLi_duki.shape == (m, 1)
 

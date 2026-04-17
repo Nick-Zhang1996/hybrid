@@ -15,8 +15,8 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-cpp = True
-load = True
+cpp = False
+load = False
 
 np.random.seed()
 solver_config = RD3GCasadiConfig(inertia_correction=False, iterations=20)

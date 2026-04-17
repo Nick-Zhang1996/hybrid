@@ -112,9 +112,10 @@ inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double *data)
 class Rd3gCasadi {
  protected:
   int n_, m_, N_, T_, n_hi_;
-  Scalar dt_, rho_, rho_b_, bc_a_, bc_b_, reg0_, reg_;
+  Scalar dt_, bc_a_, bc_b_, reg0_, reg_;
   Scalar tolerance_;
   int line_search_max_iter_;
+  int max_failed_line_search_;
   int max_iterations_;
   int max_in_reg_iter_;
   Scalar max_in_reg_val_;
@@ -126,7 +127,7 @@ class Rd3gCasadi {
   const bool reduce_kkt_system_;
   const bool rollout_each_step_;
   const std::string linear_solver_method_;
-  int line_search_no_progress_counter_;
+  int line_search_fail_count_;
 
   std::shared_ptr<spdlog::logger> logger_;
 
@@ -153,19 +154,17 @@ class Rd3gCasadi {
 
  public:
   // NOTE n,m may need to be template variables for performance
-  Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar rho,
-             const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
-             const bool inertia_correction, const bool reduce_kkt_system,
-             const bool rollout_each_step, const Scalar tolerance, const int backtracking_max_iter,
-             const int max_iter, const int max_in_reg_iter, const Scalar max_in_reg_val,
+  Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
+             const Scalar bc_b, const Scalar reg, const bool inertia_correction,
+             const bool reduce_kkt_system, const bool rollout_each_step, const Scalar tolerance,
+             const int line_search_max_iter, const int max_failed_line_search, const int max_iter,
+             const int max_in_reg_iter, const Scalar max_in_reg_val,
              const std::string linear_solver_method, const int verbose, const std::string base_dir,
              const std::string casadi_module_name)
       : N_{N},
         T_{T},
         n_hi_{n_hi},
         dt_{dt},
-        rho_{rho},
-        rho_b_{rho_b},
         bc_a_{bc_a},
         bc_b_{bc_b},
         reg0_{reg},
@@ -174,7 +173,8 @@ class Rd3gCasadi {
         reduce_kkt_system_{reduce_kkt_system},
         rollout_each_step_{rollout_each_step},
         tolerance_{tolerance},
-        line_search_max_iter_{backtracking_max_iter},
+        line_search_max_iter_{line_search_max_iter},
+        max_failed_line_search_{max_failed_line_search},
         x0_{},
         profiler_{},
         max_iterations_{max_iter},
@@ -182,7 +182,7 @@ class Rd3gCasadi {
         max_in_reg_val_{max_in_reg_val},
         linear_solver_method_{linear_solver_method},
         verbose_{verbose},
-        line_search_no_progress_counter_{0},
+        line_search_fail_count_{0},
         debug_got_vals_{false} {
     const std::string logger_name{"rd3g_casadi_cpp"};
     logger_ = spdlog::get(logger_name);
@@ -251,7 +251,6 @@ class Rd3gCasadi {
   }
 
   void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
-  void post_step_update() { rho_ *= rho_b_; }
 
   // Evaluate dr_dy function from casadi using python arguments.
   // Demonstrating data representation conversion and call procedure
@@ -585,7 +584,7 @@ class Rd3gCasadi {
     MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s (n_hi*N, 1)
 
     std::vector<std::pair<Scalar, Scalar>> filter_state;  // Primal, dual residual
-    line_search_no_progress_counter_ = 0;
+    line_search_fail_count_ = 0;
 
     bool converged = false;
     bool optimal = false;
@@ -617,7 +616,7 @@ class Rd3gCasadi {
         tau = s.cwiseProduct(mu).sum() / static_cast<Scalar>(n_hi_ * N_);
         logger_->debug("Converged, reducing tau={:.5f}", tau);
       }
-      if (line_search_no_progress_counter_ >= 3 || stop) {
+      if (line_search_fail_count_ >= max_failed_line_search_ || stop) {
         msg = "Line search no progress";
         break;
       }
@@ -1048,7 +1047,7 @@ class Rd3gCasadi {
     if (ls_iter == line_search_max_iter_) {
       reg_ = min(reg_ * 10.0, 0.1);
       step = 0.0;
-      line_search_no_progress_counter_++;
+      line_search_fail_count_++;
       new_x = x;
       new_u = u;
       new_lamda = lamda;
@@ -1059,12 +1058,12 @@ class Rd3gCasadi {
       logger_->debug("Line Search no progress, inflating reg to {:.5f}", reg_);
     } else {
       reg_ = reg0_;
-      line_search_no_progress_counter_ = 0;
+      line_search_fail_count_ = 0;
     }
     logger_->debug("Line search stopped after {}/{} iterations", ls_iter + 1,
                    line_search_max_iter_);
     logger_->debug("Step size = {:.5f}", step);
-    bool stop = line_search_no_progress_counter_ >= 3;
+    bool stop = line_search_fail_count_ >= max_failed_line_search_;
 
     x = new_x;
     u = new_u;

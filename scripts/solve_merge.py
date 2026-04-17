@@ -28,3 +28,4 @@ logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.has_converged=}')
 # solver.animate(sol.u, save_gif=False, save_snapshots=False)
 solver.visualize(sol.u)
+solver.final()

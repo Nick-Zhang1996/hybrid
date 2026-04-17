@@ -26,8 +26,6 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     int,          // T
                     int,          // n_hi
                     Scalar,       // dt
-                    Scalar,       // rho
-                    Scalar,       // rho_b
                     Scalar,       // bc_a
                     Scalar,       // bc_b
                     Scalar,       // reg
@@ -35,7 +33,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     bool,         // reduce_kkt_system
                     bool,         // rollout_each_step
                     Scalar,       // tolerance
-                    int,          // backtracking_max_iter
+                    int,          // line_search_max_iter
+                    int,          // max_failed_line_search
                     int,          // max_iter
                     int,          // max_in_reg_iter
                     Scalar,       // max_in_reg_val
@@ -44,11 +43,12 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     std::string,  // base_dir
                     std::string   // casadi_module_name
                     >(),
-           py::arg("N"), py::arg("T"), py::arg("n_hi"), py::arg("dt"), py::arg("rho"),
-           py::arg("rho_b"), py::arg("bc_a"), py::arg("bc_b"), py::arg("reg"),
+           py::arg("N"), py::arg("T"), py::arg("n_hi"), py::arg("dt"), py::arg("bc_a"),
+           py::arg("bc_b"), py::arg("reg"),
            py::arg("inertia_correction"), py::arg("reduce_kkt_system"),
-           py::arg("rollout_each_step"), py::arg("tolerance"), py::arg("backtracking_max_iter"),
-           py::arg("max_iter"), py::arg("max_in_reg_iter"), py::arg("max_in_reg_val"),
+           py::arg("rollout_each_step"), py::arg("tolerance"), py::arg("line_search_max_iter"),
+           py::arg("max_failed_line_search"), py::arg("max_iter"), py::arg("max_in_reg_iter"),
+           py::arg("max_in_reg_val"),
            py::arg("linear_solver_method"), py::arg("verbose"), py::arg("base_dir"),
            py::arg("casadi_module_name"))
       .def("dr_dy", &ClassName::casadi_dr_dy)
