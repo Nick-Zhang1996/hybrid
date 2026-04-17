@@ -113,7 +113,9 @@ class Rd3gCasadi {
  protected:
   int n_, m_, N_, T_, n_hi_;
   Scalar dt_, bc_a_, bc_b_, reg0_, reg_;
+  Scalar reg_inertia_;
   Scalar tolerance_;
+  Scalar tau_decay_;
   int line_search_max_iter_;
   int max_failed_line_search_;
   int max_iterations_;
@@ -124,7 +126,6 @@ class Rd3gCasadi {
   mutable Profiler<false> profiler_;
   int verbose_;  // 0:error, 1:warning, 2:info, 3:debug
   const bool inertia_correction_;
-  const bool reduce_kkt_system_;
   const bool rollout_each_step_;
   const std::string linear_solver_method_;
   int line_search_fail_count_;
@@ -145,7 +146,6 @@ class Rd3gCasadi {
 
   bool debug_got_vals_;  // We only need the first vals
   SpMatrix debug_full_KKT_;
-  SpMatrix debug_reduced_KKT_;
   SpMatrix debug_full_r0_;
   std::vector<double> debug_context;
   MatrixXd debug_full_dy;
@@ -155,12 +155,12 @@ class Rd3gCasadi {
  public:
   // NOTE n,m may need to be template variables for performance
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
-             const Scalar bc_b, const Scalar reg, const bool inertia_correction,
-             const bool reduce_kkt_system, const bool rollout_each_step, const Scalar tolerance,
-             const int line_search_max_iter, const int max_failed_line_search, const int max_iter,
-             const int max_in_reg_iter, const Scalar max_in_reg_val,
-             const std::string linear_solver_method, const int verbose, const std::string base_dir,
-             const std::string casadi_module_name)
+             const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
+             const bool inertia_correction, const bool rollout_each_step,
+             const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
+             const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
+             const Scalar max_in_reg_val, const std::string linear_solver_method,
+             const int verbose, const std::string base_dir, const std::string casadi_module_name)
       : N_{N},
         T_{T},
         n_hi_{n_hi},
@@ -169,10 +169,11 @@ class Rd3gCasadi {
         bc_b_{bc_b},
         reg0_{reg},
         reg_{reg},
+        reg_inertia_{reg_inertia},
         inertia_correction_{inertia_correction},
-        reduce_kkt_system_{reduce_kkt_system},
         rollout_each_step_{rollout_each_step},
         tolerance_{tolerance},
+        tau_decay_{tau_decay},
         line_search_max_iter_{line_search_max_iter},
         max_failed_line_search_{max_failed_line_search},
         x0_{},
@@ -609,13 +610,10 @@ class Rd3gCasadi {
       std::tie(stop, converged, optimal, residual) =
           step(x, u, lamda, mu, s, filter_state, tau, int_param, double_param);
       logger_->info("converged={},optimal={},residual={:.5f}", converged, optimal, residual);
-      if (converged && tau < 1e-4) {
-        break;
-      }
-      if (converged) {
-        tau = s.cwiseProduct(mu).sum() / static_cast<Scalar>(n_hi_ * N_);
-        logger_->debug("Converged, reducing tau={:.5f}", tau);
-      }
+      const Scalar current_gap = s.cwiseProduct(mu).sum() / static_cast<Scalar>(n_hi_ * N_);
+      tau = max(1e-8, tau_decay_ * current_gap);
+      logger_->debug("Perturbed Complementary Slackness: tau={:.8f}", tau);
+      if (converged) break;
       if (line_search_fail_count_ >= max_failed_line_search_ || stop) {
         msg = "Line search no progress";
         break;
@@ -752,12 +750,6 @@ class Rd3gCasadi {
       full_KKT.coeffRef(mu_offset + i, mu_offset + i) += slack_ratio;
       full_rhs(mu_offset + i, 0) += -tau / mu(i, 0);
     }
-    const Scalar primal_res = full_rhs
-                                  .block(n_ * N_ * T_ + m_ * N_ * T_, 0,
-                                         full_rhs.rows() - (n_ * N_ * T_ + m_ * N_ * T_), 1)
-                                  .lpNorm<1>();
-    const Scalar dual_res = full_rhs.block(0, 0, n_ * N_ * T_ + m_ * N_ * T_, 1).lpNorm<1>();
-
     // Check inertia for each agent KKT matrix Ki
     bool is_optimal = true;
     std::vector<int> saddle_agent_vec;
@@ -794,7 +786,7 @@ class Rd3gCasadi {
       triplets.reserve(rows);
       for (int k = 0; k < rows; ++k) {
         // Primal (+reg), Dual/Constraints (-reg)
-        double val = (k < primal_n) ? 1e-5 : -1e-5;
+        double val = (k < primal_n) ? reg_inertia_ : -reg_inertia_;
         triplets.emplace_back(k, k, val);
       }
       SpMatrix reg_matrix(rows, cols);
@@ -868,65 +860,7 @@ class Rd3gCasadi {
 
     MatrixXd full_dy;
     Scalar residual;
-    if (reduce_kkt_system_) {
-      // Deprecated !
-      // Apply active set method, skim down full_r0 and full_KKT
-      // logger_->debug("Reduce KKT system...");
-      SpMatrix reduced_KKT;
-      MatrixXd reduced_r0;
-      // TODO maybe there's a more useful index? like new_to_old
-      std::vector<int> active_h_indices;
-      // Can't use r0 directly, can't differentiate between an inactive h<0 vs a
-      // tight h=0 since both are 0 in r
-      std::tie(reduced_KKT, reduced_r0, active_h_indices) =
-          reduce_KKT_system(full_KKT, full_rhs.sparseView(), h_val.reshaped());
-      assert(reduced_KKT.rows() == reduced_KKT.cols());
-      // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
-
-      // TODO maybe use dense matrix for solution
-      Vector reduced_dy;
-
-      // Apply Levenberg-Marquardt Regularization
-      // logger_->debug("Apply Regularization...");
-      std::vector<Eigen::Triplet<double>> reg_triplets;
-      reg_triplets.reserve(reduced_KKT.rows());
-      // Primal Variables: Add +reg to diagonal
-      const int primal_var_count = (n_ + m_) * N_ * T_;
-      for (int i = 0; i < primal_var_count; ++i) {
-        reg_triplets.emplace_back(i, i, reg_);
-      }
-      // Dual Variables (Constraints): Add -reg to diagonal
-      for (int i = primal_var_count; i < reduced_KKT.rows(); ++i) {
-        reg_triplets.emplace_back(i, i, -reg_);
-      }
-      Eigen::SparseMatrix<double> reg_matrix(reduced_KKT.rows(), reduced_KKT.cols());
-      reg_matrix.setFromTriplets(reg_triplets.begin(), reg_triplets.end());
-      reduced_KKT += reg_matrix;
-
-      // logger_->debug("Solve linear system ...");
-      check_spmatrix_has_nan(reduced_KKT, "reduced_KKT");
-      if (reduced_r0.hasNaN()) {
-        logger_->warn("reduced_dy has nan");
-      }
-      std::tie(reduced_dy, residual) =
-          solve_linear_system(reduced_KKT, -reduced_r0, linear_solver_method_);
-      if (reduced_dy.hasNaN()) {
-        logger_->warn("reduced_dy has nan");
-      }
-      const int mu_in_y_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
-      assert(reduced_dy.rows() == mu_in_y_offset + active_h_indices.size());
-
-      // Reconstruct full_dy from reduced_dy
-      full_dy = MatrixXd::Zero(full_KKT.cols(), 1);
-      full_dy.block(0, 0, mu_in_y_offset, 1) = reduced_dy.block(0, 0, mu_in_y_offset, 1);
-      for (int i = 0; i < active_h_indices.size(); i++) {
-        full_dy(mu_in_y_offset + active_h_indices[i], 0) = reduced_dy(mu_in_y_offset + i, 0);
-      }
-      logger_->debug("reduced_dy sq_norm {:.5f}", pow(reduced_dy.norm(), 2));
-      debug_reduced_KKT_ = reduced_KKT;
-    } else {
-      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
-    }
+    std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
     // FIXME why are they different???
     logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(), 2));
 
@@ -959,10 +893,19 @@ class Rd3gCasadi {
     MatrixXd new_mu(n_hi_ * N_, 1);
     MatrixXd new_s(n_hi_ * N_, 1);
     int ls_iter;
+    MatrixXd full_r(full_r0.rows() + mu_dim, 1);
+    full_r.block(0, 0, full_r0.rows(), 1) = MatrixXd(full_r0);
+    full_r.block(full_r0.rows(), 0, mu_dim, 1) = mu.cwiseProduct(s) - MatrixXd::Constant(mu_dim, 1, tau);
+    full_r.block(mu_offset, 0, mu_dim, 1) += s;
+    const Scalar comp_res = full_r.block(full_r0.rows(), 0, mu_dim, 1).lpNorm<1>();
+    const Scalar primal_res =
+        full_r.block(x_dim + u_dim + lamda_dim, 0, mu_dim + mu_dim, 1).lpNorm<1>() - comp_res;
+    const Scalar dual_res = full_r.block(0, 0, x_dim + u_dim, 1).lpNorm<1>() + comp_res;
     Scalar trial_primal_res = primal_res;
     Scalar trial_dual_res = dual_res;
     if (filter_state.empty()) {
-      filter_state.emplace_back(primal_res * 1.2, -std::numeric_limits<Scalar>::infinity());
+      filter_state.emplace_back(max(primal_res * 1.2, static_cast<Scalar>(1e4)),
+                                -std::numeric_limits<Scalar>::infinity());
     }
     for (ls_iter = 0; ls_iter < line_search_max_iter_; ls_iter++) {
       new_x = x + step * alpha_p * dx.reshaped(n_ * N_, T_);
@@ -1007,13 +950,16 @@ class Rd3gCasadi {
       wb_.res[0] = nullptr;
 
       auto new_r = get_mapped_spmatrix(full_r0_sp, new_r_buffer.data());
-      MatrixXd trial_rhs = -MatrixXd(new_r);
-      trial_rhs.block(mu_offset, 0, mu_dim, 1) += -new_s;
-      trial_primal_res = trial_rhs
-                             .block(n_ * N_ * T_ + m_ * N_ * T_, 0,
-                                    trial_rhs.rows() - (n_ * N_ * T_ + m_ * N_ * T_), 1)
-                             .lpNorm<1>();
-      trial_dual_res = trial_rhs.block(0, 0, n_ * N_ * T_ + m_ * N_ * T_, 1).lpNorm<1>();
+      MatrixXd trial_full_r(new_r.rows() + mu_dim, 1);
+      trial_full_r.block(0, 0, new_r.rows(), 1) = MatrixXd(new_r);
+      trial_full_r.block(new_r.rows(), 0, mu_dim, 1) =
+          new_mu.cwiseProduct(new_s) - MatrixXd::Constant(mu_dim, 1, tau);
+      trial_full_r.block(mu_offset, 0, mu_dim, 1) += new_s;
+      const Scalar trial_comp_res = trial_full_r.block(new_r.rows(), 0, mu_dim, 1).lpNorm<1>();
+      trial_primal_res =
+          trial_full_r.block(x_dim + u_dim + lamda_dim, 0, mu_dim + mu_dim, 1).lpNorm<1>() -
+          trial_comp_res;
+      trial_dual_res = trial_full_r.block(0, 0, x_dim + u_dim, 1).lpNorm<1>() + trial_comp_res;
       logger_->debug("step={:.8f}, trial_primal_res={:.5f}, trial_dual_res={:.5f}", step,
                      trial_primal_res, trial_dual_res);
 
@@ -1040,7 +986,7 @@ class Rd3gCasadi {
       }
 
       if (!improve_optimality && improve_feasibility) {
-        filter_state.emplace_back(primal_res, dual_res);
+        filter_state.emplace_back(max(static_cast<Scalar>(1e-4), primal_res), dual_res);
       }
       break;
     }
@@ -1085,7 +1031,6 @@ class Rd3gCasadi {
   }
 
   SparseMatrixResult debug_get_full_KKT() { return get_spr(debug_full_KKT_); }
-  SparseMatrixResult debug_get_reduced_KKT() { return get_spr(debug_reduced_KKT_); }
   SparseMatrixResult debug_get_full_r0() { return get_spr(debug_full_r0_); }
   std::vector<double> debug_get_context() { return debug_context; }
   MatrixXd debug_get_x() { return debug_x; }

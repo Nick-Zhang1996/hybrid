@@ -539,10 +539,15 @@ def create_random_game(car_count=3, horizon=20):
     J_Qr = np.diag([0, 5.0, 1.0, 1.0, 0.1])
     J_R = np.eye(m) * 1.0
 
-    # TODO resample if cars collide
     s_vec = np.random.uniform(low=0.5, high=4.0, size=N)
     v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
+    # s represent the progress on frenet/curvilinear frame, it's like the x coordinate
+    # n represents the lateral deviation on frenet frame, it's like the y coordinate
+    # TODO: 1. Select n_vec according to track.data.left_width_vec and track.data.right_width_vec
+    # Those define the maximum allowable left (+) and right (-) deviation
+    # For example, do uniform from -1 to 1, then scale to the left/right width at the s_vec
+    # 2. resample if cars collide
     n_vec = np.random.uniform(low=-0.1, high=0.1, size=N)
     vs_vec = np.zeros(N)
 

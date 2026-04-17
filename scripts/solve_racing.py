@@ -15,7 +15,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-cpp = False
+cpp = True
 load = False
 
 np.random.seed()

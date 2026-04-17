@@ -29,10 +29,11 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     Scalar,       // bc_a
                     Scalar,       // bc_b
                     Scalar,       // reg
+                    Scalar,       // reg_inertia
                     bool,         // inertia_correction
-                    bool,         // reduce_kkt_system
                     bool,         // rollout_each_step
                     Scalar,       // tolerance
+                    Scalar,       // tau_decay
                     int,          // line_search_max_iter
                     int,          // max_failed_line_search
                     int,          // max_iter
@@ -44,11 +45,11 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     std::string   // casadi_module_name
                     >(),
            py::arg("N"), py::arg("T"), py::arg("n_hi"), py::arg("dt"), py::arg("bc_a"),
-           py::arg("bc_b"), py::arg("reg"),
-           py::arg("inertia_correction"), py::arg("reduce_kkt_system"),
-           py::arg("rollout_each_step"), py::arg("tolerance"), py::arg("line_search_max_iter"),
-           py::arg("max_failed_line_search"), py::arg("max_iter"), py::arg("max_in_reg_iter"),
-           py::arg("max_in_reg_val"),
+           py::arg("bc_b"), py::arg("reg"), py::arg("reg_inertia"),
+           py::arg("inertia_correction"), py::arg("rollout_each_step"),
+           py::arg("tolerance"), py::arg("tau_decay"), py::arg("line_search_max_iter"),
+           py::arg("max_failed_line_search"), py::arg("max_iter"),
+           py::arg("max_in_reg_iter"), py::arg("max_in_reg_val"),
            py::arg("linear_solver_method"), py::arg("verbose"), py::arg("base_dir"),
            py::arg("casadi_module_name"))
       .def("dr_dy", &ClassName::casadi_dr_dy)
@@ -56,7 +57,6 @@ PYBIND11_MODULE(rd3g_casadi, m) {
       .def("solve", &ClassName::solve)
       .def("step", &ClassName::step)
       .def("debug_get_full_KKT", &ClassName::debug_get_full_KKT)
-      .def("debug_get_reduced_KKT", &ClassName::debug_get_reduced_KKT)
       .def("debug_get_full_r0", &ClassName::debug_get_full_r0)
       .def("debug_get_context", &ClassName::debug_get_context)
       .def("debug_get_x", &ClassName::debug_get_x)

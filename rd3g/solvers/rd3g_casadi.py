@@ -422,10 +422,11 @@ class RD3GCasadi(BaseSolver):
                 solver_config.bc_a,
                 solver_config.bc_b,
                 solver_config.reg,
+                solver_config.reg_inertia,
                 solver_config.inertia_correction,
-                solver_config.reduce_kkt_system,
                 solver_config.rollout_each_step,
                 solver_config.tolerance,
+                solver_config.tau_decay,
                 solver_config.line_search_max_iter,
                 solver_config.max_failed_line_search,
                 solver_config.iterations,
@@ -471,7 +472,7 @@ class RD3GCasadi(BaseSolver):
                         iterations=i,
                         u=u,
                         x=x,
-                        residual=residual,
+                        residual=float(residual),
                         has_converged=has_converged,
                         is_optimal=is_optimal)
 
