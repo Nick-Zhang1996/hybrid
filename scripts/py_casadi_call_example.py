@@ -47,7 +47,7 @@ if __name__ == "__main__":
         solver_config.reduce_kkt_system,
         solver_config.rollout_each_step,
         solver_config.tolerance,
-        solver_config.backtracking_max_iter,
+        solver_config.line_search_max_iter,
         solver_config.iterations,
         solver_config.max_in_reg_iter,
         solver_config.max_in_reg_val,

@@ -25,7 +25,6 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
-DEBUG = False
 
 
 def as_numpy_array(value):
@@ -151,6 +150,7 @@ def solve_linear(A, b, method, profiler):
         logger.info(f'Reduced stop:{istop_lut[istop]},{dt=}s {itn=}, {residual=}')
 
         # Get inertia from LDL decomposition
+        # NOTE this only works for symmetric matrices
         A_np = A.toarray()
         lu, d, perm = scipy.linalg.ldl(A_np)
         del lu
@@ -197,6 +197,7 @@ def solve_linear(A, b, method, profiler):
         b_csc = scipy.sparse.csc_matrix(b.reshape(-1, 1))
         spsolve_x_csc = scipy.sparse.csc_matrix(spsolve_x.reshape(-1, 1))
         residual = scipy.sparse.linalg.norm(A @ spsolve_x_csc - b_csc)
+        # inertia is not supported
         return spsolve_x, residual, None
 
 
@@ -205,35 +206,37 @@ class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game.
      NOTE Some changes here require rerun codegen and recompiling the cpp program """
     tolerance: float = 5e-4
+    """ The residual threhold for stopping solver iterations. """
     iterations: int = 20
-    # backtracking line search param
-    bc_a: float = 1e-4  # alpha, minimal necessary improvement in line search
-    bc_b: float = 0.5  # beta, shrink coefficient for step size
-    backtracking_max_iter: int = 10
-    # NOTE this is not implemented in cpp
-    dynamics_residual_weight: float = 1.0
-    # barrier function scaling schedule
-    rho_0: float = 2e4  # 20.0 -> This require re-compiling everything TODO
-    # scaling rate for rho, rho+ = rho * rho_b
-    rho_b: float = 1.0
-    # Levenberg-Marquardt Regularization Coefficient
-    reg: float = 0  # 1e-5
-    # Apply inertia correction to each agent KKT
+    """ Maximum solver iterations before giving up. """
+    # Line search params
+    bc_a: float = 1e-4
+    """ alpha, minimal acceptable residual improvement in line search """
+    bc_b: float = 0.5
+    """ beta, shrink coefficient for step size after a failed step """
+    line_search_max_iter: int = 10
+    """ Max line search iterations. """
+    reg: float = 0
+    """ Initial Levenberg-Marquardt Regularization Coefficient for main KKT"""
+    reg_inertia: float = 1e-5
+    """ Initial Levenberg-Marquardt Regularization Coefficient for agent KKT. 
+    Necessary for AMD pivoting to work. """
     inertia_correction: bool = False
-    # Remove empty rows and columns from the KKT problem
+    """ Apply inertia correction to each agent KKT """
     reduce_kkt_system: bool = False
-    # Rollout control to get new state trajectory at the start of each step
+    """ Remove empty rows and columns from the KKT problem """
     rollout_each_step: bool = False
-    # Resolve all primal infeasibility (violated constraints) before solving
-    strict_constraints: bool = True
-    # Inertia correction max iterations
+    """ Rollout control to get new state trajectory at the start of each solver iter """
     max_in_reg_iter: int = 10
-    # Maximum inertia regularization value
+    """ Inertia correction max iterations """
     max_in_reg_val: float = 1.0
-    # Sparse linear solver used by the C++ backend
+    """ Maximum inertia regularization """
     linear_solver_method: str = 'sparselu'  # lscg, ldl, lsqr, sparselu, superlu, umfpack
-    # Number of failed line search before solver stops trying
+    """ Sparse linear solver used by the C++ backend """
     max_failed_line_search: int = 3
+    """ Number of solver steps with line search failure before solver stops trying """
+    tau_decay: float = 0.2
+    """ Coefficient to shrink complementary slackness"""
 
 
 class LineSearchMaxIter(Exception):
@@ -264,7 +267,10 @@ class RD3GCasadi(BaseSolver):
         """ cpp_only: if True, skip constructing casadi function construction """
         BaseSolver.__init__(self, config, game)
 
-        # TODO take from game.config directly, no alias attributes for this class
+        # TODO take from game.config directly, avoid alias attributes for this class
+        # do this:
+        # gc = self.game.config
+        # N = gc.N
         self.N = self.game.config.N
         self.T = self.game.config.T
         self.dt = self.game.config.dt
@@ -272,14 +278,13 @@ class RD3GCasadi(BaseSolver):
         self.m = self.game.config.m
         self.n_hi = self.game.config.n_hi
         self.n_c = self.game.config.n_c
-        self.rho = self.config.rho_0
 
-        # Levenberg-Marquardt Regularization coeff
-        # When line search is stuck, larger coeff is used. Re-sets when line search succeeds.
+        # Levenberg-Marquardt Regularization
+        # When line search is stuck, coeff is increased. Re-sets when line search succeeds.
         self.reg = self.config.reg
+        self.line_search_fail_count = 0
         self.profiler = TimeUtil(True)
 
-        # logger.debug_enable()
         self.residual_vec = []
         self.validate()
 
@@ -287,24 +292,20 @@ class RD3GCasadi(BaseSolver):
         # Leave this for users, since if cpp backend is loaded this won't be needed
         if not cpp_only:
             self.construct_casadi_fun()
-        if DEBUG:
-            logger.warning("DEBUG is ON, more prints, significantly slower")
         self.cpp_solver = None
 
     def validate(self):
-        """Check the dimension of initial state x0, guess for control."""
-        # assert self.guess.shape == (self.m, self.N, self.T), (
-        #     'Incorrect self.guess dimension, '
-        #     f'should be {(self.m, self.N, self.T)}, but got {self.guess.shape}'
-        # )
         assert isinstance(self.n, int) and self.n > 0
         assert isinstance(self.m, int) and self.m > 0
         assert isinstance(self.T, int) and self.T > 0
         assert isinstance(self.N, int) and self.N > 0
+        gc = self.game.config
+        assert gc.x0.shape == (self.n, self.N)
         return
 
     def construct_casadi_fun(self):
         """ Construct functions based on CasADi autodiff"""
+        # TODO use self.game.config = gc
         N = self.N
         n = self.n
         m = self.m
@@ -339,8 +340,9 @@ class RD3GCasadi(BaseSolver):
         self.get_n_fun = cas.Function('get_n', [], [self.n])
         self.get_m_fun = cas.Function('get_m', [], [self.m])
 
-        # TODO debug only
-        opts = {'regularity_check': True}
+        # Check for nans
+        # opts = {'regularity_check': True}
+        opts = {}
         h_val = self.game.h(x, u, context)
         self.h_casadi = cas.Function('h', [x, u, context]+config_params, [h_val], opts)
 
@@ -420,8 +422,9 @@ class RD3GCasadi(BaseSolver):
                 game.config.N,
                 game.config.T,
                 game.config.n_hi,
-                game.config.dt, solver_config.rho_0,
-                solver_config.rho_b,
+                game.config.dt,
+                1.0,  # TODO remove rho_0 from Cpp side
+                0,  # TODO ditto
                 solver_config.bc_a,
                 solver_config.bc_b,
                 solver_config.reg,
@@ -456,10 +459,10 @@ class RD3GCasadi(BaseSolver):
             u_ref = np.zeros((self.m*self.N, self.T), order='F')
         assert np.isfortran(x0)
         assert np.isfortran(u_ref)
-        # TODO NOTE x0 is in params_np and also passed explicitly here
+        # TODO x0 is in params_np and also passed explicitly here
         # explicit x0 is used for generating initial trajectory, param x0 is used in L function
         # Although they are identical, there should be a single source of truth.
-        # Maybe write a function get_x0_from_params() to handle the slicing safely?
+        # Remove u_ref from parameter list, and instead get x0 from gc.
 
         t0 = time()
         # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
@@ -469,7 +472,7 @@ class RD3GCasadi(BaseSolver):
         del lamda
         del mu
         del msg
-        logger.debug(f"cpp: {dt=}")
+        logger.debug(f"cpp solve() took: {dt:.6f}s")
 
         return Solution(elapsed_time=dt,
                         iterations=i,
@@ -479,14 +482,16 @@ class RD3GCasadi(BaseSolver):
                         has_converged=has_converged,
                         is_optimal=is_optimal)
 
+    @deprecated
     def solve_cpp_backend_rand_restart(self, restarts=10):
+        """ Naively run solve() multiple times with random initial guess"""
         if self.cpp_solver is None:
             logger.error('Call init_cpp_backend() first')
             raise RuntimeError
 
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        # FIXME this is specific to car merge game
+        # NOTE this is specific to car merge game
         logger.info('Solving game with 10 random restarts')
         logger.warning("Using sample u specific to car merging game")
         u_mean = np.array([-0.02230492, -0.00410712])
@@ -499,9 +504,10 @@ class RD3GCasadi(BaseSolver):
             # reshaped_samples:  (m, N, T) -> [Agent, Control_Dim, Time]
             reshaped_samples = raw_samples.transpose(2, 0, 1).reshape(self.m * self.N, self.T)
             u_ref = np.array(reshaped_samples, order='F')
-            assert np.isfortran(x0)
+            assert np.isfortran(x0)  # TODO get x0 from gc
             assert np.isfortran(u_ref)
 
+            # TODO get x0 from gc
             # reduced_dy, res, inertia = self.cpp_solver.solve(x0, u_ref, *params_np)
             retval = self.cpp_solver.solve(x0, u_ref, *params_np)
             x, u, lamda, mu, residual, has_converged, is_optimal, i, msg = retval
@@ -511,7 +517,7 @@ class RD3GCasadi(BaseSolver):
             if is_optimal and has_converged:
                 break
         dt = time()-t0
-        logger.debug(f"cpp: {dt=}, restarts={i}")
+        logger.debug(f"cpp solver took : {dt:.6f}, restarts={i}")
 
         return Solution(elapsed_time=dt,
                         iterations=i,
@@ -522,6 +528,8 @@ class RD3GCasadi(BaseSolver):
                         is_optimal=is_optimal)
 
     def solve(self, u_ref=None):
+        # TODO use gc.N, T, ...
+        gc = self.game.config
         N = self.N
         T = self.T
         n = self.n
@@ -530,9 +538,8 @@ class RD3GCasadi(BaseSolver):
         x0 = self.game.config.x0
         # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
         logger.debug(
-            f'primal variables:{(T*N*n) + (T*N*m)} dual variables:{(N*T*n)+n_hi*N}'
+            f'Primal variables:{(T*N*n) + (T*N*m)} Dual variables:{(N*T*n)+n_hi*N}'
         )
-        gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         tau = 0.1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
 
@@ -569,8 +576,8 @@ class RD3GCasadi(BaseSolver):
                 x, u, lamda, mu, s, filter_state, tau)
 
             current_gap = np.sum(np.asarray(s) * np.asarray(mu)) / (n_hi * N)
-            tau = max(1e-8, 0.2 * current_gap)
-            logger.debug('tau=%.8f', tau)
+            tau = max(1e-8, self.config.tau_decay * current_gap)
+            logger.debug('Perturbed Complementary Slackness: tau=%.8f', tau)
             if converged:
                 logger.debug('Converged')
             if self.line_search_fail_count >= 3:
@@ -588,7 +595,6 @@ class RD3GCasadi(BaseSolver):
         # sol.u: T,N,m
         # xn*N, T
         # sol.x: T,N,n
-        # TODO add optimality gap
         return Solution(elapsed_time=dt,
                         iterations=i,
                         u=as_numpy_array(u).reshape((m, N, T), order='F'),
@@ -653,7 +659,7 @@ class RD3GCasadi(BaseSolver):
 
         p.s('Inertia Checking')
         # Formulate the KKT matrix for each agent's best response game, verify inertia, and solve
-        # TODO this may need updating
+        # TODO NICK: Continue from here. this may need updating
         is_optimal = True
         saddle_agent_idx = []
         br_game_vec = []
