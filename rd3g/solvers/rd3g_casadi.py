@@ -205,9 +205,9 @@ def solve_linear(A, b, method, profiler):
 class RD3GCasadiConfig(BaseSolverConfig):
     """Configs for Residual Game.
      NOTE Some changes here require rerun codegen and recompiling the cpp program """
-    tolerance: float = 5e-4
+    tolerance: float = 1e-5  # 5e-4 in benchmark
     """ The residual threhold for stopping solver iterations. """
-    iterations: int = 20
+    iterations: int = 30  # 20 in benchmark
     """ Maximum solver iterations before giving up. """
     # Line search params
     bc_a: float = 1e-4
@@ -223,8 +223,6 @@ class RD3GCasadiConfig(BaseSolverConfig):
     Necessary for AMD pivoting to work. """
     inertia_correction: bool = False
     """ Apply inertia correction to each agent KKT """
-    reduce_kkt_system: bool = False
-    """ Remove empty rows and columns from the KKT problem """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
     max_in_reg_iter: int = 10
@@ -432,7 +430,7 @@ class RD3GCasadi(BaseSolver):
                 solver_config.reduce_kkt_system,
                 solver_config.rollout_each_step,
                 solver_config.tolerance,
-                solver_config.backtracking_max_iter,
+                solver_config.line_search_max_iter,
                 solver_config.iterations,
                 solver_config.max_in_reg_iter,
                 solver_config.max_in_reg_val,
@@ -566,7 +564,7 @@ class RD3GCasadi(BaseSolver):
         has_converged = False
         is_optimal = False
         self.line_search_fail_count = 0
-        msg = ''
+        msg = 'Max iteration has been reached'
         t0 = time()
         for i in range(self.config.iterations):
             logger.info(f'--- iter {i} ---')
@@ -579,7 +577,7 @@ class RD3GCasadi(BaseSolver):
             tau = max(1e-8, self.config.tau_decay * current_gap)
             logger.debug('Perturbed Complementary Slackness: tau=%.8f', tau)
             if converged:
-                logger.debug('Converged')
+                break
             if self.line_search_fail_count >= 3:
                 msg = 'Line search no progress'
                 break
@@ -659,7 +657,6 @@ class RD3GCasadi(BaseSolver):
 
         p.s('Inertia Checking')
         # Formulate the KKT matrix for each agent's best response game, verify inertia, and solve
-        # TODO NICK: Continue from here. this may need updating
         is_optimal = True
         saddle_agent_idx = []
         br_game_vec = []
@@ -675,10 +672,10 @@ class RD3GCasadi(BaseSolver):
             primal_var_count = (n+m)*T
             ind = np.arange(primal_var_count)
             reg_matrix = scipy.sparse.eye(Ki.shape[0], format="csc")
-            reg_matrix[ind, ind] = 1e-5  # self.reg
+            reg_matrix[ind, ind] = self.config.reg_inertia
             # Apply constraint relaxation to allow AMD permutation in LDL
             ind = np.arange(primal_var_count, Ki.shape[0])
-            reg_matrix[ind, ind] = -1e-5  # -self.reg
+            reg_matrix[ind, ind] = -self.config.reg_inertia
             Ki_reg = Ki + reg_matrix
 
             in_Ki, solver = self.get_inertia(Ki_reg)
@@ -739,10 +736,9 @@ class RD3GCasadi(BaseSolver):
 
         p.e('Inertia Checking')
         reg_vec = [val.reg for val in br_game_vec]
-        logger.info(f' TODO Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
+        logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
         if self.config.inertia_correction:
-            # TODO need updating
             # Inertia correcting regularization
             in_reg_mtx = self.make_full_KKT_reg(reg_vec)
             LHS += in_reg_mtx
@@ -751,8 +747,6 @@ class RD3GCasadi(BaseSolver):
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
-
-        istop_lut = {1: 'Direct Sol', 2: 'Least Square Sol', 7: 'Iter limit'}
 
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
@@ -764,60 +758,16 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         LHS += reg_matrix
 
-        # TODO need updating
-        if self.config.reduce_kkt_system:  # active set
-            p.s('Reduce KKT')
-            # Remove inactive constraints and their multiplier
-            # h < 0 -> inactive cosntraint
-            #   remove them from residual to reduce dimension,
-            #  also remove corresponding columns in mu
-            # Starting index of first h() in residual
-            h_in_r_offset = n*N*T + m*N*T + n*N*T  # dLLi_dx, dLLi_du, dynamics constraint
-            # Starting index of mu, multiplier for h()
-            mu_in_y_offset = n*N*T + m*N*T + n*N*T  # x, u, lamda
-
-            h_val_np = np.array(h0_val, order='F').flatten(order='F')
-            neg_h_mask = (h_val_np < 0).nonzero()[0]
-            inactive_r_rows = []
-            inactive_y_rows = []
-            for idx in neg_h_mask:
-                inactive_r_rows.append(h_in_r_offset + idx)
-                inactive_y_rows.append(mu_in_y_offset + idx)
-
-            # Remove zero rows & columns in the linear system
-            all_r_indices = np.arange(LHS.shape[0])
-            all_y_indices = np.arange(LHS.shape[1])
-            active_r_rows = np.setdiff1d(all_r_indices, inactive_r_rows)
-            active_y_rows = np.setdiff1d(all_y_indices, inactive_y_rows)
-
-            # TODO set the relevant mu to 0 to satisfy strict complementarity
-            # self.check_KKT(full_KKT)
-            KKT_residual = r0_np[active_r_rows, :]
-            KKT = LHS[active_r_rows, :][:, active_y_rows]
-            p.e('Reduce KKT')
-
-            p.s('Solve Linear')
-            t0 = time()
-            reduced_dy, istop, itn, residual = lsqr(KKT, -KKT_residual)[:4]
-            dt = time() - t0
-            logger.info(f'Reduced KKT: {istop_lut[istop]}, {dt=}, {itn=}, {residual=}')
-            del residual
-            p.e('Solve Linear')
-            # Verify residual reduction with a line search
-            # Recover full dy
-            dy = np.zeros(LHS.shape[1])
-            dy[active_y_rows] = reduced_dy
-        else:
-            p.s('Solve Linear (full KKT)')
-            t0 = time()
-            LHS_csc = dm_to_csc(LHS)
-            RHS_np = np.asarray(RHS)
-            # dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
-            dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
-            dt = time() - t0
-            r0_norm = np.linalg.norm(RHS_np)
-            logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
-            p.e('Solve Linear (full KKT)')
+        p.s('Solve Linear (full KKT)')
+        t0 = time()
+        LHS_csc = dm_to_csc(LHS)
+        RHS_np = np.asarray(RHS)
+        # dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
+        dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
+        dt = time() - t0
+        r0_norm = np.linalg.norm(RHS_np)
+        logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
+        p.e('Solve Linear (full KKT)')
 
         p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)
@@ -826,6 +776,7 @@ class RD3GCasadi(BaseSolver):
         # Step size is upper bounded by s + step_size*ds > 0.05 s, also mu
 
         # Primal Step Size (for x, u, s)
+        # Fraction-to-boundary rule
         raw_s = -0.995 * np.asarray(s) / np.asarray(ds)
         max_ss_s = raw_s[raw_s > 0]
         alpha_p = np.min(np.hstack([max_ss_s, [1.0]])).item()
@@ -835,15 +786,18 @@ class RD3GCasadi(BaseSolver):
         max_ss_mu = raw_mu[raw_mu > 0]
         alpha_d = np.min(np.hstack([max_ss_mu, [1.0]])).item()
 
-        logger.debug('Max step size primal: %.8f, dual: %.8f', alpha_p, alpha_d)
+        logger.debug('Max step size primal: %.8f, dual: %.8f, smaller one is used', alpha_p, alpha_d)
         alpha_p = alpha_d = np.min([alpha_d, alpha_p]).item()  # Use same step size for primal dual
         step_size = 1.0
 
         # Filter line search
         # To simplify the linear problem, we eliminated the complementary slackness
-        # For the line search, we must restore the full residual
+        # For the line search, we must restore the full residual from r
+        # r: [dL/dx, dL/du, f(x,u)-x, h(x)]
+        # full_r: [dL/dx, dL/du, f(x,u)-x, h(x)+s, \mu s-tau]
         full_r = np.vstack([r0_val, mu * s - tau])
         full_r[mu_offset:mu_offset+n_hi*N] += s
+        # Perturbed complementary slackness residual
         comp_res = np.linalg.norm(full_r[-n_hi*N:, 0], 1).item()
         # Infeasibility residual
         primal_res = np.linalg.norm(full_r[nNT+mNT:-n_hi*N, 0], 1).item()
@@ -851,11 +805,11 @@ class RD3GCasadi(BaseSolver):
         dual_res = comp_res + np.linalg.norm(full_r[:nNT+mNT, 0], 1).item()
         logger.debug(f'step_size=0, {primal_res=:.5f}(feas), {dual_res=:.5f}(opt)')
 
-        # Initialize filter, set upper bound for residual
+        # Initialize filter, set a large upper bound for residual
         if len(filter_state) == 0:
             filter_state.append((max(primal_res*1.2, 1e4), -np.inf))
         try:
-            for _ in range(self.config.backtracking_max_iter):
+            for _ in range(self.config.line_search_max_iter):
                 # Evaluate primal/dual residual at trial point
                 new_x = x+step_size*alpha_p*cas.reshape(dx, n*N, T)
                 new_u = u+step_size*alpha_p*cas.reshape(du, m*N, T)
@@ -907,7 +861,7 @@ class RD3GCasadi(BaseSolver):
                     filter_state.append((max(1e-4, primal_res), dual_res))
                     # logger.debug('Adding to filter')
                 raise LineSearchSuccess
-            # TODO What if no improvement at all? add infeasibility correction step
+            # NOTE: future enhance What if no improvement at all? add infeasibility correction step
             raise LineSearchMaxIter
         except LineSearchMaxIter:
             self.reg = np.clip(self.reg * 10, a_min=1e-10, a_max=0.1)
