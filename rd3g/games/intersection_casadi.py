@@ -292,8 +292,12 @@ class IntersectionCasadi(CasadiGame):
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
         J_Qr_diag = J_Qr_diag_vec @ i_onehot
+        pos_delta = x_k[:2, :] - cas.repmat(x_k_i[:2, :], 1, self.config.N)
+        dist_sq = cas.sum1(pos_delta**2).T
+        collision_radius = self.config.get_param('collision_radius')
+        proximity_cost = cas.sum1((1 - i_onehot) * cas.exp(-dist_sq / (collision_radius**2)))
 
-        val = cas.sum(dx**2 * J_Qr_diag) + u_k_i.T @ J_R @ u_k_i
+        val = cas.sum(dx**2 * J_Qr_diag) + u_k_i.T @ J_R @ u_k_i + proximity_cost
         return val
 
     def Jfi(self, x_T, i_onehot):
@@ -413,8 +417,6 @@ def create_random_game(car_count=3, horizon=20):
     n: int = 4
     m: int = 2
 
-    J_R = np.eye(m) * 0.1  # Control effort
-
     hori_lane_n = min(int(0.5 * N), N - 1)
     verti_lane_n = N - hori_lane_n
 
@@ -441,21 +443,52 @@ def create_random_game(car_count=3, horizon=20):
     # Ji = x.T @ J_Qr[i] @ x
     J_Qr_diag_vec = []
 
+    def sample_hori_x0(i):
+        offset = - i*6 - np.random.random()  # 5.4
+        v = 2.0 + np.random.random()
+        x0_i = make_x0(True, np.random.randint(0, default.hori_lanes), offset, v, 0.0)
+        x_ref_i = np.array([0, x0_i[1], x0_i[2], x0_i[3]])
+        return x0_i, x_ref_i
+
+    def sample_verti_x0(i):
+        offset = - i*6 - 2.7 - np.random.random()
+        v = 2.0 + np.random.random()
+        x0_i = make_x0(False, np.random.randint(0, default.vert_lanes), offset, v, 0.0)
+        x_ref_i = np.array([x0_i[0], 0, x0_i[2], x0_i[3]])
+        return x0_i, x_ref_i
+
+    J_R = np.diag([0.1, 1.0])  # Control effort
     for i in range(hori_lane_n):
-        offset = - i*4.0 - np.random.random()  # 5.4
-        v = 2.0+np.random.random()
-        x0 = make_x0(True, np.random.randint(0, default.hori_lanes), offset, v, 0.0)
+        x0, x_ref = sample_hori_x0(i)
         x0_vec.append(x0)
-        x_ref_vec.append(np.array([0, x0[1], x0[2], x0[3]]))
-        J_Qr_diag_vec.append(np.array([0, 0.1, 0.01, 10.0]))
+        x_ref_vec.append(x_ref)
+        # x = [x,y,v,theta]: x: upwards, y:leftward, theta: ccw (right hand coord)
+        J_Qr_diag_vec.append(np.array([0, 0.1, 0.3, 5.0]))
 
     for i in range(verti_lane_n):
-        offset = - i*4.0 - 2.7 - np.random.random()
-        v = 2.0+np.random.random()
-        x0 = make_x0(False, np.random.randint(0, default.vert_lanes), offset, v, 0.0)
+        x0, x_ref = sample_verti_x0(i)
         x0_vec.append(x0)
-        x_ref_vec.append(np.array([x0[0], 0, x0[2], x0[3]]))
-        J_Qr_diag_vec.append(np.array([0.1, 0, 0.01, 10.0]))
+        x_ref_vec.append(x_ref)
+        J_Qr_diag_vec.append(np.array([0.1, 0, 0.3, 5.0]))
+
+    collision_radius_sq = default.collision_radius ** 2
+    while True:
+        positions = np.asarray(x0_vec)[:, :2]
+        colliding_idx = None
+        for i in range(N - 1):
+            delta = positions[i + 1:] - positions[i]
+            dist_sq = np.sum(delta * delta, axis=1)
+            hits = np.flatnonzero(dist_sq < collision_radius_sq)
+            if hits.size > 0:
+                colliding_idx = i + 1 + hits[0]
+                break
+        if colliding_idx is None:
+            break
+        if colliding_idx < hori_lane_n:
+            x0_vec[colliding_idx], x_ref_vec[colliding_idx] = sample_hori_x0(colliding_idx)
+        else:
+            verti_i = colliding_idx - hori_lane_n
+            x0_vec[colliding_idx], x_ref_vec[colliding_idx] = sample_verti_x0(verti_i)
 
     # n * N
     x0 = np.vstack(x0_vec).T
