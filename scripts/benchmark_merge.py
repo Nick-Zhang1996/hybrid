@@ -19,18 +19,18 @@ car_optimal_mean_vec = []
 car_optimal_var_vec = []
 car_time_mean_vec = []
 car_time_var_vec = []
-for car_count in range(2, 9):
+for car_count in range(2, 9, 2):
     converge_vec = []
     optimal_vec = []
     dt_vec = []
     for i in range(50):
         np.random.seed(i)
-        game = create_random_game(car_count=car_count, horizon=20)
+        game = create_random_game(car_count=car_count, horizon=40)
         solver_config = RD3GCasadiConfig(inertia_correction=False)
-        solver = RD3GCasadi(solver_config, game, cpp_only=True)
-        # sol = solver.solve()
-        solver.init_cpp_backend()
-        sol = solver.solve_cpp_backend()
+        solver = RD3GCasadi(solver_config, game, cpp_only=False)
+        sol = solver.solve()
+        # solver.init_cpp_backend()
+        # sol = solver.solve_cpp_backend()
         # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
         # solver.final()

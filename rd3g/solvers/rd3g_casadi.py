@@ -822,12 +822,11 @@ class RD3GCasadi(BaseSolver):
             dt = time() - t0
             logger.info(f'Preconditioned KKT: {dt=:.4f}')
             p.e('Precondition')
-        # else:
-        if True:
+        else:
             p.s('Solve Linear (full KKT)')
             t0 = time()
             # NOTE change back to dy. we only run this segment for timing comparison
-            unused_dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
+            dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
             dt = time() - t0
             r0_norm = np.linalg.norm(RHS_np)
             logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
