@@ -263,6 +263,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     """ Rollout control to get new state trajectory at the start of each solver iter """
     precondition_with_potential: bool = True
     """ Precondition the game KKT with a potential KKT to speed up computing"""
+    variational_gne: bool = True
+    """ If True, use one shared multiplier per canonical constraint """
     max_in_reg_iter: int = 10
     """ Inertia correction max iterations """
     max_in_reg_val: float = 1.0
@@ -309,7 +311,10 @@ class RD3GCasadi(BaseSolver):
         self.dt = gc.dt
         self.n = gc.n
         self.m = gc.m
-        self.n_hi = gc.n_hi
+        self.n_h = getattr(gc, 'n_h', getattr(gc, 'n_hi', 0))
+        assert (gc.variational_gne == config.variational_gne,
+                'Game and Solver must have the same variational_gne setting')
+        self.variational_gne = config.variational_gne
         self.n_c = gc.n_c
 
         # Levenberg-Marquardt Regularization
@@ -336,6 +341,14 @@ class RD3GCasadi(BaseSolver):
         assert gc.x0.shape == (self.n, self.N)
         return
 
+    @property
+    def h_multiplier_cols(self):
+        return 1 if self.variational_gne else self.N
+
+    @property
+    def dual_h_dim(self):
+        return self.n_h * self.h_multiplier_cols
+
     def construct_casadi_fun(self):
         """ Construct functions based on CasADi autodiff"""
         gc = self.game.config
@@ -343,7 +356,8 @@ class RD3GCasadi(BaseSolver):
         n = gc.n
         m = gc.m
         T = gc.T
-        n_hi = gc.n_hi
+        n_h = self.n_h
+        h_cols = self.h_multiplier_cols
         # context: (n_c*N, T) Game context, changes between iteration, but constant within iteration.
         #     This contains variables too expensive to AD.
         #     e.g. path curvature at each player position.
@@ -359,11 +373,10 @@ class RD3GCasadi(BaseSolver):
         u = cas.SX.sym('u', m*N, T)
         # Lagrang multiplier for equality constraints, we only have dynamics constraint
         lamda = cas.SX.sym('lamda', n*N, T)
-        # Lagrange multiplier for inequality constraints
-        # h() dim: n_hi, N is organized by agents, collision constraints first
-        # For agent i's collision against j, cas.reshape(mu, n_hi,N)[j,i]
-        # For agent i's k-th non-collision constraint, cas.reshape(mu, n_hi,N)[N+k,i]
-        mu = cas.SX.sym('mu', n_hi*N, 1)
+        # Lagrange multipliers for inequality constraints.
+        # Non-variational mode uses one multiplier column per agent.
+        # Variational mode uses one shared multiplier column.
+        mu = cas.SX.sym('mu', n_h * h_cols, 1)
         x0 = cas.SX.sym('x0', n, N)
         config_params = [gc.get_int_param_sx(), gc.get_double_param_sx()]
 
@@ -404,9 +417,9 @@ class RD3GCasadi(BaseSolver):
             ui = cas.vertcat(*uik_vec)
             lamdaik_vec = [cas.reshape(lamda[:, k], n, N)[:, i] for k in range(T)]
             lamdai = cas.vertcat(*lamdaik_vec)
-            mui = cas.reshape(mu, n_hi, N)[:, i]
+            mui = cas.reshape(mu, n_h, h_cols)[:, 0 if self.variational_gne else i]
             args_i = [xi, ui, lamdai, mui]
-            hi_vals = h_val[:, i]
+            hi_vals = h_val[:, 0 if self.variational_gne else i]
             yi = cas.vertcat(*[cas.vec(val) for val in args_i])
             L = self.LLi(x, u, lamda, mu, i, hi_vals, context)
             ri = cas.jacobian(L, yi)
@@ -453,7 +466,7 @@ class RD3GCasadi(BaseSolver):
             self.cpp_solver = rd3g_casadi.Rd3gCasadi(
                 game.config.N,
                 game.config.T,
-                game.config.n_hi,
+                getattr(game.config, 'n_h', getattr(game.config, 'n_hi', 0)),
                 game.config.dt,
                 solver_config.bc_a,
                 solver_config.bc_b,
@@ -563,11 +576,11 @@ class RD3GCasadi(BaseSolver):
         T = gc.T
         n = gc.n
         m = gc.m
-        n_hi = gc.n_hi
+        dual_h_dim = self.dual_h_dim
         x0 = gc.x0
-        # y: x(n*N*T) ,u(m*N*T), lambda(n,N,T),mu(n_hi*N)
+        # y: x(n*N*T), u(m*N*T), lambda(n*N*T), mu(dual_h_dim)
         logger.debug(
-            f'Primal variables:{(T*N*n) + (T*N*m)} Dual variables:{(N*T*n)+n_hi*N}'
+            f'Primal variables:{(T*N*n) + (T*N*m)} Dual variables:{(N*T*n)+dual_h_dim}'
         )
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         tau = 0.1  # Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
@@ -586,8 +599,9 @@ class RD3GCasadi(BaseSolver):
 
         # self.h_casadi = cas.Function('h', [x, u, context]+config_params, [h_val], opts)
         h_val = self.h_casadi(x, u, context, *params_np)
-        s = cas.fmax(1e-2, -cas.reshape(h_val, n_hi*N, 1))  # Slack variable h(x,u) + s = 0, s>=0
-        mu = tau / s  # Multiplier for h(x,u) + s (n_hi*N, 1)
+        # Slack variable h(x,u) + s = 0, s>=0
+        s = cas.fmax(1e-2, -cas.reshape(h_val, dual_h_dim, 1))
+        mu = tau / s  # Multiplier for h(x,u) + s
         lamda = cas.DM.zeros((n*N, T))  # Multiplier for dynamics constraints
         filter_state = []
 
@@ -604,7 +618,7 @@ class RD3GCasadi(BaseSolver):
             x, u, lamda, mu, s, res, converged, optimal, filter_state, _ = self.step(
                 x, u, lamda, mu, s, filter_state, tau)
 
-            current_gap = np.sum(np.asarray(s) * np.asarray(mu)) / (n_hi * N)
+            current_gap = np.sum(np.asarray(s) * np.asarray(mu)) / dual_h_dim
             tau = max(1e-8, self.config.tau_decay * current_gap)
             logger.debug('Perturbed Complementary Slackness: tau=%.8f', tau)
             if converged:
@@ -638,8 +652,8 @@ class RD3GCasadi(BaseSolver):
             x: n*N,T, casadi.DM
             u: m*N,T
             lamda: n*N,T
-            mu: n_hi*N, 1
-            s: (n_hi*N, 1) slack variable
+            mu: (dual_h_dim, 1)
+            s: (dual_h_dim, 1) slack variable
             filter_state: list[(infeasibility, residual)] Previously rejected states
             tau: float, Perturbed complementary slackness
         Return:
@@ -662,7 +676,7 @@ class RD3GCasadi(BaseSolver):
         T = gc.T
         n = gc.n
         m = gc.m
-        n_hi = gc.n_hi
+        dual_h_dim = self.dual_h_dim
         nNT = n*N*T
         mNT = m*N*T
 
@@ -776,7 +790,7 @@ class RD3GCasadi(BaseSolver):
 
         primal_var_count = (n+m)*N*T
         # size of x, u, lamda, mu
-        sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
+        sizes = [0, n*N*T, m*N*T, n*N*T, dual_h_dim]
         offsets = list(accumulate(sizes))
 
         if self.config.precondition_with_potential:
@@ -805,19 +819,15 @@ class RD3GCasadi(BaseSolver):
             row_idx = A_csc.indices
             col_idx = np.repeat(np.arange(A_csc.shape[1]), np.diff(A_csc.indptr))
             nonzero_mask = data != 0
-            if np.any(nonzero_mask):
-                nz_order = np.argsort(np.abs(data[nonzero_mask]))[::-1]
-                nz_data = data[nonzero_mask][nz_order]
-                nz_row_idx = row_idx[nonzero_mask][nz_order]
-                nz_col_idx = col_idx[nonzero_mask][nz_order]
-                for i, j, val in zip(nz_row_idx, nz_col_idx, nz_data):
-                    print(f'i={i} ({self.y_idx_str(i)}) j={j} ({self.r_idx_str(j)}) val={val}')
-            A_norm = scipy.sparse.linalg.norm(A_csc)
-            print(f'{S_norm=}, {A_norm=}')
-            breakpoint()
-
+            # if np.any(nonzero_mask):
+            #     nz_order = np.argsort(np.abs(data[nonzero_mask]))[::-1]
+            #     nz_data = data[nonzero_mask][nz_order]
+            #     nz_row_idx = row_idx[nonzero_mask][nz_order]
+            #     nz_col_idx = col_idx[nonzero_mask][nz_order]
+            #     for i, j, val in zip(nz_row_idx, nz_col_idx, nz_data):
+            #         print(f'i={i} ({self.y_idx_str(i)}) j={j} ({self.r_idx_str(j)}) val={val}')
             # DEBUG: find spectral radius of inv(S) @ A
-            dy = np.zeros((2*nNT+mNT+n_hi*N, 1))
+            dy = np.zeros((2*nNT+mNT+dual_h_dim, 1))
             t0 = time()
             solver_info = None
             last_residual = np.inf
@@ -875,11 +885,11 @@ class RD3GCasadi(BaseSolver):
         # r: [dL/dx, dL/du, f(x,u)-x, h(x)]
         # full_r: [dL/dx, dL/du, f(x,u)-x, h(x)+s, \mu s-tau]
         full_r = np.vstack([r0_val, mu * s - tau])
-        full_r[mu_offset:mu_offset+n_hi*N] += s
+        full_r[mu_offset:mu_offset+dual_h_dim] += s
         # Perturbed complementary slackness residual
-        comp_res = np.linalg.norm(full_r[-n_hi*N:, 0], 1).item()
+        comp_res = np.linalg.norm(full_r[-dual_h_dim:, 0], 1).item()
         # Infeasibility residual
-        primal_res = np.linalg.norm(full_r[nNT+mNT:-n_hi*N, 0], 1).item()
+        primal_res = np.linalg.norm(full_r[nNT+mNT:-dual_h_dim, 0], 1).item()
         # Optimality residual
         dual_res = comp_res + np.linalg.norm(full_r[:nNT+mNT, 0], 1).item()
         logger.debug(f'step_size=0, {primal_res=:.5f}(feas), {dual_res=:.5f}(opt)')
@@ -893,7 +903,7 @@ class RD3GCasadi(BaseSolver):
                 new_x = x+step_size*alpha_p*cas.reshape(dx, n*N, T)
                 new_u = u+step_size*alpha_p*cas.reshape(du, m*N, T)
                 new_lamda = lamda+step_size*alpha_d*cas.reshape(dlamda, n*N, T)
-                new_mu = mu+step_size*alpha_d*cas.reshape(dmu, n_hi*N, 1)
+                new_mu = mu+step_size*alpha_d*cas.reshape(dmu, dual_h_dim, 1)
                 new_s = s + step_size * alpha_p * ds
                 new_context = self.get_full_context_casadi(new_x)
                 # logger.debug(f"Min new_mu at step {step_size}: {cas.mmin(new_mu)}")
@@ -905,10 +915,10 @@ class RD3GCasadi(BaseSolver):
                                              int_param_dm, double_param_dm
                                              )
                 full_r = np.vstack([r_val, new_mu * new_s - tau])
-                full_r[mu_offset:mu_offset+n_hi*N] += new_s
-                trial_comp_res = np.linalg.norm(full_r[-n_hi*N:, 0], 1).item()
+                full_r[mu_offset:mu_offset+dual_h_dim] += new_s
+                trial_comp_res = np.linalg.norm(full_r[-dual_h_dim:, 0], 1).item()
                 # Infeasibility residual
-                trial_primal_res = np.linalg.norm(full_r[nNT+mNT:-n_hi*N, 0], 1).item()
+                trial_primal_res = np.linalg.norm(full_r[nNT+mNT:-dual_h_dim, 0], 1).item()
                 # Optimality residual
                 trial_dual_res = trial_comp_res + np.linalg.norm(full_r[:nNT+mNT, 0], 1).item()
                 logger.debug(f'{step_size=:.8f}, {trial_primal_res=:.5f}, {trial_dual_res=:.5f}')
@@ -984,13 +994,13 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n = self.n
         m = self.m
-        n_hi = self.n_hi
+        n_h = self.n_h
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         # return: (n*N, T)
         x = self.rollout_casadi(self.game.config.x0, u, *params_np)
         lamda = cas.DM.zeros((n*N, T))
-        mu = cas.DM.zeros((n_hi*N, 1))
+        mu = cas.DM.zeros((self.dual_h_dim, 1))
         # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
 
         # Check each intermediate variable
@@ -1105,7 +1115,7 @@ class RD3GCasadi(BaseSolver):
             u_k_i: (m, 1) control vector for agent i at step k
             x_k1_i: (n, 1) state vector for agent i at step k+1
             lamda_k: (n, N) Multiplier for dynamics constraint
-            mu_i: (n_hi, 1),  (unused) multiplier for inequality constraint h()
+            mu_i: (n_h, 1),  (unused) multiplier for inequality constraint h()
             i: agent index i
             context_k: (n_c, N) context at step k
         Return:
@@ -1114,12 +1124,12 @@ class RD3GCasadi(BaseSolver):
         N = self.N
         n = self.n
         m = self.m
-        n_hi = self.n_hi
+        n_h = self.n_h
         assert x_k.shape == (n, N)
         assert u_k_i.shape == (m, 1)
         assert x_k1_i.shape == (n, 1)
         assert lamda_k.shape == (n, N)
-        assert mu_i.shape == (n_hi, 1)
+        assert mu_i.shape == (n_h, 1)
 
         i_onehot = cas.SX.eye(self.N)[:, i]
         # NOTE it may be better to store lamda_k_T to take advantage of col-major storage
@@ -1135,9 +1145,9 @@ class RD3GCasadi(BaseSolver):
             x: (n*N, T) Agent states
             u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
-            mu: (n_hi*N, 1) Multiplier for positive h
+            mu: (dual_h_dim, 1) Multiplier for positive h
             i: agent index
-            hi_vals: (n_hi, 1) h() values for agent i
+            hi_vals: (n_h, 1) h() values for agent i
             context: (n_c*N, T) context variable of game
         Return:
             val: scalar value of Lagrangian
@@ -1146,21 +1156,22 @@ class RD3GCasadi(BaseSolver):
         N = self.N
         m = self.m
         n = self.n
-        n_hi = self.n_hi
+        n_h = self.n_h
         n_c = self.n_c
         LLi_val = sum([self.L(cas.reshape(x[:, k - 1], n, N),
                               cas.reshape(u[:, k], m, N)[:, i],
                               cas.reshape(x[:, k], n, N)[:, i],
                               cas.reshape(lamda[:, k], n, N),
-                              cas.reshape(mu, n_hi, N)[:, i],
-                              i,
-                              cas.reshape(context[:, k], n_c, N))
-                       for k in range(1, T)])
+                              cas.reshape(mu, n_h, self.h_multiplier_cols)[
+            :, 0 if self.variational_gne else i],
+            i,
+            cas.reshape(context[:, k], n_c, N))
+            for k in range(1, T)])
 
         # feasibility for h>0
         # NOTE add fmax here for safety,
         # we only want to sum h_val > 0
-        mu_i = cas.reshape(mu, n_hi, N)[:, i]
+        mu_i = cas.reshape(mu, n_h, self.h_multiplier_cols)[:, 0 if self.variational_gne else i]
         LLi_val += cas.dot(mu_i, hi_vals)
 
         x0 = self.game.config.get_param('x0')
@@ -1185,19 +1196,21 @@ class RD3GCasadi(BaseSolver):
             x: (n*N, T) Agent states
             u: (m*N, T) Agent control
             lamda: (n*N, T) Multiplier for dynamics constraint
-            mu: (n_hi*N, 1) Multiplier for positive h
+            mu: (dual_h_dim, 1) Multiplier for positive h
             context: (n_c*N, T) Game context, changes between iteration, but constant within iteration.
                 This contains variables too expensive to AD.
                 e.g. path curvature at each player position.
         Return:
-            r_val: (nNT+mNT+nNT+n_hi*N, 1) column vector of residual r
-            h_val: (n_hi, N) Result of h(x, u), which is needed for active set on constraints
+            r_val: (nNT+mNT+nNT+dual_h_dim, 1) column vector of residual r
+            h_val:
+                variational mode: (n_h, 1)
+                non-variational mode: (n_h, N)
         '''
         T = self.T
         N = self.N
         n = self.n
         m = self.m
-        n_hi = self.n_hi
+        n_h = self.n_h
         n_c = self.n_c
         # elements are column vectors
         r_vec = []
@@ -1223,7 +1236,7 @@ class RD3GCasadi(BaseSolver):
         dLLi_dx_vec = []
         dLLi_du_vec = []
         for i in range(N):
-            hi_val = h_val[:, i]
+            hi_val = h_val[:, 0 if self.variational_gne else i]
             lagrangian_i = self.LLi(x, u, lamda, mu, i, hi_val, context)
             dLLi_dx_vec.append(cas.jacobian(lagrangian_i, x_vec).T)
             dLLi_du_vec.append(cas.jacobian(lagrangian_i, u_vec).T)
@@ -1267,10 +1280,11 @@ class RD3GCasadi(BaseSolver):
                 assert fk.shape == (n, 1)
                 r_vec.append(fk)  # n
 
-        r_vec.append(cas.vec(h_val))  # n_hi * N
+        r_vec.append(cas.vec(h_val))  # dual_h_dim
         r_val = cas.vertcat(*r_vec)
-        assert r_val.shape == (n*N*T+m*N*T+n*N*T+n_hi*N, 1)
-        assert h_val.shape == (n_hi, N)
+        assert r_val.shape == (n*N*T+m*N*T+n*N*T+self.dual_h_dim, 1)
+        expected_h_cols = 1 if self.variational_gne else N
+        assert h_val.shape == (n_h, expected_h_cols)
         return r_val, h_val
 
     def check_Ki(self, Ki):
@@ -1350,7 +1364,7 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         N = self.N
         n = self.n
-        n_hi = self.n_hi
+        dual_h_dim = self.dual_h_dim
         m = self.m
         offset = 0
         r_Lx = norm(r[n*N*T, 0])
@@ -1359,8 +1373,8 @@ class RD3GCasadi(BaseSolver):
         offset += m*N*T
         r_f = norm(r[offset:offset+n*N*T])
         offset += n*N*T
-        r_h = norm(r[offset:offset+n_hi*N])
-        offset += n_hi*N
+        r_h = norm(r[offset:offset+dual_h_dim])
+        offset += dual_h_dim
         assert r.shape == (offset, 1)
         return r_Lx, r_Lu, r_f, r_h
 
@@ -1374,14 +1388,17 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n = self.n
         m = self.m
-        n_hi = self.n_hi
+        if self.variational_gne:
+            raise NotImplementedError(
+                'dr_to_dri is only defined for per-agent inequality multipliers')
+        n_h = self.n_h
         dri_vec = []
         xi_size = n*T
         ui_size = m*T
         li_size = n*T
-        mi_size = n_hi
+        mi_size = n_h
         dri_vec = []
-        dri_size = n*T + m*T + n*T + n_hi
+        dri_size = n*T + m*T + n*T + n_h
         for i in range(N):
             dri = np.zeros(dri_size) + np.nan
             offset = 0
@@ -1418,8 +1435,11 @@ class RD3GCasadi(BaseSolver):
         T = self.T
         n = self.n
         m = self.m
-        n_hi = self.n_hi
-        dr_size = n*N*T + m*N*T + n*N*T + n_hi*N
+        if self.variational_gne:
+            raise NotImplementedError(
+                'dri_to_dr is only defined for per-agent inequality multipliers')
+        n_h = self.n_h
+        dr_size = n*N*T + m*N*T + n*N*T + n_h*N
         dr = np.zeros(dr_size) + np.nan
         for i in range(N):
             dri = dri_vec[i]
@@ -1443,7 +1463,7 @@ class RD3GCasadi(BaseSolver):
             offset += li_size*N
             offset_i += li_size
             # mu
-            mi_size = n_hi
+            mi_size = n_h
             dr[offset + i*mi_size: offset +
                 (i+1)*mi_size] = dri[offset_i:offset_i+mi_size]
             offset += mi_size*N
@@ -1459,7 +1479,7 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         T = self.T
-        n_hi = self.n_hi
+        dual_h_dim = self.dual_h_dim
         if idx < n*N*T:
             Ti = idx // (n*N)
             Ni = (idx - Ti*n*N) // n
@@ -1481,11 +1501,12 @@ class RD3GCasadi(BaseSolver):
             return f'f(x,u) {Ti=}, {Ni=}, {ni=}'
         idx -= n*N*T
 
-        if idx < n_hi*N:  # n_hi = N*T (in that order)
-            Ni = idx // n_hi
-            Ti = (idx - n_hi*Ni) // N
-            Nj = idx - n_hi*Ni - N*Ti
-            return f'h(x,u) {Ni=}, {Nj=}, {Ti=}'
+        if idx < dual_h_dim:
+            if self.variational_gne:
+                return f'h(x,u) shared idx={idx}'
+            Ni = idx // self.n_h
+            local_idx = idx - self.n_h * Ni
+            return f'h(x,u) constraint={local_idx}, owner={Ni}'
 
     def y_idx_str(self, idx):
         """ Given an y index, print its name"""
@@ -1493,7 +1514,7 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         T = self.T
-        n_hi = self.n_hi
+        dual_h_dim = self.dual_h_dim
         if idx < n*N*T:
             Ti = idx // (n*N)
             Ni = (idx - Ti*n*N) // n
@@ -1515,11 +1536,12 @@ class RD3GCasadi(BaseSolver):
             return f'lambda for f(x,u) {idx=}, {Ti=}, {Ni=}, {ni=}'
         idx -= n*N*T
 
-        if idx < n_hi*N:  # n_hi = N*T (in that order)
-            Ni = idx // n_hi
-            Ti = (idx - n_hi*Ni) // N
-            Nj = idx - n_hi*Ni - N*Ti
-            return f'mu for h(x,u) {idx=} {Ni=}, {Nj=}, {Ti=}'
+        if idx < dual_h_dim:
+            if self.variational_gne:
+                return f'mu for shared h(x,u) {idx=}'
+            Ni = idx // self.n_h
+            local_idx = idx - self.n_h * Ni
+            return f'mu for h(x,u) {idx=} constraint={local_idx}, owner={Ni}'
 
     def make_full_KKT_reg(self, reg_vec):
         """ Given a list of regularization value for each agent,
@@ -1528,8 +1550,7 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         m = self.m
         T = self.T
-        n_hi = self.n_hi
-        l = n*N*T + m*N*T + n*N*T + n_hi*N
+        l = n*N*T + m*N*T + n*N*T + self.dual_h_dim
         data = []
         row = []
         for i in range(self.N):
