@@ -800,6 +800,22 @@ class RD3GCasadi(BaseSolver):
             S_csc = (LHS_csc + LHS_csc_T) * 0.5
             A_csc = (LHS_csc - LHS_csc_T) * 0.5
             p.e('prep')
+            S_norm = scipy.sparse.linalg.norm(S_csc)
+            data = A_csc.data
+            row_idx = A_csc.indices
+            col_idx = np.repeat(np.arange(A_csc.shape[1]), np.diff(A_csc.indptr))
+            nonzero_mask = data != 0
+            if np.any(nonzero_mask):
+                nz_order = np.argsort(np.abs(data[nonzero_mask]))[::-1]
+                nz_data = data[nonzero_mask][nz_order]
+                nz_row_idx = row_idx[nonzero_mask][nz_order]
+                nz_col_idx = col_idx[nonzero_mask][nz_order]
+                for i, j, val in zip(nz_row_idx, nz_col_idx, nz_data):
+                    print(f'i={i} ({self.y_idx_str(i)}) j={j} ({self.r_idx_str(j)}) val={val}')
+            A_norm = scipy.sparse.linalg.norm(A_csc)
+            print(f'{S_norm=}, {A_norm=}')
+            breakpoint()
+
             # DEBUG: find spectral radius of inv(S) @ A
             dy = np.zeros((2*nNT+mNT+n_hi*N, 1))
             t0 = time()
