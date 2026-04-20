@@ -25,6 +25,8 @@ from rd3g.utilities.casadi_util import dm_to_csc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
+# change repr() of numpy floats to look like "1.23" instead of "np.float64(1.23)" for conciseness
+np.set_printoptions(legacy="1.25")
 
 
 def as_numpy_array(value):
@@ -190,7 +192,7 @@ def solve_linear(A, b, method, profiler):
         residual = scipy.sparse.linalg.norm(A @ qdldl_x_csc - b_csc)
         p.e('post-processing')
         dt = time() - t0
-        logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
+        # logger.info(f'Reduced LDL ,{dt=:.6f}s {residual=:.6f}')
         return qdldl_x, residual, qdldl_inertia
     elif method == 'spsolve':
         spsolve_x = spsolve(A, b)
@@ -199,6 +201,38 @@ def solve_linear(A, b, method, profiler):
         residual = scipy.sparse.linalg.norm(A @ spsolve_x_csc - b_csc)
         # inertia is not supported
         return spsolve_x, residual, None
+
+
+def ldl_solve(A, b, profiler, solver_info=None):
+    """ Solve a symmetric problem with LDL.
+    If solver_info is provided, assume A is the same, and skip the symbolic factorization to save time."""
+    p = profiler
+    if solver_info is None:
+        p.s('pre-process')
+        A_upper = scipy.sparse.triu(A, format='csc')
+        # A_upper.eliminate_zeros()
+        # A_upper.sort_indices()
+        # A_upper.sum_duplicates()
+        p.e('pre-process')
+        p.s('structural factorization')
+        # pylint:disable-next=c-extension-no-member
+        solver = qdldl.Solver(A_upper, upper=True)
+        p.e('structural factorization')
+    else:
+        solver = solver_info['solver']
+        A_upper = solver_info['A_upper']
+    #  C = P @ A @ P.T, C = L @ D @ L.T
+    p.s('Solve linear sys')
+    qdldl_x = solver.solve(b)
+    p.e('Solve linear sys')
+    # residual = norm(A @ qdldl_x - b)  # 30 % of total time!, use csc_matrix below
+    # p.s('Calc residual')
+    # b_csc = scipy.sparse.csc_matrix(b.reshape(-1, 1))
+    # qdldl_x_csc = scipy.sparse.csc_matrix(qdldl_x.reshape(-1, 1))
+    # residual = scipy.sparse.linalg.norm(A @ qdldl_x_csc - b_csc)
+    # p.e('Calc residual')
+    res = None  # Expensvie to calculate and always machine precision
+    return qdldl_x, res, {'solver': solver, 'A_upper': A_upper}
 
 
 @dataclass(frozen=True)
@@ -227,6 +261,8 @@ class RD3GCasadiConfig(BaseSolverConfig):
     """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
+    precondition_with_potential: bool = True
+    """ Precondition the game KKT with a potential KKT to speed up computing"""
     max_in_reg_iter: int = 10
     """ Inertia correction max iterations """
     max_in_reg_val: float = 1.0
@@ -743,6 +779,8 @@ class RD3GCasadi(BaseSolver):
         sizes = [0, n*N*T, m*N*T, n*N*T, n_hi*N]
         offsets = list(accumulate(sizes))
 
+        if self.config.precondition_with_potential:
+            self.reg = self.config.reg_inertia
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         ind = np.arange(primal_var_count)
@@ -753,16 +791,51 @@ class RD3GCasadi(BaseSolver):
         reg_matrix[ind, ind] = -self.reg
         LHS += reg_matrix
 
-        p.s('Solve Linear (full KKT)')
-        t0 = time()
-        LHS_csc = dm_to_csc(LHS)
-        RHS_np = np.asarray(RHS)
-        # dy, istop, itn, residual = lsqr(LHS_csc, RHS_np)[:4]
-        dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
-        dt = time() - t0
-        r0_norm = np.linalg.norm(RHS_np)
-        logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
-        p.e('Solve Linear (full KKT)')
+        if self.config.precondition_with_potential:
+            p.s('Precondition')
+            # TODO this 'prep' section takes half the time of the 'Precondition' sector. Optimize for time
+            p.s('prep')
+            S = (LHS + LHS.T)/2
+            A = (LHS - LHS.T)/2
+            A_csc = dm_to_csc(A)
+            S_csc = dm_to_csc(S)
+            RHS_np = np.asarray(RHS)
+            RHS_csc = dm_to_csc(RHS)
+            p.e('prep')
+            # DEBUG: find spectral radius of inv(S) @ A
+            dy = np.zeros((2*nNT+mNT+n_hi*N, 1))
+            t0 = time()
+            solver_info = None
+            last_residual = np.inf
+            for i in range(10):
+                iter_LHS = S_csc
+                iter_RHS = RHS_np - A_csc @ dy
+                new_dy, _, solver_info = ldl_solve(iter_LHS, iter_RHS, p, solver_info)
+                p.s('total_res')
+                total_res = np.linalg.norm(LHS @ new_dy - RHS)
+                p.e('total_res')
+                if total_res > last_residual:
+                    break
+                dy = new_dy.reshape(-1, 1)
+                logger.debug(f'Preconditioned iter {total_res=}')
+                if total_res < 1e-2 or total_res > 0.9 * last_residual:
+                    break
+                last_residual = total_res
+            dt = time() - t0
+            logger.info(f'Preconditioned KKT: {dt=:.4f}')
+            p.e('Precondition')
+        # else:
+        if True:
+            p.s('Solve Linear (full KKT)')
+            t0 = time()
+            LHS_csc = dm_to_csc(LHS)
+            RHS_np = np.asarray(RHS)
+            # NOTE change back to dy. we only run this segment for timing comparison
+            unused_dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
+            dt = time() - t0
+            r0_norm = np.linalg.norm(RHS_np)
+            logger.info(f'Full KKT :{dt=:.4f}, {r0_norm=:.4f}, {residual=:.4f}')
+            p.e('Solve Linear (full KKT)')
 
         p.s('Line Search')
         dx, du, dlamda, dmu = cas.vertsplit(cas.DM(dy), offsets)

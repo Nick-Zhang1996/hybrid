@@ -56,16 +56,18 @@ def generate_code(solver):
 def dm_to_csc(dm, array=False):
     """ Convert a CasADi DM sparse matrix to scipy csc_matris
     Args:
-        dm: DM object, 
+        dm: DM object,
         array: if True, return csc array, otherwise return csc matrix
     """
-    data = dm.nonzeros()        # The numerical values
-    indices = dm.sparsity().row()  # The row indices
-    indptr = dm.sparsity().colind()  # The column pointers
-    shape = dm.size()           # (rows, cols)
 
-    if (array):
-        csc = csc_array((data, indices, indptr), shape=shape)
+    data = np.array(dm.nonzeros(), dtype=np.float64).ravel()
+
+    indices = np.array(dm.sparsity().row(), dtype=np.int32)
+    indptr = np.array(dm.sparsity().colind(), dtype=np.int32)
+
+    shape = dm.size()
+
+    if array:
+        return csc_array((data, indices, indptr), shape=shape, copy=False)
     else:
-        csc = csc_matrix((data, indices, indptr), shape=shape)
-    return csc
+        return csc_matrix((data, indices, indptr), shape=shape, copy=False)
