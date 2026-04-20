@@ -31,7 +31,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     n_h: int = 0
     """ Total number of canonical inequality constraints """
     n_c: int = 0  # Dimension of context var, per agent per stage, unused in this game
-    variational_gne: bool = True
+    variational_gne: bool = False
     """ If True, use one shared multiplier per canonical constraint """
     track_width: float = 2.2
     collision_radius: float = 2.0

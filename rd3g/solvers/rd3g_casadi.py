@@ -203,24 +203,28 @@ def solve_linear(A, b, method, profiler):
         return spsolve_x, residual, None
 
 
-def ldl_solve(A, b, profiler, solver_info=None):
+def ldl_solve(A, b, profiler, solver=None, A_upper=None):
     """ Solve a symmetric problem with LDL.
-    If solver_info is provided, assume A is the same, and skip the symbolic factorization to save time."""
+    Args:
+        solver: if provided, reuse structural factorization.
+        A_uppper: if provided, ignore A.  Also assumes solver already contains A.
+    """
     p = profiler
-    if solver_info is None:
+    if A_upper is None:
         p.s('pre-process')
         A_upper = scipy.sparse.triu(A, format='csc')
-        # A_upper.eliminate_zeros()
-        # A_upper.sort_indices()
-        # A_upper.sum_duplicates()
+        A_upper.eliminate_zeros()
+        A_upper.sort_indices()
+        A_upper.sum_duplicates()
+        if solver is not None:
+            solver.update(A_upper, upper=True)
         p.e('pre-process')
-        p.s('structural factorization')
+
+    if solver is None:
         # pylint:disable-next=c-extension-no-member
+        p.s('structural factorization')
         solver = qdldl.Solver(A_upper, upper=True)
         p.e('structural factorization')
-    else:
-        solver = solver_info['solver']
-        A_upper = solver_info['A_upper']
     #  C = P @ A @ P.T, C = L @ D @ L.T
     p.s('Solve linear sys')
     qdldl_x = solver.solve(b)
@@ -232,7 +236,7 @@ def ldl_solve(A, b, profiler, solver_info=None):
     # residual = scipy.sparse.linalg.norm(A @ qdldl_x_csc - b_csc)
     # p.e('Calc residual')
     res = None  # Expensvie to calculate and always machine precision
-    return qdldl_x, res, {'solver': solver, 'A_upper': A_upper}
+    return qdldl_x, res, solver,  A_upper
 
 
 @dataclass(frozen=True)
@@ -261,9 +265,9 @@ class RD3GCasadiConfig(BaseSolverConfig):
     """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
-    precondition_with_potential: bool = True
+    precondition_with_potential: bool = False
     """ Precondition the game KKT with a potential KKT to speed up computing"""
-    variational_gne: bool = True
+    variational_gne: bool = False
     """ If True, use one shared multiplier per canonical constraint """
     max_in_reg_iter: int = 10
     """ Inertia correction max iterations """
@@ -312,8 +316,8 @@ class RD3GCasadi(BaseSolver):
         self.n = gc.n
         self.m = gc.m
         self.n_h = getattr(gc, 'n_h', getattr(gc, 'n_hi', 0))
-        assert (gc.variational_gne == config.variational_gne,
-                'Game and Solver must have the same variational_gne setting')
+        assert gc.variational_gne == config.variational_gne, \
+            'Game and Solver must have the same variational_gne setting'
         self.variational_gne = config.variational_gne
         self.n_c = gc.n_c
 
@@ -814,11 +818,11 @@ class RD3GCasadi(BaseSolver):
             S_csc = (LHS_csc + LHS_csc_T) * 0.5
             A_csc = (LHS_csc - LHS_csc_T) * 0.5
             p.e('prep')
-            S_norm = scipy.sparse.linalg.norm(S_csc)
-            data = A_csc.data
-            row_idx = A_csc.indices
-            col_idx = np.repeat(np.arange(A_csc.shape[1]), np.diff(A_csc.indptr))
-            nonzero_mask = data != 0
+            # S_norm = scipy.sparse.linalg.norm(S_csc)
+            # data = A_csc.data
+            # row_idx = A_csc.indices
+            # col_idx = np.repeat(np.arange(A_csc.shape[1]), np.diff(A_csc.indptr))
+            # nonzero_mask = data != 0
             # if np.any(nonzero_mask):
             #     nz_order = np.argsort(np.abs(data[nonzero_mask]))[::-1]
             #     nz_data = data[nonzero_mask][nz_order]
@@ -829,12 +833,14 @@ class RD3GCasadi(BaseSolver):
             # DEBUG: find spectral radius of inv(S) @ A
             dy = np.zeros((2*nNT+mNT+dual_h_dim, 1))
             t0 = time()
-            solver_info = None
+            A_upper = None
+            solver = None
             last_residual = np.inf
             for i in range(10):
                 iter_LHS = S_csc
                 iter_RHS = RHS_np - A_csc @ dy
-                new_dy, _, solver_info = ldl_solve(iter_LHS, iter_RHS, p, solver_info)
+                new_dy, _, solver, A_upper = ldl_solve(
+                    iter_LHS, iter_RHS, p, solver, A_upper)
                 p.s('total_res')
                 total_res = np.linalg.norm(LHS @ new_dy - RHS)
                 p.e('total_res')
@@ -846,7 +852,7 @@ class RD3GCasadi(BaseSolver):
                     break
                 last_residual = total_res
             dt = time() - t0
-            logger.info(f'Preconditioned KKT: {dt=:.4f}')
+            logger.info(f'Preconditioned KKT: {dt=:.4f}, {total_res=:.4f}')
             p.e('Precondition')
         else:
             p.s('Solve Linear (full KKT)')
