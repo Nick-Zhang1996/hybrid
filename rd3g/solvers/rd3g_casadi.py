@@ -790,17 +790,15 @@ class RD3GCasadi(BaseSolver):
         ind = np.arange(primal_var_count, LHS.shape[0])
         reg_matrix[ind, ind] = -self.reg
         LHS += reg_matrix
+        LHS_csc = dm_to_csc(LHS)
+        RHS_np = np.asarray(RHS)
 
         if self.config.precondition_with_potential:
             p.s('Precondition')
-            # TODO this 'prep' section takes half the time of the 'Precondition' sector. Optimize for time
             p.s('prep')
-            S = (LHS + LHS.T)/2
-            A = (LHS - LHS.T)/2
-            A_csc = dm_to_csc(A)
-            S_csc = dm_to_csc(S)
-            RHS_np = np.asarray(RHS)
-            RHS_csc = dm_to_csc(RHS)
+            LHS_csc_T = LHS_csc.T
+            S_csc = (LHS_csc + LHS_csc_T) * 0.5
+            A_csc = (LHS_csc - LHS_csc_T) * 0.5
             p.e('prep')
             # DEBUG: find spectral radius of inv(S) @ A
             dy = np.zeros((2*nNT+mNT+n_hi*N, 1))
@@ -828,8 +826,6 @@ class RD3GCasadi(BaseSolver):
         if True:
             p.s('Solve Linear (full KKT)')
             t0 = time()
-            LHS_csc = dm_to_csc(LHS)
-            RHS_np = np.asarray(RHS)
             # NOTE change back to dy. we only run this segment for timing comparison
             unused_dy, residual, _ = solve_linear(LHS_csc, RHS_np, method='spsolve', profiler=p)
             dt = time() - t0
