@@ -22,7 +22,7 @@ variational_gne = False
 np.random.seed()
 solver_config = RD3GCasadiConfig(
     inertia_correction=False, iterations=20, variational_gne=variational_gne)
-game = create_random_game(car_count=4, horizon=20, variational_gne=variational_gne)
+game = create_random_game(car_count=8, horizon=20, variational_gne=variational_gne)
 
 gc = game.config
 # load from pickle

@@ -44,6 +44,8 @@ if __name__ == "__main__":
         solver_config.reg_inertia,
         solver_config.inertia_correction,
         solver_config.rollout_each_step,
+        solver_config.precondition_with_potential,
+        solver_config.variational_gne,
         solver_config.tolerance,
         solver_config.tau_decay,
         solver_config.line_search_max_iter,

@@ -12,35 +12,29 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def _generate_both_variants(create_game, car_count, horizon, game_name):
+    for variational_gne in [False, True]:
+        logger.info(f'Codegen for {game_name}, {car_count=}, {horizon=}, {variational_gne=}...')
+        game = create_game(car_count=car_count, horizon=horizon, variational_gne=variational_gne)
+        solver_config = RD3GCasadiConfig(variational_gne=variational_gne)
+        solver = RD3GCasadi(solver_config, game)
+        generate_code(solver)
+        logger.info('Done!')
+
+
 def codegen_merge(car_count, horizon):
-    logger.info(f'Codegen for {car_count=}, {horizon=}...')
-    game = create_merge_game(car_count=car_count, horizon=horizon)
-    solver_config = RD3GCasadiConfig()
-    solver = RD3GCasadi(solver_config, game)
-    generate_code(solver)
-    logger.info('Done!')
+    _generate_both_variants(create_merge_game, car_count, horizon, 'merge')
 
 
 def codegen_intersection(car_count, horizon):
-    logger.info(f'Codegen for {car_count=}, {horizon=}...')
-    game = create_intersection_game(car_count=car_count, horizon=horizon)
-    solver_config = RD3GCasadiConfig()
-    solver = RD3GCasadi(solver_config, game)
-    generate_code(solver)
-    logger.info('Done!')
+    _generate_both_variants(create_intersection_game, car_count, horizon, 'intersection')
 
 
 def codegen_racing(car_count, horizon):
-    logger.info(f'Codegen for {car_count=}, {horizon=}...')
-    game = create_racing_game(car_count=car_count, horizon=horizon)
-    solver_config = RD3GCasadiConfig()
-    solver = RD3GCasadi(solver_config, game)
-    generate_code(solver)
-    logger.info('Done!')
+    _generate_both_variants(create_racing_game, car_count, horizon, 'racing')
 
 
 if __name__ == "__main__":
-    codegen_racing(4, 20)
     # codegen_racing(4, 40)
     # codegen_merge(4, 40)
     # codegen_intersection(4, 40)
@@ -48,3 +42,4 @@ if __name__ == "__main__":
         for i in range(2, 9):
             codegen_merge(i, T)
             codegen_intersection(i, T)
+            codegen_racing(i, T)

@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def get_casadi_codegen_basename(module_name, N, T, variational_gne=False):
+    """Return the basename used for generated CasADi sources/shared libraries."""
+    suffix = '_vne' if variational_gne else ''
+    return f'{module_name}{suffix}_N{N}_T{T}'
+
+
 def generate_code(solver):
     """ Generate CasADi C code for a solver and game with its specific config.
     CasADi expects fixed dimension, so the exact game config needs to be given.
@@ -33,7 +39,9 @@ def generate_code(solver):
 
     # Generate source code
     module_name = game.__module__.split('.')[-1]
-    cg = CodeGenerator(f'{module_name}_N{config.N}_T{config.T}.cpp',
+    base_name = get_casadi_codegen_basename(
+        module_name, config.N, config.T, variational_gne=config.variational_gne)
+    cg = CodeGenerator(f'{base_name}.cpp',
                        {'with_header': True})
     cg.add(solver.r_casadi)
     cg.add(solver.dr_dy_casadi)
