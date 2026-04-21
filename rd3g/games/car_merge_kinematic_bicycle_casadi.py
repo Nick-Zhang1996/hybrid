@@ -420,7 +420,7 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         return val
 
 
-def create_random_game(car_count=3, horizon=20):
+def create_random_game(car_count=3, horizon=20, variational_gne=False):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
     default = CarMergeKinematicBicycleCasadiConfig
     T = horizon
@@ -471,6 +471,7 @@ def create_random_game(car_count=3, horizon=20):
         n_h=(N * (N - 1) // 2) * T,
         track_width=default.track_width,
         collision_radius=default.collision_radius,
+        variational_gne=variational_gne,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),

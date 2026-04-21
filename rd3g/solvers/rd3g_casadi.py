@@ -221,8 +221,8 @@ def ldl_solve(A, b, profiler, solver=None, A_upper=None):
         p.e('pre-process')
 
     if solver is None:
-        # pylint:disable-next=c-extension-no-member
         p.s('structural factorization')
+        # pylint:disable-next=c-extension-no-member
         solver = qdldl.Solver(A_upper, upper=True)
         p.e('structural factorization')
     #  C = P @ A @ P.T, C = L @ D @ L.T
@@ -362,7 +362,8 @@ class RD3GCasadi(BaseSolver):
         T = gc.T
         n_h = self.n_h
         h_cols = self.h_multiplier_cols
-        # context: (n_c*N, T) Game context, changes between iteration, but constant within iteration.
+        # context: (n_c*N, T) Game context, changes between iteration,
+        # but constant within iteration.
         #     This contains variables too expensive to AD.
         #     e.g. path curvature at each player position.
         context = self.game.context.get_context_sx()
@@ -692,7 +693,7 @@ class RD3GCasadi(BaseSolver):
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val, h0_val = self.r_casadi(*args)
+        r0_val, _ = self.r_casadi(*args)
         dr_dy_val = self.dr_dy_casadi(*args)
         # Add eliminated slack variable as a function of mu
         LHS = dr_dy_val
@@ -881,7 +882,7 @@ class RD3GCasadi(BaseSolver):
         max_ss_mu = raw_mu[raw_mu > 0]
         alpha_d = np.min(np.hstack([max_ss_mu, [1.0]])).item()
 
-        logger.debug('Max step size primal: %.8f, dual: %.8f, smaller one is used', alpha_p, alpha_d)
+        logger.debug('Max step: primal: %.8f, dual: %.8f, smaller one used', alpha_p, alpha_d)
         alpha_p = alpha_d = np.min([alpha_d, alpha_p]).item()  # Use same step size for primal dual
         step_size = 1.0
 
@@ -991,64 +992,64 @@ class RD3GCasadi(BaseSolver):
 
         return new_x, new_u, new_lamda, new_mu, new_s, res, converged, is_optimal, filter_state, debug_dict
 
-    @deprecated
-    def debug(self, u):
-        """Compare selected Python and C++ intermediate quantities for debugging."""
-        self.init_cpp_backend()
-        self.solve_cpp_backend(u)
-        N = self.N
-        T = self.T
-        n = self.n
-        m = self.m
-        n_h = self.n_h
-        gc = self.game.config
-        params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
-        # return: (n*N, T)
-        x = self.rollout_casadi(self.game.config.x0, u, *params_np)
-        lamda = cas.DM.zeros((n*N, T))
-        mu = cas.DM.zeros((self.dual_h_dim, 1))
-        # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
+    # @deprecated
+    # def debug(self, u):
+    #     """Compare selected Python and C++ intermediate quantities for debugging."""
+    #     self.init_cpp_backend()
+    #     self.solve_cpp_backend(u)
+    #     N = self.N
+    #     T = self.T
+    #     n = self.n
+    #     m = self.m
+    #     n_h = self.n_h
+    #     gc = self.game.config
+    #     params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
+    #     # return: (n*N, T)
+    #     x = self.rollout_casadi(self.game.config.x0, u, *params_np)
+    #     lamda = cas.DM.zeros((n*N, T))
+    #     mu = cas.DM.zeros((self.dual_h_dim, 1))
+    #     # new_x, new_u, _, _, res, has_converged, is_optimal, debug_dict = self.step(x, u, lamda, mu)
 
-        # Check each intermediate variable
-        context_py = self.get_full_context_casadi(x)
-        context_cpp = self.cpp_solver.debug_get_context()
-        context_cpp = np.array(context_cpp, order='F').reshape((12, 20), order='F')
-        context_diff = np.linalg.norm(context_py - context_py)
-        print(f'{context_diff=}')
-        # Context identical -- verified
-        # r0 = r(x,u, lamda, mu, context)
-        # r0 diff = 60
-        x_cpp = self.cpp_solver.debug_get_x()
-        u_cpp = self.cpp_solver.debug_get_u()
-        print(f'x_diff = {np.linalg.norm(x_cpp-x)}')
-        print(f'u_diff = {np.linalg.norm(u_cpp-u)}')
-        r0_py = debug_dict['full_r0']
-        res = self.cpp_solver.debug_get_full_r0()
-        r0_cpp = csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-        r0_diff = np.linalg.norm(r0_py - r0_cpp)
-        print(f'{r0_diff=}')
+    #     # Check each intermediate variable
+    #     context_py = self.get_full_context_casadi(x)
+    #     context_cpp = self.cpp_solver.debug_get_context()
+    #     context_cpp = np.array(context_cpp, order='F').reshape((12, 20), order='F')
+    #     context_diff = np.linalg.norm(context_py - context_py)
+    #     print(f'{context_diff=}')
+    #     # Context identical -- verified
+    #     # r0 = r(x,u, lamda, mu, context)
+    #     # r0 diff = 60
+    #     x_cpp = self.cpp_solver.debug_get_x()
+    #     u_cpp = self.cpp_solver.debug_get_u()
+    #     print(f'x_diff = {np.linalg.norm(x_cpp-x)}')
+    #     print(f'u_diff = {np.linalg.norm(u_cpp-u)}')
+    #     r0_py = debug_dict['full_r0']
+    #     res = self.cpp_solver.debug_get_full_r0()
+    #     r0_cpp = csc_matrix(
+    #         (res.data, res.row, res.colind),
+    #         shape=res.shape
+    #     )
+    #     r0_diff = np.linalg.norm(r0_py - r0_cpp)
+    #     print(f'{r0_diff=}')
 
-        KKT_py = debug_dict['full_KKT']
-        res = self.cpp_solver.debug_get_full_KKT()  # SparseMatrixResult
-        KKT_cpp = csc_matrix(
-            (res.data, res.row, res.colind),
-            shape=res.shape
-        )
-        KKT_diff = scipy.sparse.linalg.norm(KKT_py - KKT_cpp)
-        print(f'{KKT_diff=}')
+    #     KKT_py = debug_dict['full_KKT']
+    #     res = self.cpp_solver.debug_get_full_KKT()  # SparseMatrixResult
+    #     KKT_cpp = csc_matrix(
+    #         (res.data, res.row, res.colind),
+    #         shape=res.shape
+    #     )
+    #     KKT_diff = scipy.sparse.linalg.norm(KKT_py - KKT_cpp)
+    #     print(f'{KKT_diff=}')
 
-        dy_py = debug_dict['full_dy']
-        dy_cpp = self.cpp_solver.debug_get_full_dy()
-        dy_diff = np.sum(np.abs(dy_py - dy_cpp))
-        print(f'{dy_diff=}')
-        res_py = scipy.linalg.norm(KKT_py @ dy_py + r0_py)
-        res_cpp = scipy.linalg.norm(KKT_cpp @ dy_cpp + r0_cpp)
-        print(f'{res_py=}')
-        print(f'{res_cpp=}')
-        breakpoint()
+    #     dy_py = debug_dict['full_dy']
+    #     dy_cpp = self.cpp_solver.debug_get_full_dy()
+    #     dy_diff = np.sum(np.abs(dy_py - dy_cpp))
+    #     print(f'{dy_diff=}')
+    #     res_py = scipy.linalg.norm(KKT_py @ dy_py + r0_py)
+    #     res_cpp = scipy.linalg.norm(KKT_cpp @ dy_cpp + r0_cpp)
+    #     print(f'{res_py=}')
+    #     print(f'{res_cpp=}')
+    #     breakpoint()
 
     def _rollout_full_x(self, u_ref, x_ref=None):
         """ Rollout from u_ref, prepend x0 to beginning. If x_ref is provided, then just prepend x0
@@ -1164,15 +1165,14 @@ class RD3GCasadi(BaseSolver):
         n = self.n
         n_h = self.n_h
         n_c = self.n_c
-        LLi_val = sum([self.L(cas.reshape(x[:, k - 1], n, N),
-                              cas.reshape(u[:, k], m, N)[:, i],
-                              cas.reshape(x[:, k], n, N)[:, i],
-                              cas.reshape(lamda[:, k], n, N),
-                              cas.reshape(mu, n_h, self.h_multiplier_cols)[
-            :, 0 if self.variational_gne else i],
+        LLi_val = sum([self.L(
+            cas.reshape(x[:, k - 1], n, N),
+            cas.reshape(u[:, k], m, N)[:, i],
+            cas.reshape(x[:, k], n, N)[:, i],
+            cas.reshape(lamda[:, k], n, N),
+            cas.reshape(mu, n_h, self.h_multiplier_cols)[:, 0 if self.variational_gne else i],
             i,
-            cas.reshape(context[:, k], n_c, N))
-            for k in range(1, T)])
+            cas.reshape(context[:, k], n_c, N)) for k in range(1, T)])
 
         # feasibility for h>0
         # NOTE add fmax here for safety,

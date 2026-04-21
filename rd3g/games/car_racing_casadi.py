@@ -33,12 +33,11 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     N: int = 4
     n: int = 5
     m: int = 2
-    n_hi: int = 4 * 4 * 20 + 2*20
-    """ Total number of constraints for EACH agent,
-    two-circle collision model 4 * N * T
-    boundary 2*T
-    """
+    n_h: int = 4 * (4 * 3 // 2) * 20 + 2 * 4 * 20
+    """ Total number of canonical inequality constraints. """
     n_c: int = 3  # Size of context variable for per agent per stage
+    variational_gne: bool = False
+    """ If True, use one shared multiplier per canonical constraint """
 
     collision_radius: float = 90e-3  # 80e-3
     """ Minimum distance between the origin of two cars"""
@@ -398,38 +397,48 @@ class CarRacingCasadi(CasadiGame):
             u: (m*N,T), controls, casadi.SX symbolic variable
             context: (n_c*N, T), context variable. [curvature, left margin, right margin]
         Returns:
-            h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
+            h_vec:
+                variational mode: (n_h, 1)
+                non-variational mode: (n_h, N), with -1 for agents not
+                participating in a canonical constraint
         """
-        h_vec = []
         gc = self.config
-        for i in range(gc.N):
-            hi_vec = []
-            # Collision constraint collison_h(xi, xj) 4*N*T
+        h_rows = []
+        if gc.variational_gne:
             for k in range(1, gc.T + 1):
                 context_i_k = cas.reshape(context[:, k-1], gc.n_c, gc.N)
-                # collision residual for h > 0
-                # x[k] -> x_{k+1} due to index alignment
                 xk = cas.reshape(x[:, k - 1], gc.n, gc.N)
-                h_vals = [
-                    self.collision_h(xk[:, i], xk[:, j]) for j in range(gc.N)
-                ] + [self.boundary_h(xk[:, i], context_i_k[:, i])]
-                # ignore self-collision, but keep this dummy constraint to simplify index counting
-                # TODO remove this dummy collision
-                if self.config.double_circle_h:
-                    h_vals[i] = cas.SX.zeros(4, 1)
-                else:
-                    h_vals[i] = 0.0
-                h_vals = cas.vertcat(*h_vals)
-                if gc.double_circle_h:
-                    assert h_vals.shape == (gc.N * 4 + 2, 1)  # 4 per car-car, 2 for boundary
-                else:
-                    assert h_vals.shape == (gc.N + 2, 1)
-                hi_vec.append(h_vals)  # 4*N, agent i vs everyone (N) + 2 (boundary)
-            # Additional constraints for agent i, None here
-            h_vec.append(cas.vertcat(*hi_vec))  # 4*N*T
+                for i in range(gc.N):
+                    for j in range(i + 1, gc.N):
+                        h_rows.append(self.collision_h(xk[:, i], xk[:, j]))
+                for i in range(gc.N):
+                    h_rows.append(self.boundary_h(xk[:, i], context_i_k[:, i]))
 
-        h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (gc.n_hi, gc.N), "n_hi must be consistent to h().shape[0]"
+            h_vec = cas.vertcat(*h_rows)
+            assert h_vec.shape == (gc.n_h, 1), "n_h must be consistent to h().shape[0]"
+            return h_vec
+
+        for agent_idx in range(gc.N):
+            hi_rows = []
+            for k in range(1, gc.T + 1):
+                context_i_k = cas.reshape(context[:, k-1], gc.n_c, gc.N)
+                xk = cas.reshape(x[:, k - 1], gc.n, gc.N)
+                for i in range(gc.N):
+                    for j in range(i + 1, gc.N):
+                        if agent_idx == i or agent_idx == j:
+                            hi_rows.append(self.collision_h(xk[:, i], xk[:, j]))
+                        else:
+                            rows_per_collision = 4 if gc.double_circle_h else 1
+                            hi_rows.append(-cas.DM.ones(rows_per_collision, 1))
+                for i in range(gc.N):
+                    if agent_idx == i:
+                        hi_rows.append(self.boundary_h(xk[:, i], context_i_k[:, i]))
+                    else:
+                        hi_rows.append(-cas.DM.ones(2, 1))
+            h_rows.append(cas.vertcat(*hi_rows))
+
+        h_vec = cas.horzcat(*h_rows)
+        assert h_vec.shape == (gc.n_h, gc.N), "n_h must be consistent to h().shape[0]"
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -493,31 +502,38 @@ class CarRacingCasadi(CasadiGame):
         else:
             x = cas.DM(x.reshape(gc.n*gc.N, gc.T, order='F'))
         context_dm = solver.get_full_context_casadi(x)
-        h_val = solver.h_casadi(x, u, context_dm, *params_dm)
+        h_val = np.asarray(solver.h_casadi(x, u, context_dm, *params_dm))
         tol = 1e-2
         # Retrieve components
         collision_res = 0
         boundary_res = 0
-        for i in range(gc.N):
-            # Collision constraint collison_h(xi, xj) 4*N*T
-            for k in range(1, gc.T + 1):
-                # i: agent 1
-                # j: agent 2
-                # k: time step
-                # 4 collisions:
-                for j in range(gc.N):
-                    col_idx = gc.n_hi * i + (4*gc.N+2) * (k-1) + j*gc.N
-                    col_res = np.linalg.norm(np.clip(h_val[col_idx:col_idx+4], a_min=0, a_max=None))
+        h_val = h_val.reshape(gc.n_h, 1 if gc.variational_gne else gc.N, order='F')
+        rows_per_collision = 4 if gc.double_circle_h else 1
+        row = 0
+        for k in range(gc.T):
+            for i in range(gc.N):
+                for j in range(i + 1, gc.N):
+                    cols = [0] if gc.variational_gne else [i, j]
+                    col_res = 0.0
+                    for col in cols:
+                        res = np.linalg.norm(
+                            np.clip(h_val[row:row + rows_per_collision, col], a_min=0, a_max=None)
+                        )
+                        col_res = max(col_res, res)
                     collision_res += col_res**2
                     if col_res > tol:
-                        logger.info(f'car {i}, {j}, k={k} collision {col_res}')
-                left_bdry_res = np.clip(h_val[col_idx+4], a_min=0, a_max=None)
+                        logger.info('car %s, %s, k=%s collision %s', i, j, k + 1, col_res)
+                    row += rows_per_collision
+            for i in range(gc.N):
+                col = 0 if gc.variational_gne else i
+                left_bdry_res = np.clip(h_val[row, col], a_min=0, a_max=None)
+                right_bdry_res = np.clip(h_val[row + 1, col], a_min=0, a_max=None)
                 if left_bdry_res > tol:
-                    logger.info(f'car {i}, k={k} left {left_bdry_res}')
-                right_bdry_res = np.clip(h_val[col_idx+5], a_min=0, a_max=None)
+                    logger.info('car %s, k=%s left %s', i, k + 1, left_bdry_res)
                 if right_bdry_res > tol:
-                    logger.info(f'car {i}, k={k} right {right_bdry_res}')
+                    logger.info('car %s, k=%s right %s', i, k + 1, right_bdry_res)
                 boundary_res += left_bdry_res**2 + right_bdry_res**2
+                row += 2
         h_pos_res = np.sum(np.clip(h_val, a_min=0, a_max=None)**2)
         inspected_h_pos_res = collision_res + boundary_res
         logger.info(f'{h_pos_res=}, {inspected_h_pos_res=}')
@@ -525,7 +541,8 @@ class CarRacingCasadi(CasadiGame):
         return
 
 
-def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved')):
+def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
+                       variational_gne=False):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig
     T = horizon
@@ -576,7 +593,8 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
 
     x_ref = np.zeros((n, N))
     x_ref[3, :] = v_vec  # target initial speed
-    n_hi = (4*N*T + 2*T) if default.double_circle_h else (N*T + 2*T)
+    rows_per_collision = 4 if default.double_circle_h else 1
+    n_h = (rows_per_collision * (N * (N - 1) // 2) + 2 * N) * T
 
     config = CarRacingCasadiConfig(
         T=T,
@@ -584,8 +602,9 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
         N=N,
         n=n,
         m=m,
-        n_hi=n_hi,
+        n_h=n_h,
         collision_radius=default.collision_radius,
+        variational_gne=variational_gne,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),

@@ -29,8 +29,11 @@ class IntersectionCasadiConfig(CasadiGameConfig):
     N: int = 3
     n: int = 4
     m: int = 2
-    n_hi: int = 0  # Total number of constraints for EACH agent, e.g. pairwise collision only: N*T
+    n_h: int = 0
+    """ Total number of canonical inequality constraints """
     n_c: int = 0  # Size of context var per agent per stage, unused in this game
+    variational_gne: bool = False
+    """ If True, use one shared multiplier per canonical constraint """
 
     lane_width: float = 2.2  # Each lane width
     hori_lanes: int = 2  # Number of horizontal lanes
@@ -350,27 +353,38 @@ class IntersectionCasadi(CasadiGame):
             u: (m*N,T), controls, casadi.SX symbolic variable
             context: (n_c*N, T), context variable. [curvature, left margin, right margin]
         Returns:
-            h_vec: (n_hi, N), constraints vector, sadisfied when h_vec <= 0
+            h_vec:
+                variational mode: (n_h, 1)
+                non-variational mode: (n_h, N), with -1 for agents not
+                participating in a canonical constraint
         """
-        h_vec = []
-        for i in range(self.config.N):
-            hi_vec = []
-            # Collision constraint collison_h(xi, xj) N*T
-            for k in range(1, self.config.T + 1):
-                # collision residual for h > 0
-                # x[k] -> x_{k+1} due to index alignment
-                xk = cas.reshape(x[:, k - 1], self.config.n, self.config.N)
-                h_vals = [self.collision_h(xk[:, i], xk[:, j]) for j in range(self.config.N)]
-                # ignore self-collision, but keep this dummy constraint to simplify index counting
-                h_vals[i] = -1
-                h_vals = cas.vertcat(*h_vals)
-                assert h_vals.shape == (self.config.N, 1)
-                hi_vec.append(h_vals)  # N, agent i vs everyone (N)
-            # Additional constraints for agent i, None here
-            h_vec.append(cas.vertcat(*hi_vec))  # N*T
+        del u, context
+        gc = self.config
+        h_rows = []
+        if gc.variational_gne:
+            for k in range(1, gc.T + 1):
+                xk = cas.reshape(x[:, k - 1], gc.n, gc.N)
+                for i in range(gc.N):
+                    for j in range(i + 1, gc.N):
+                        h_rows.append(self.collision_h(xk[:, i], xk[:, j]))
+            h_vec = cas.vertcat(*h_rows)
+            assert h_vec.shape == (gc.n_h, 1)
+            return h_vec
 
-        h_vec = cas.horzcat(*h_vec)
-        assert h_vec.shape == (self.config.n_hi, self.config.N)
+        for agent_idx in range(gc.N):
+            hi_rows = []
+            for k in range(1, gc.T + 1):
+                xk = cas.reshape(x[:, k - 1], gc.n, gc.N)
+                for i in range(gc.N):
+                    for j in range(i + 1, gc.N):
+                        if agent_idx == i or agent_idx == j:
+                            hi_rows.append(self.collision_h(xk[:, i], xk[:, j]))
+                        else:
+                            hi_rows.append(cas.DM(-1))
+            h_rows.append(cas.vertcat(*hi_rows))
+
+        h_vec = cas.horzcat(*h_rows)
+        assert h_vec.shape == (gc.n_h, gc.N)
         return h_vec
 
     def collision_h(self, x_i, x_j):
@@ -409,7 +423,7 @@ class IntersectionCasadi(CasadiGame):
         return val
 
 
-def create_random_game(car_count=3, horizon=20):
+def create_random_game(car_count=3, horizon=20, variational_gne=False):
     """ Create a CarMergeKinematicBicycle instance with random initial states"""
     default = IntersectionCasadiConfig
     T = horizon
@@ -502,11 +516,12 @@ def create_random_game(car_count=3, horizon=20):
         N=N,
         n=n,
         m=m,
-        n_hi=N*T,  # Collision constraint only
+        n_h=(N * (N - 1) // 2) * T,
         lane_width=default.lane_width,
         hori_lanes=default.hori_lanes,
         vert_lanes=default.vert_lanes,
         collision_radius=default.collision_radius,
+        variational_gne=variational_gne,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr_diag_vec=J_Qr_diag_vec.copy(order='F'),
