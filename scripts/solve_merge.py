@@ -13,8 +13,8 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 np.random.seed(123421)
-cpp = False
-variational_gne = True
+cpp = True
+variational_gne = False
 game = create_random_game(car_count=4, horizon=20, variational_gne=variational_gne)
 solver_config = RD3GCasadiConfig(inertia_correction=False, variational_gne=variational_gne)
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)

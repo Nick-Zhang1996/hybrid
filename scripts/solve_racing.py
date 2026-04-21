@@ -15,7 +15,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-cpp = False
+cpp = True
 load = False
 variational_gne = False
 
@@ -46,7 +46,7 @@ else:
 text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}, {sol.residual=}')
-solver.visualize(u_ref, None)
+# solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
 # solver.animate(sol.u, None, save_gif=True)

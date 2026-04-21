@@ -111,7 +111,7 @@ inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double *data)
 
 class Rd3gCasadi {
  protected:
-  int n_, m_, N_, T_, n_hi_;
+  int n_, m_, N_, T_, n_hi_, h_multiplier_cols_, dual_h_dim_;
   Scalar dt_, bc_a_, bc_b_, reg0_, reg_;
   Scalar reg_inertia_;
   Scalar tolerance_;
@@ -127,6 +127,8 @@ class Rd3gCasadi {
   int verbose_;  // 0:error, 1:warning, 2:info, 3:debug
   const bool inertia_correction_;
   const bool rollout_each_step_;
+  const bool precondition_with_potential_;
+  const bool variational_gne_;
   const std::string linear_solver_method_;
   int line_search_fail_count_;
 
@@ -157,6 +159,7 @@ class Rd3gCasadi {
   Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
              const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
              const bool inertia_correction, const bool rollout_each_step,
+             const bool precondition_with_potential, const bool variational_gne,
              const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
              const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
              const Scalar max_in_reg_val, const std::string linear_solver_method,
@@ -164,6 +167,8 @@ class Rd3gCasadi {
       : N_{N},
         T_{T},
         n_hi_{n_hi},
+        h_multiplier_cols_{variational_gne ? 1 : N},
+        dual_h_dim_{n_hi * (variational_gne ? 1 : N)},
         dt_{dt},
         bc_a_{bc_a},
         bc_b_{bc_b},
@@ -172,6 +177,8 @@ class Rd3gCasadi {
         reg_inertia_{reg_inertia},
         inertia_correction_{inertia_correction},
         rollout_each_step_{rollout_each_step},
+        precondition_with_potential_{precondition_with_potential},
+        variational_gne_{variational_gne},
         tolerance_{tolerance},
         tau_decay_{tau_decay},
         line_search_max_iter_{line_search_max_iter},
@@ -248,7 +255,8 @@ class Rd3gCasadi {
     assert(get_m.n_out() == 1);
     m_ = m_buffer[0];
 
-    logger_->debug("RD3G CasADi initialized, n={}, m={}", n_, m_);
+    logger_->debug("RD3G CasADi initialized, n={}, m={}, dual_h_dim={}, variational_gne={}", n_,
+                   m_, dual_h_dim_, variational_gne_);
   }
 
   void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
@@ -308,13 +316,12 @@ class Rd3gCasadi {
     // Skipping through dLLi_dx, dLLi_du, dynamics constraint
     // Also starting index of mu, multiplier for h(), in y
     const int h_in_r_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
-    assert(h_val.rows() == n_hi_ * N_);
-    assert(h_val.cols() == 1);
+    assert(h_val.rows() * h_val.cols() == dual_h_dim_);
 
     // Maps rows in full_r0 to reduced_r0, -1 means delete
     std::vector<int> old_to_new_idx(full_r0.rows(), -1);
     std::vector<int> active_h_indices;
-    active_h_indices.reserve(n_hi_ * N_);
+    active_h_indices.reserve(dual_h_dim_);
     int reduced_r_dim = 0;
 
     // Always keep dL/dx, dL/du, dynamics constraints
@@ -365,7 +372,7 @@ class Rd3gCasadi {
   // Returns:
   //   x: solution
   //   res: residual, norm(Ax-b)
-  std::tuple<SpMatrix, Scalar> solve_linear_system(const SpMatrix &A, const MatrixXd &b,
+  std::tuple<MatrixXd, Scalar> solve_linear_system(const SpMatrix &A, const MatrixXd &b,
                                                    std::string method) {
     if (method == "lscg") {
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
@@ -386,7 +393,7 @@ class Rd3gCasadi {
       // NOTE this is relative error |Ax-b|/|Ax|, make sure it's consistent
       // elsewhere
       // TODO should we use dense matrix for x?
-      return {x.sparseView(), static_cast<Scalar>(solver.error())};
+      return {x, static_cast<Scalar>(solver.error())};
     } else if (method == "ldl") {
       // SimplicialLDLT is a direct sparse solver for P*A*P' = L*D*L'
       // Note: Unlike qdldl Eigen defaults to reading the LOWER triangular part.
@@ -432,7 +439,7 @@ class Rd3gCasadi {
 
       const Scalar residual = (A * x - b).norm();
 
-      return {x.sparseView(), residual};
+      return {x, residual};
     } else if (method == "lsqr") {
       Eigen::SparseQR<SpMatrix, Eigen::COLAMDOrdering<SpMatrix::StorageIndex>> solver;
 
@@ -452,7 +459,7 @@ class Rd3gCasadi {
       }
 
       const Scalar residual = (A * x - b).norm();
-      return {x.sparseView(), residual};
+      return {x, residual};
     } else if (method == "sparselu") {
       // Built-in Eigen direct solver (no external dependencies)
       Eigen::SparseLU<SpMatrix> solver;
@@ -469,7 +476,7 @@ class Rd3gCasadi {
       }
 
       const Scalar residual = (A * x - b).norm();
-      return {x.sparseView(), residual};
+      return {x, residual};
 
     } else if (method == "superlu") {
       // Requires: #include <Eigen/SuperLUSupport>
@@ -488,7 +495,7 @@ class Rd3gCasadi {
       }
 
       const Scalar residual = (A * x - b).norm();
-      return {x.sparseView(), residual};
+      return {x, residual};
     } else if (method == "umfpack") {
       // Requires: #include <Eigen/UmfPackSupport>
       // Requires linking against SuiteSparse (umfpack, amd)
@@ -507,9 +514,39 @@ class Rd3gCasadi {
       }
 
       const Scalar residual = (A * x - b).norm();
-      return {x.sparseView(), residual};
+      return {x, residual};
     }
     throw std::runtime_error("Unknown method type: " + method);
+  }
+
+  std::tuple<MatrixXd, Scalar> solve_preconditioned_system(const SpMatrix &LHS, const MatrixXd &RHS) {
+    const SpMatrix LHS_t = SpMatrix(LHS.transpose());
+    const SpMatrix S = (LHS + LHS_t) * 0.5;
+    const SpMatrix A = (LHS - LHS_t) * 0.5;
+
+    MatrixXd dy = MatrixXd::Zero(LHS.rows(), 1);
+    Scalar last_residual = std::numeric_limits<Scalar>::infinity();
+    Scalar total_residual = last_residual;
+
+    for (int i = 0; i < 10; ++i) {
+      MatrixXd iter_rhs = RHS - A * dy;
+      MatrixXd new_dy;
+      Scalar sym_residual;
+      std::tie(new_dy, sym_residual) = solve_linear_system(S, iter_rhs, "ldl");
+      (void)sym_residual;
+
+      total_residual = (LHS * new_dy - RHS).norm();
+      if (total_residual > last_residual) {
+        break;
+      }
+      dy = new_dy;
+      logger_->debug("Preconditioned iter total_residual={:.6f}", total_residual);
+      if (total_residual < 1e-2 || total_residual > 0.9 * last_residual) {
+        break;
+      }
+      last_residual = total_residual;
+    }
+    return {dy, total_residual};
   }
 
   // Solve dynamic game
@@ -581,8 +618,9 @@ class Rd3gCasadi {
 
     Scalar tau = 0.1;  // Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
     // Slack variable
-    MatrixXd s = (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), n_hi_ * N_, 1)).cwiseMax(1e-2);
-    MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s (n_hi*N, 1)
+    MatrixXd s = (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), h_val_sp.size1() * h_val_sp.size2(), 1))
+                     .cwiseMax(1e-2);
+    MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s
 
     std::vector<std::pair<Scalar, Scalar>> filter_state;  // Primal, dual residual
     line_search_fail_count_ = 0;
@@ -610,7 +648,7 @@ class Rd3gCasadi {
       std::tie(stop, converged, optimal, residual) =
           step(x, u, lamda, mu, s, filter_state, tau, int_param, double_param);
       logger_->info("converged={},optimal={},residual={:.5f}", converged, optimal, residual);
-      const Scalar current_gap = s.cwiseProduct(mu).sum() / static_cast<Scalar>(n_hi_ * N_);
+      const Scalar current_gap = s.cwiseProduct(mu).sum() / static_cast<Scalar>(dual_h_dim_);
       tau = max(1e-8, tau_decay_ * current_gap);
       logger_->debug("Perturbed Complementary Slackness: tau={:.8f}", tau);
       if (converged) break;
@@ -745,7 +783,7 @@ class Rd3gCasadi {
     check_spmatrix_has_nan(full_KKT, "full_KKT");
     MatrixXd full_rhs = -MatrixXd(full_r0);
     const int mu_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
-    for (int i = 0; i < n_hi_ * N_; ++i) {
+    for (int i = 0; i < dual_h_dim_; ++i) {
       const Scalar slack_ratio = -s(i, 0) / mu(i, 0);
       full_KKT.coeffRef(mu_offset + i, mu_offset + i) += slack_ratio;
       full_rhs(mu_offset + i, 0) += -tau / mu(i, 0);
@@ -853,14 +891,37 @@ class Rd3gCasadi {
     }
     logger_->info("Saddle agents: {}", saddle_agent_vec);
 
-    // TODO still need to add LM regularization
+    if (precondition_with_potential_) {
+      reg_ = reg_inertia_;
+    }
+
+    // Apply Levenberg-Marquardt regularization to the full game KKT.
+    {
+      const int rows = full_KKT.rows();
+      std::vector<Eigen::Triplet<double>> reg_triplets;
+      reg_triplets.reserve(rows);
+      const int primal_var_count = n_ * N_ * T_ + m_ * N_ * T_;
+      for (int k = 0; k < rows; ++k) {
+        const double val = (k < primal_var_count) ? reg_ : -reg_;
+        reg_triplets.emplace_back(k, k, val);
+      }
+      SpMatrix reg_matrix(rows, rows);
+      reg_matrix.setFromTriplets(reg_triplets.begin(), reg_triplets.end());
+      full_KKT += reg_matrix;
+    }
+
     if (inertia_correction_) {
       full_KKT += make_full_KKT_reg(reg_vec);
     }
 
     MatrixXd full_dy;
     Scalar residual;
-    std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
+    if (precondition_with_potential_) {
+      std::tie(full_dy, residual) = solve_preconditioned_system(full_KKT, full_rhs);
+      logger_->info("Preconditioned KKT residual={:.5f}", residual);
+    } else {
+      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
+    }
     // FIXME why are they different???
     logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(), 2));
 
@@ -869,7 +930,7 @@ class Rd3gCasadi {
     const int x_dim = n_ * N_ * T_;
     const int u_dim = m_ * N_ * T_;
     const int lamda_dim = n_ * N_ * T_;
-    const int mu_dim = n_hi_ * N_;
+    const int mu_dim = dual_h_dim_;
     const MatrixXd dx = full_dy.block(0, 0, x_dim, 1);
     const MatrixXd du = full_dy.block(x_dim, 0, u_dim, 1);
     const MatrixXd dlamda = full_dy.block(x_dim + u_dim, 0, lamda_dim, 1);
@@ -890,8 +951,8 @@ class Rd3gCasadi {
     MatrixXd new_x(n_ * N_, T_);
     MatrixXd new_u(m_ * N_, T_);
     MatrixXd new_lamda(n_ * N_, T_);
-    MatrixXd new_mu(n_hi_ * N_, 1);
-    MatrixXd new_s(n_hi_ * N_, 1);
+    MatrixXd new_mu(dual_h_dim_, 1);
+    MatrixXd new_s(dual_h_dim_, 1);
     int ls_iter;
     MatrixXd full_r(full_r0.rows() + mu_dim, 1);
     full_r.block(0, 0, full_r0.rows(), 1) = MatrixXd(full_r0);
@@ -1063,7 +1124,7 @@ class Rd3gCasadi {
 
   // Make regularization matrix given regularization coefficient from each agent
   SpMatrix make_full_KKT_reg(const std::vector<double> &reg_vec) {
-    int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + n_hi_ * N_;
+    int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + dual_h_dim_;
 
     typedef Eigen::Triplet<Scalar> T;
     std::vector<T> triplet_list;

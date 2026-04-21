@@ -48,4 +48,3 @@ if __name__ == "__main__":
         for i in range(2, 9):
             codegen_merge(i, T)
             codegen_intersection(i, T)
-            pass

@@ -32,6 +32,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     Scalar,       // reg_inertia
                     bool,         // inertia_correction
                     bool,         // rollout_each_step
+                    bool,         // precondition_with_potential
+                    bool,         // variational_gne
                     Scalar,       // tolerance
                     Scalar,       // tau_decay
                     int,          // line_search_max_iter
@@ -47,6 +49,7 @@ PYBIND11_MODULE(rd3g_casadi, m) {
            py::arg("N"), py::arg("T"), py::arg("n_hi"), py::arg("dt"), py::arg("bc_a"),
            py::arg("bc_b"), py::arg("reg"), py::arg("reg_inertia"),
            py::arg("inertia_correction"), py::arg("rollout_each_step"),
+           py::arg("precondition_with_potential"), py::arg("variational_gne"),
            py::arg("tolerance"), py::arg("tau_decay"), py::arg("line_search_max_iter"),
            py::arg("max_failed_line_search"), py::arg("max_iter"),
            py::arg("max_in_reg_iter"), py::arg("max_in_reg_val"),
