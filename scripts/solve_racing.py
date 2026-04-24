@@ -16,25 +16,26 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 cpp = True
-load = False
-variational_gne = False
+load = True
+variational_gne = True
 
 np.random.seed()
 solver_config = RD3GCasadiConfig(
     inertia_correction=False, iterations=20, variational_gne=variational_gne)
-game = create_random_game(car_count=8, horizon=20, variational_gne=variational_gne)
+game = create_random_game(car_count=8, horizon=10, variational_gne=variational_gne)
 
 gc = game.config
 # load from pickle
 if load:
-    with open('outputs/input.p', 'rb') as f:
+    with open('/home/zzhang615/dcsl/buzzracer/outputs/triage_1.p', 'rb') as f:
         data = pickle.load(f)
     game.config = data['gc']
     game.config.__post_init__()
     u_ref = data['u_ref']
+else:
+    u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 
 solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
-u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 
 if cpp:
     solver.init_cpp_backend()

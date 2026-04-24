@@ -265,9 +265,9 @@ class RD3GCasadiConfig(BaseSolverConfig):
     """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
-    precondition_with_potential: bool = False
+    precondition_with_potential: bool = True
     """ Precondition the game KKT with a potential KKT to speed up computing"""
-    variational_gne: bool = False
+    variational_gne: bool = True
     """ If True, use one shared multiplier per canonical constraint """
     max_in_reg_iter: int = 10
     """ Inertia correction max iterations """
@@ -962,7 +962,7 @@ class RD3GCasadi(BaseSolver):
             # NOTE: future enhance What if no improvement at all? add infeasibility correction step
             raise LineSearchMaxIter
         except LineSearchMaxIter:
-            self.reg = np.clip(self.reg * 10, a_min=1e-10, a_max=0.1)
+            self.reg = np.clip(self.reg * 10, a_min=1e-5, a_max=0.1)
             self.line_search_fail_count += 1
             step_size = 0.0
             new_x = x

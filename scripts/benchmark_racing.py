@@ -27,13 +27,14 @@ car_converged_time_var_vec = []
 
 def benchmark(cpp, vne, precond):
 
-    for car_count in range(2, 9):
+    # for car_count in range(2, 9):
+    for car_count in [8]:
         converge_vec = []
         optimal_vec = []
         dt_vec = []
         for i in range(50):
             np.random.seed(i)
-            game = create_random_game(car_count=car_count, horizon=20, variational_gne=vne)
+            game = create_random_game(car_count=car_count, horizon=10, variational_gne=vne)
             solver_config = RD3GCasadiConfig(
                 inertia_correction=False, variational_gne=vne, precondition_with_potential=precond)
             solver = RD3GCasadi(solver_config, game, cpp_only=cpp)

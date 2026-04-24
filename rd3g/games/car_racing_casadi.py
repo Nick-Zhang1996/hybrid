@@ -29,14 +29,14 @@ logger.setLevel(logging.INFO)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
     T: int = 20
-    dt: float = 0.02
+    dt: float = 0.05
     N: int = 4
     n: int = 5
     m: int = 2
     n_h: int = 4 * (4 * 3 // 2) * 20 + 2 * 4 * 20
     """ Total number of canonical inequality constraints. """
     n_c: int = 3  # Size of context variable for per agent per stage
-    variational_gne: bool = False
+    variational_gne: bool = True
     """ If True, use one shared multiplier per canonical constraint """
 
     collision_radius: float = 90e-3  # 80e-3
@@ -542,7 +542,7 @@ class CarRacingCasadi(CasadiGame):
 
 
 def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
-                       variational_gne=False):
+                       variational_gne=True):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig
     T = horizon
