@@ -59,8 +59,8 @@ namespace fs = std::filesystem;
 
 // Work buffer for casadi functions
 struct FuncWorkBuffer {
-  std::vector<const double *> args;
-  std::vector<double *> res;
+  std::vector<const double*> args;
+  std::vector<double*> res;
   std::vector<casadi_int> iw;
   std::vector<double> w;
 };
@@ -78,7 +78,7 @@ struct SparseMatrixResult {
 // pointers, not the actual content
 FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec) {
   size_t sz_arg = 0, sz_res = 0, sz_iw = 0, sz_w = 0;
-  for (const auto &fun : fun_vec) {
+  for (const auto& fun : fun_vec) {
     size_t sz_arg_, sz_res_, sz_iw_, sz_w_;
     fun.sz_work(sz_arg_, sz_res_, sz_iw_, sz_w_);
     sz_arg = sz_arg > sz_arg_ ? sz_arg : sz_arg_;
@@ -86,8 +86,8 @@ FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec) {
     sz_iw = sz_iw > sz_iw_ ? sz_iw : sz_iw_;
     sz_w = sz_w > sz_w_ ? sz_w : sz_w_;
   }
-  std::vector<const double *> args(sz_arg);
-  std::vector<double *> res(sz_res);
+  std::vector<const double*> args(sz_arg);
+  std::vector<double*> res(sz_res);
   std::vector<casadi_int> iw(sz_iw);
   std::vector<double> w(sz_w);
   return {args, res, iw, w};
@@ -103,9 +103,9 @@ cas::Function safe_load_fun(std::string fun_name, fs::path lib_path) {
 }
 
 // Create MappedSparseMatrix sparsity pattern and data
-inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double *data) {
-  MappedSparseMatrix retval(sp.size1(), sp.size2(), sp.nnz(), const_cast<casadi_int *>(sp.colind()),
-                            const_cast<casadi_int *>(sp.row()), data);
+inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double* data) {
+  MappedSparseMatrix retval(sp.size1(), sp.size2(), sp.nnz(), const_cast<casadi_int*>(sp.colind()),
+                            const_cast<casadi_int*>(sp.row()), data);
   return retval;
 }
 
@@ -162,8 +162,8 @@ class Rd3gCasadi {
              const bool precondition_with_potential, const bool variational_gne,
              const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
              const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
-             const Scalar max_in_reg_val, const std::string linear_solver_method,
-             const int verbose, const std::string base_dir, const std::string casadi_module_name)
+             const Scalar max_in_reg_val, const std::string linear_solver_method, const int verbose,
+             const std::string base_dir, const std::string casadi_module_name)
       : N_{N},
         T_{T},
         n_hi_{n_hi},
@@ -259,11 +259,11 @@ class Rd3gCasadi {
     assert(get_m.n_out() == 1);
     m_ = m_buffer[0];
 
-    logger_->debug("RD3G CasADi initialized, n={}, m={}, dual_h_dim={}, variational_gne={}", n_,
-                   m_, dual_h_dim_, variational_gne_);
+    logger_->debug("RD3G CasADi initialized, n={}, m={}, dual_h_dim={}, variational_gne={}", n_, m_,
+                   dual_h_dim_, variational_gne_);
   }
 
-  void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
+  void set_x0(const MatrixXd& val) { x0_ = MatrixXd(val); }
 
   // Evaluate dr_dy function from casadi using python arguments.
   // Demonstrating data representation conversion and call procedure
@@ -280,16 +280,16 @@ class Rd3gCasadi {
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
-    wb_.args[0] = static_cast<double *>(x_val.ptr);
-    wb_.args[1] = static_cast<double *>(u_val.ptr);
-    wb_.args[2] = static_cast<double *>(lamda_val.ptr);
-    wb_.args[3] = static_cast<double *>(mu_val.ptr);
-    wb_.args[4] = static_cast<double *>(context_val.ptr);
-    wb_.args[5] = static_cast<double *>(int_param_val.ptr);
-    wb_.args[6] = static_cast<double *>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double*>(x_val.ptr);
+    wb_.args[1] = static_cast<double*>(u_val.ptr);
+    wb_.args[2] = static_cast<double*>(lamda_val.ptr);
+    wb_.args[3] = static_cast<double*>(mu_val.ptr);
+    wb_.args[4] = static_cast<double*>(context_val.ptr);
+    wb_.args[5] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[6] = static_cast<double*>(double_param_val.ptr);
     assert(dr_dy_.n_in() == 7);
 
-    const casadi::Sparsity &res_sp = dr_dy_.sparsity_out(0);  // 0th output sparsity
+    const casadi::Sparsity& res_sp = dr_dy_.sparsity_out(0);  // 0th output sparsity
     // Allocate output buffer
     std::vector<double> res_buffer(res_sp.nnz());
     wb_.res[0] = res_buffer.data();
@@ -313,9 +313,9 @@ class Rd3gCasadi {
   //      reduced_KKT:
   //      reduced_r0:
   //      active_h_indices:
-  std::tuple<SpMatrix, MatrixXd, std::vector<int>> reduce_KKT_system(const SpMatrix &full_KKT,
-                                                                     const SpMatrix &full_r0,
-                                                                     const MatrixXd &h_val) {
+  std::tuple<SpMatrix, MatrixXd, std::vector<int>> reduce_KKT_system(const SpMatrix& full_KKT,
+                                                                     const SpMatrix& full_r0,
+                                                                     const MatrixXd& h_val) {
     // Starting index of first h() in residual
     // Skipping through dLLi_dx, dLLi_du, dynamics constraint
     // Also starting index of mu, multiplier for h(), in y
@@ -376,7 +376,7 @@ class Rd3gCasadi {
   // Returns:
   //   x: solution
   //   res: residual, norm(Ax-b)
-  std::tuple<MatrixXd, Scalar> solve_linear_system(const SpMatrix &A, const MatrixXd &b,
+  std::tuple<MatrixXd, Scalar> solve_linear_system(const SpMatrix& A, const MatrixXd& b,
                                                    std::string method) {
     if (method == "lscg") {
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
@@ -523,7 +523,8 @@ class Rd3gCasadi {
     throw std::runtime_error("Unknown method type: " + method);
   }
 
-  std::tuple<MatrixXd, Scalar> solve_preconditioned_system(const SpMatrix &LHS, const MatrixXd &RHS) {
+  std::tuple<MatrixXd, Scalar> solve_preconditioned_system(const SpMatrix& LHS,
+                                                           const MatrixXd& RHS) {
     const SpMatrix LHS_t = SpMatrix(LHS.transpose());
     const SpMatrix S = (LHS + LHS_t) * 0.5;
     const SpMatrix A = (LHS - LHS_t) * 0.5;
@@ -574,10 +575,10 @@ class Rd3gCasadi {
     auto double_param_val = double_param.request();
 
     // Call rollout(x0, u_guess, int_param, double_param) -> x
-    wb_.args[0] = static_cast<double *>(x0_val.ptr);
-    wb_.args[1] = static_cast<double *>(u_guess_val.ptr);
-    wb_.args[2] = static_cast<double *>(int_param_val.ptr);
-    wb_.args[3] = static_cast<double *>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double*>(x0_val.ptr);
+    wb_.args[1] = static_cast<double*>(u_guess_val.ptr);
+    wb_.args[2] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[3] = static_cast<double*>(double_param_val.ptr);
     assert(rollout_.n_in() == 4);
 
     casadi::Sparsity x_sp = rollout_.sparsity_out(0);
@@ -595,7 +596,7 @@ class Rd3gCasadi {
     MatrixXd lamda = MatrixXd::Zero(n_ * N_, T_);
     // get context, get h_val, calculate slack variable s, mu
     // Call get_full_context_(x) -> full_context_buffer
-    wb_.args[0] = static_cast<double *>(x.data());
+    wb_.args[0] = static_cast<double*>(x.data());
     assert(get_full_context_.n_in() == 1);
     assert(get_full_context_.sparsity_in(0).is_dense());
     casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
@@ -607,11 +608,11 @@ class Rd3gCasadi {
     wb_.res[0] = nullptr;
 
     // Call h_(x, u, context, int_params, double_params) -> h_val_buffer
-    wb_.args[0] = static_cast<double *>(x.data());
-    wb_.args[1] = static_cast<double *>(u.data());
-    wb_.args[2] = static_cast<double *>(full_context_buffer.data());
-    wb_.args[3] = static_cast<double *>(int_param_val.ptr);
-    wb_.args[4] = static_cast<double *>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double*>(x.data());
+    wb_.args[1] = static_cast<double*>(u.data());
+    wb_.args[2] = static_cast<double*>(full_context_buffer.data());
+    wb_.args[3] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[4] = static_cast<double*>(double_param_val.ptr);
     assert(h_.n_in() == 5);
     casadi::Sparsity h_val_sp = h_.sparsity_out(0);
     std::vector<double> h_val_buffer(h_val_sp.nnz());
@@ -622,8 +623,9 @@ class Rd3gCasadi {
 
     Scalar tau = 0.1;  // Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
     // Slack variable
-    MatrixXd s = (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), h_val_sp.size1() * h_val_sp.size2(), 1))
-                     .cwiseMax(1e-2);
+    MatrixXd s =
+        (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), h_val_sp.size1() * h_val_sp.size2(), 1))
+            .cwiseMax(1e-2);
     MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s
 
     std::vector<std::pair<Scalar, Scalar>> filter_state;  // Primal, dual residual
@@ -639,10 +641,10 @@ class Rd3gCasadi {
     for (iter = 0; iter < max_iterations_; iter++) {
       if (rollout_each_step_) {
         // Call rollout(x0, u_guess, int_param, double_param) -> x
-        wb_.args[0] = static_cast<double *>(x0_val.ptr);
-        wb_.args[1] = static_cast<double *>(u.data());
-        wb_.args[2] = static_cast<double *>(int_param_val.ptr);
-        wb_.args[3] = static_cast<double *>(double_param_val.ptr);
+        wb_.args[0] = static_cast<double*>(x0_val.ptr);
+        wb_.args[1] = static_cast<double*>(u.data());
+        wb_.args[2] = static_cast<double*>(int_param_val.ptr);
+        wb_.args[3] = static_cast<double*>(double_param_val.ptr);
         assert(rollout_.n_in() == 4);
         wb_.res[0] = x_buffer.data();
         assert(rollout_.n_out() == 1);
@@ -682,9 +684,9 @@ class Rd3gCasadi {
   std::tuple<bool, bool, bool, Scalar> step(Eigen::Ref<MatrixXd> x, Eigen::Ref<MatrixXd> u,
                                             Eigen::Ref<MatrixXd> lamda, Eigen::Ref<MatrixXd> mu,
                                             Eigen::Ref<MatrixXd> s,
-                                            std::vector<std::pair<Scalar, Scalar>> &filter_state,
-                                            const Scalar tau, py::array_t<double> &int_param,
-                                            py::array_t<double> &double_param) {
+                                            std::vector<std::pair<Scalar, Scalar>>& filter_state,
+                                            const Scalar tau, py::array_t<double>& int_param,
+                                            py::array_t<double>& double_param) {
     // Solve r0 + H @ dy = 0
     // i.e. full_r0 + full_KKT @ <dx, du, dlambda, dmu> = 0
     // identify inactive constraints (mu)
@@ -696,7 +698,7 @@ class Rd3gCasadi {
     auto double_param_val = double_param.request();
     // Get game context
     // Call get_full_context_(x)
-    wb_.args[0] = static_cast<double *>(x.data());
+    wb_.args[0] = static_cast<double*>(x.data());
     assert(get_full_context_.n_in() == 1);
     assert(get_full_context_.sparsity_in(0).is_dense());
     casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
@@ -716,13 +718,13 @@ class Rd3gCasadi {
     // logger_->debug("Getting r0 and KKT matrix...");
     // Get residual
     // full_r0 = r(x, u, lamda, mu, context, int_param, double_param)
-    wb_.args[0] = static_cast<double *>(x.data());
-    wb_.args[1] = static_cast<double *>(u.data());
-    wb_.args[2] = static_cast<double *>(lamda.data());
-    wb_.args[3] = static_cast<double *>(mu.data());
-    wb_.args[4] = static_cast<double *>(full_context_buffer.data());
-    wb_.args[5] = static_cast<double *>(int_param_val.ptr);
-    wb_.args[6] = static_cast<double *>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double*>(x.data());
+    wb_.args[1] = static_cast<double*>(u.data());
+    wb_.args[2] = static_cast<double*>(lamda.data());
+    wb_.args[3] = static_cast<double*>(mu.data());
+    wb_.args[4] = static_cast<double*>(full_context_buffer.data());
+    wb_.args[5] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[6] = static_cast<double*>(double_param_val.ptr);
     assert(r_.n_in() == 7);
     assert(r_.sparsity_in(0).is_dense());
     assert(r_.sparsity_in(1).is_dense());
@@ -960,7 +962,8 @@ class Rd3gCasadi {
     int ls_iter;
     MatrixXd full_r(full_r0.rows() + mu_dim, 1);
     full_r.block(0, 0, full_r0.rows(), 1) = MatrixXd(full_r0);
-    full_r.block(full_r0.rows(), 0, mu_dim, 1) = mu.cwiseProduct(s) - MatrixXd::Constant(mu_dim, 1, tau);
+    full_r.block(full_r0.rows(), 0, mu_dim, 1) =
+        mu.cwiseProduct(s) - MatrixXd::Constant(mu_dim, 1, tau);
     full_r.block(mu_offset, 0, mu_dim, 1) += s;
     const Scalar comp_res = full_r.block(full_r0.rows(), 0, mu_dim, 1).lpNorm<1>();
     const Scalar primal_res =
@@ -981,7 +984,7 @@ class Rd3gCasadi {
 
       // Get game context
       // Call get_full_context_(x)
-      wb_.args[0] = static_cast<double *>(new_x.data());
+      wb_.args[0] = static_cast<double*>(new_x.data());
       assert(get_full_context_.n_in() == 1);
       assert(get_full_context_.sparsity_in(0).is_dense());
       wb_.res[0] = full_context_buffer.data();
@@ -990,13 +993,13 @@ class Rd3gCasadi {
       get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
       wb_.res[0] = nullptr;
 
-      wb_.args[0] = static_cast<double *>(new_x.data());
-      wb_.args[1] = static_cast<double *>(new_u.data());
-      wb_.args[2] = static_cast<double *>(new_lamda.data());
-      wb_.args[3] = static_cast<double *>(new_mu.data());
-      wb_.args[4] = static_cast<double *>(full_context_buffer.data());
-      wb_.args[5] = static_cast<double *>(int_param_val.ptr);
-      wb_.args[6] = static_cast<double *>(double_param_val.ptr);
+      wb_.args[0] = static_cast<double*>(new_x.data());
+      wb_.args[1] = static_cast<double*>(new_u.data());
+      wb_.args[2] = static_cast<double*>(new_lamda.data());
+      wb_.args[3] = static_cast<double*>(new_mu.data());
+      wb_.args[4] = static_cast<double*>(full_context_buffer.data());
+      wb_.args[5] = static_cast<double*>(int_param_val.ptr);
+      wb_.args[6] = static_cast<double*>(double_param_val.ptr);
       assert(r_.sparsity_in(0).is_dense());
       assert(r_.sparsity_in(1).is_dense());
       assert(r_.sparsity_in(2).is_dense());
@@ -1036,7 +1039,7 @@ class Rd3gCasadi {
       }
 
       bool is_dominated = false;
-      for (const auto &[filter_primal_res, filter_dual_res] : filter_state) {
+      for (const auto& [filter_primal_res, filter_dual_res] : filter_state) {
         const bool filter_improve_optimality =
             trial_dual_res < filter_dual_res - bc_a_ * filter_primal_res;
         const bool filter_improve_feasibility = trial_primal_res < (1 - bc_a_) * filter_primal_res;
@@ -1102,7 +1105,7 @@ class Rd3gCasadi {
   MatrixXd debug_get_u() { return debug_u; }
   MatrixXd debug_get_full_dy() { return debug_full_dy; }
 
-  SparseMatrixResult get_spr(const SpMatrix &mtx) {
+  SparseMatrixResult get_spr(const SpMatrix& mtx) {
     SparseMatrixResult res;
     res.shape = {mtx.rows(), mtx.cols()};
     res.data.assign(mtx.valuePtr(), mtx.valuePtr() + mtx.nonZeros());
@@ -1111,9 +1114,9 @@ class Rd3gCasadi {
     return res;
   }
 
-  bool check_spmatrix_has_nan(const SpMatrix &mtx, std::string name) {
+  bool check_spmatrix_has_nan(const SpMatrix& mtx, std::string name) {
     bool has_nan = false;
-    const double *values = mtx.valuePtr();
+    const double* values = mtx.valuePtr();
     for (int i = 0; i < mtx.nonZeros(); ++i) {
       if (std::isnan(values[i])) {
         has_nan = true;
@@ -1127,7 +1130,7 @@ class Rd3gCasadi {
   }
 
   // Make regularization matrix given regularization coefficient from each agent
-  SpMatrix make_full_KKT_reg(const std::vector<double> &reg_vec) {
+  SpMatrix make_full_KKT_reg(const std::vector<double>& reg_vec) {
     int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + dual_h_dim_;
 
     typedef Eigen::Triplet<Scalar> T;
@@ -1166,8 +1169,8 @@ class Rd3gCasadi {
   //        Caller must ensure identical sparsity pattern
   // Return:
   //  inertia tuple
-  std::tuple<int, int, int> get_inertia(const SpMatrix &mtx,
-                                        Eigen::SimplicialLDLT<SpMatrix> &solver) {
+  std::tuple<int, int, int> get_inertia(const SpMatrix& mtx,
+                                        Eigen::SimplicialLDLT<SpMatrix>& solver) {
     solver.factorize(mtx);
     // Eigen::SimplicialLDLT<SpMatrix> solver;
     // solver.compute(mtx);
@@ -1176,7 +1179,7 @@ class Rd3gCasadi {
       throw std::runtime_error("LDL decomposition failed");
     }
     // Check Inertia
-    const auto &D = solver.vectorD();
+    const auto& D = solver.vectorD();
     int pos = 0;
     int neg = 0;
     int zero = 0;
@@ -1201,13 +1204,13 @@ class Rd3gCasadi {
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
-    wb_.args[0] = static_cast<double *>(x0_val.ptr);
-    wb_.args[1] = static_cast<double *>(u_val.ptr);
-    wb_.args[2] = static_cast<double *>(int_param_val.ptr);
-    wb_.args[3] = static_cast<double *>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double*>(x0_val.ptr);
+    wb_.args[1] = static_cast<double*>(u_val.ptr);
+    wb_.args[2] = static_cast<double*>(int_param_val.ptr);
+    wb_.args[3] = static_cast<double*>(double_param_val.ptr);
     assert(rollout_.n_in() == 4);
 
-    const casadi::Sparsity &res_sp = rollout_.sparsity_out(0);  // 0th output sparsity
+    const casadi::Sparsity& res_sp = rollout_.sparsity_out(0);  // 0th output sparsity
     // Allocate output buffer
     std::vector<double> res_buffer(res_sp.nnz());
     wb_.res[0] = res_buffer.data();
@@ -1222,6 +1225,25 @@ class Rd3gCasadi {
     // res.data = res_buffer;
     // res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
     // res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
+    Eigen::Map<MatrixXd> res(res_buffer.data(), res_sp.size1(), res_sp.size2());
+    return res;
+  }
+
+  // Evaluate get_full_context function from casadi using python arguments.
+  MatrixXd get_full_context(py::array_t<double> x) {
+    auto x_val = x.request();
+
+    wb_.args[0] = static_cast<double*>(x_val.ptr);
+    assert(get_full_context_.n_in() == 1);
+
+    const casadi::Sparsity& res_sp = get_full_context_.sparsity_out(0);
+    std::vector<double> res_buffer(res_sp.nnz());
+    wb_.res[0] = res_buffer.data();
+    assert(get_full_context_.n_out() == 1);
+    assert(res_sp.is_dense());
+
+    get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
+
     Eigen::Map<MatrixXd> res(res_buffer.data(), res_sp.size1(), res_sp.size2());
     return res;
   }

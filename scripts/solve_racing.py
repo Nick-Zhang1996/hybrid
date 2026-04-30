@@ -16,7 +16,7 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 cpp = True
-load = True
+load = False
 variational_gne = True
 
 np.random.seed()
@@ -51,3 +51,11 @@ print(f'{sol.elapsed_time=}, {sol.residual=}')
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
 # solver.animate(sol.u, None, save_gif=True)
+
+# DEBGU
+gc = game.config
+x = np.asarray(sol.x).reshape((gc.n, gc.N, gc.T), order='F')
+v_target = x[3, 0, :]
+v_s = np.diff(x[0, 0, :]) / game.config.dt
+print(v_target)
+print(v_s)
