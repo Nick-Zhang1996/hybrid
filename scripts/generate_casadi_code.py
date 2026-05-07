@@ -38,8 +38,8 @@ if __name__ == "__main__":
     # codegen_racing(8, 40)
     # codegen_racing(8, 30)
     # codegen_racing(8, 20)
-    codegen_racing(8, 15)
     codegen_racing(8, 10)
+    codegen_racing(5, 10)
     # codegen_racing(4, 40)
     # codegen_racing(4, 20)
     for T in [20]:

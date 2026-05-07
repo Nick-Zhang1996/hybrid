@@ -16,7 +16,7 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 cpp = True
-load = True
+load = False
 variational_gne = True
 
 np.random.seed()
@@ -50,4 +50,5 @@ print(f'{sol.elapsed_time=}, {sol.residual=}')
 # solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
-# solver.animate(sol.u, None, save_gif=True)
+if sol.residual < 1e-3:
+    solver.animate(sol.u, None, save_gif=True)

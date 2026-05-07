@@ -48,6 +48,12 @@ class LSS:
         dy_dftr = Jy + (1.0 / (Jyy + eps)) * Jyx * Jx
         self.dzdt_dftr = cas.vertcat(dx_dftr, dy_dftr)
 
+        J = self.Dw
+        JT = J.T
+        # self.dzdt_dnd = - cas.inv(JT @ J @ (J + JT) + lamda*I) @ JT  @ w
+        self.dzdt_dnd = -cas.solve(JT @ J @ (J + JT) + lamda*I, JT @ w)
+        self.f_dnd = cas.Function('f_dnd', [z], [self.dzdt_dnd])
+
         # 6. Create fast CasADi functions for the integrators
         self.f_gd = cas.Function('f_gd', [z], [self.dzdt_gd])
         self.f_lss = cas.Function('f_lss', [z], [self.dzdt_lss])
@@ -72,7 +78,7 @@ class LSS:
         term2 = (0.5 * y**2 + x)**2
         return -decay * (term1 + term2)
 
-    def get_trajectory(self, x0, y0, method='gd', dt=0.01, steps=800):
+    def get_trajectory(self, x0, y0, method='gd', dt=0.01, steps=8000):
         """ Numerically integrate the chosen vector field using RK4 """
         if method == 'gd':
             f = self.f_gd
@@ -80,6 +86,8 @@ class LSS:
             f = self.f_lss
         elif method == 'dftr':
             f = self.f_dftr
+        elif method == 'dnd':
+            f = self.f_dnd
         else:
             raise ValueError("Method must be 'gd' or 'lss'")
 
@@ -123,11 +131,12 @@ class LSS:
 
         # 3. Simulate and plot trajectories
 
-        steps = 2000
+        steps = 9000
         dt = 1e-3
         traj_gd = self.get_trajectory(start_x, start_y, method='gd', dt=dt, steps=steps)
         traj_lss = self.get_trajectory(start_x, start_y, method='lss', dt=dt, steps=steps)
         traj_dftr = self.get_trajectory(start_x, start_y, method='dftr', dt=dt, steps=steps)
+        traj_dnd = self.get_trajectory(start_x, start_y, method='dnd', dt=dt, steps=steps)
 
         # Using standard hex colors that look good on default backgrounds
         ax.plot(traj_gd[:, 0], traj_gd[:, 1], color='#d62728', linestyle='--',
@@ -136,6 +145,8 @@ class LSS:
                 linewidth=2.5, label='Local Symplectic Surgery')
         ax.plot(traj_dftr[:, 0], traj_dftr[:, 1], color="#0d8320", linestyle='-',
                 linewidth=2.5, label='double Follow The Ridge')
+        ax.plot(traj_dnd[:, 0], traj_dnd[:, 1], color="#300d83", linestyle='-',
+                linewidth=2.5, label='SeCOND')
 
         # Starting point marker
         ax.plot(start_x, start_y, 'ko', markersize=6)

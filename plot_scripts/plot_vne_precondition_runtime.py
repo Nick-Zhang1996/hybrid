@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 CARS = np.array([2, 3, 4, 5, 6, 7, 8], dtype=float)
 
 SCENARIOS = {
-    "non_vne": {
-        "label": "Non-VNE",
-        "color": "#1f3c88",
-        "marker": "o",
-        "linestyle": "-",
-    },
+    # "non_vne": {
+    #     "label": "Non-VNE",
+    #     "color": "#1f3c88",
+    #     "marker": "o",
+    #     "linestyle": "-",
+    # },
     "vne_no_precondition": {
         "label": "VNE (No Preconditioner)",
         "color": "#8a5a00",
@@ -29,14 +29,14 @@ GAMES = {
     "car_merge": {
         "title": "Car Merge",
         "series": {
-            "non_vne": {
-                "converged_rate": np.array([0.86, 0.88, 0.66, 0.50, 0.56, 0.52, 0.30]),
-                "optimal_rate": np.array([0.74, 0.88, 0.66, 0.50, 0.56, 0.52, 0.30]),
-                "overall_mean_ms": np.array([7.3, 13.5, 38.0, 82.3, 67.5, 91.4, 139.9]),
-                "overall_var_ms": np.array([0.0, 0.0, 0.2, 1.2, 0.6, 1.1, 1.8]),
-                "converged_mean_ms": np.array([7.0, 12.9, 28.9, 53.3, 48.2, 65.9, 96.8]),
-                "converged_var_ms": np.array([0.0, 0.0, 0.0, 0.0, 0.1, 0.2, 0.8]),
-            },
+            # "non_vne": {
+            #     "converged_rate": np.array([0.86, 0.88, 0.66, 0.50, 0.56, 0.52, 0.30]),
+            #     "optimal_rate": np.array([0.74, 0.88, 0.66, 0.50, 0.56, 0.52, 0.30]),
+            #     "overall_mean_ms": np.array([7.3, 13.5, 38.0, 82.3, 67.5, 91.4, 139.9]),
+            #     "overall_var_ms": np.array([0.0, 0.0, 0.2, 1.2, 0.6, 1.1, 1.8]),
+            #     "converged_mean_ms": np.array([7.0, 12.9, 28.9, 53.3, 48.2, 65.9, 96.8]),
+            #     "converged_var_ms": np.array([0.0, 0.0, 0.0, 0.0, 0.1, 0.2, 0.8]),
+            # },
             "vne_no_precondition": {
                 "converged_rate": np.array([0.86, 0.88, 0.66, 0.50, 0.56, 0.50, 0.30]),
                 "optimal_rate": np.array([0.74, 0.88, 0.66, 0.50, 0.56, 0.50, 0.30]),
@@ -58,14 +58,14 @@ GAMES = {
     "car_racing": {
         "title": "Car Racing",
         "series": {
-            "non_vne": {
-                "converged_rate": np.array([0.68, 0.36, 0.32, 0.26, 0.16, 0.10, 0.04]),
-                "optimal_rate": np.array([0.68, 0.36, 0.32, 0.26, 0.16, 0.10, 0.04]),
-                "overall_mean_ms": np.array([13.6, 48.6, 199.7, 597.4, 155.8, 205.3, 279.0]),
-                "overall_var_ms": np.array([0.0, 0.5, 10.2, 81.0, 5.4, 8.2, 13.5]),
-                "converged_mean_ms": np.array([13.0, 44.6, 227.3, 655.0, 153.9, 225.2, 302.0]),
-                "converged_var_ms": np.array([0.0, 0.2, 6.7, 57.1, 1.5, 0.2, 0.3]),
-            },
+            # "non_vne": {
+            #     "converged_rate": np.array([0.68, 0.36, 0.32, 0.26, 0.16, 0.10, 0.04]),
+            #     "optimal_rate": np.array([0.68, 0.36, 0.32, 0.26, 0.16, 0.10, 0.04]),
+            #     "overall_mean_ms": np.array([13.6, 48.6, 199.7, 597.4, 155.8, 205.3, 279.0]),
+            #     "overall_var_ms": np.array([0.0, 0.5, 10.2, 81.0, 5.4, 8.2, 13.5]),
+            #     "converged_mean_ms": np.array([13.0, 44.6, 227.3, 655.0, 153.9, 225.2, 302.0]),
+            #     "converged_var_ms": np.array([0.0, 0.2, 6.7, 57.1, 1.5, 0.2, 0.3]),
+            # },
             "vne_no_precondition": {
                 "converged_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, np.nan]),
                 "optimal_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, np.nan]),

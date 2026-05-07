@@ -49,7 +49,7 @@ def extract_frames(gif_path, output_folder):
 # --- Usage ---
 if __name__ == "__main__":
     # Change these paths to match your files
-    input_gif = os.path.join('gifs', 'intersection_8car.gif')
+    input_gif = os.path.join('gifs', 'racing_8car.gif')
     output_dir = "extracted_frames"
 
     extract_frames(input_gif, output_dir)
