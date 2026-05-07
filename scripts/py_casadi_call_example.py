@@ -43,6 +43,7 @@ if __name__ == "__main__":
         solver_config.reg,
         solver_config.reg_inertia,
         solver_config.inertia_correction,
+        solver_config.abs_split,
         solver_config.rollout_each_step,
         solver_config.precondition_with_potential,
         solver_config.variational_gne,

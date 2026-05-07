@@ -17,7 +17,10 @@ logger.setLevel(logging.INFO)
 def create_solver(solver_name, game, cpp, vne, precond):
     if solver_name == 'ipm':
         solver_config = InteriorPointGameConfig(
-            inertia_correction=False, variational_gne=vne, precondition_with_potential=precond)
+            inertia_correction=False,
+            variational_gne=vne,
+            precondition_with_potential=precond,
+            abs_split=True)
         return InteriorPointGame(solver_config, game, cpp_only=cpp)
     if solver_name == 'rd3g':
         if vne:

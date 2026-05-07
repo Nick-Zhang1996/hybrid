@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import PercentFormatter
 
-
 CARS = np.array([2, 3, 4, 5, 6, 7, 8], dtype=float)
 OUTPUT_DIR = Path(__file__).resolve().parent
 
@@ -83,6 +82,24 @@ CONFIGS = [
         "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
         "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
     },
+    {
+        "label": "Robust IPM",
+        "color": "#CC79A7",
+        "marker": "v",
+        "linestyle": "--",
+        "runtime_mean": np.array(
+            [7.753942012786865, 11.276869773864746, 23.011724948883057,
+             30.463788509368896, 49.09109592437744, 64.56922769546509,
+             80.32926082611084]
+        ),
+        "runtime_var": np.array(
+            [0.021188990485705977, 0.02945152343929749, 0.05760140417584694,
+             0.10225845669526164, 0.15530631785393328, 0.21311291747276187,
+             0.33595816528556954]
+        ),
+        "conv_mean": np.array([0.83, 0.81, 0.53, 0.56, 0.33, 0.29, 0.37]),
+        "optimal_mean": np.array([0.83, 0.81, 0.53, 0.56, 0.33, 0.29, 0.37]),
+    },
 ]
 
 
@@ -125,13 +142,11 @@ def style_axes(ax: plt.Axes, ylabel: str, percent_axis: bool = False) -> None:
 
 
 def save_figure(fig: plt.Figure, stem: str) -> None:
-    fig.savefig(OUTPUT_DIR / f"{stem}.pdf", bbox_inches="tight")
     fig.savefig(OUTPUT_DIR / f"{stem}.png", bbox_inches="tight")
 
 
 def show_figure(fig: plt.Figure) -> None:
-    if "agg" not in plt.get_backend().lower():
-        plt.show()
+    plt.show()
     plt.close(fig)
 
 

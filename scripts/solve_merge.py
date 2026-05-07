@@ -17,7 +17,10 @@ np.random.seed(123421)
 cpp = True
 variational_gne = True
 game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
-solver_config = InteriorPointGameConfig(inertia_correction=False, variational_gne=variational_gne)
+solver_config = InteriorPointGameConfig(
+    inertia_correction=False,
+    variational_gne=variational_gne,
+    abs_split=True)
 solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
 # solver_config = RD3GCasadiConfig(inertia_correction=False)
 # solver = RD3GCasadi(solver_config, game, cpp_only=cpp)

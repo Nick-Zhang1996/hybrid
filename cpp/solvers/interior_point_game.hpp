@@ -3,6 +3,7 @@
 
 #include <dlfcn.h>
 #include <limits.h>
+#include <cmath>
 #include <string.h>
 #include <unistd.h>
 
@@ -126,6 +127,7 @@ class InteriorPointGame {
   mutable Profiler<false> profiler_;
   int verbose_;  // 0:error, 1:warning, 2:info, 3:debug
   const bool inertia_correction_;
+  const bool abs_split_;
   const bool rollout_each_step_;
   const bool precondition_with_potential_;
   const bool variational_gne_;
@@ -158,7 +160,8 @@ class InteriorPointGame {
   // NOTE n,m may need to be template variables for performance
   InteriorPointGame(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
                     const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
-                    const bool inertia_correction, const bool rollout_each_step,
+                    const bool inertia_correction, const bool abs_split,
+                    const bool rollout_each_step,
                     const bool precondition_with_potential, const bool variational_gne,
                     const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
                     const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
@@ -177,6 +180,7 @@ class InteriorPointGame {
         reg_{reg},
         reg_inertia_{reg_inertia},
         inertia_correction_{inertia_correction},
+        abs_split_{abs_split},
         rollout_each_step_{rollout_each_step},
         precondition_with_potential_{precondition_with_potential},
         variational_gne_{variational_gne},
@@ -795,6 +799,10 @@ class InteriorPointGame {
       full_KKT.coeffRef(mu_offset + i, mu_offset + i) += slack_ratio;
       full_rhs(mu_offset + i, 0) += -tau / mu(i, 0);
     }
+    const int primal_var_count = (n_ + m_) * N_ * T_;
+    if (abs_split_) {
+      full_KKT = apply_abs_split_to_full_KKT(full_KKT, primal_var_count);
+    }
     // Check inertia for each agent KKT matrix Ki
     bool is_optimal = true;
     std::vector<int> saddle_agent_vec;
@@ -907,7 +915,6 @@ class InteriorPointGame {
       const int rows = full_KKT.rows();
       std::vector<Eigen::Triplet<double>> reg_triplets;
       reg_triplets.reserve(rows);
-      const int primal_var_count = n_ * N_ * T_ + m_ * N_ * T_;
       for (int k = 0; k < rows; ++k) {
         const double val = (k < primal_var_count) ? reg_ : -reg_;
         reg_triplets.emplace_back(k, k, val);
@@ -1113,6 +1120,126 @@ class InteriorPointGame {
     res.row.assign(mtx.innerIndexPtr(), mtx.innerIndexPtr() + mtx.nonZeros());
     res.colind.assign(mtx.outerIndexPtr(), mtx.outerIndexPtr() + mtx.outerSize() + 1);
     return res;
+  }
+
+  SpMatrix extract_sparse_block(const SpMatrix& mtx, int row_offset, int col_offset, int rows,
+                                int cols) {
+    std::vector<Eigen::Triplet<Scalar>> triplets;
+    triplets.reserve(mtx.nonZeros());
+    for (int j = col_offset; j < col_offset + cols; ++j) {
+      for (SpMatrix::InnerIterator it(mtx, j); it; ++it) {
+        if (it.row() >= row_offset && it.row() < row_offset + rows) {
+          triplets.emplace_back(it.row() - row_offset, j - col_offset, it.value());
+        }
+      }
+    }
+    SpMatrix block(rows, cols);
+    block.setFromTriplets(triplets.begin(), triplets.end());
+    return block;
+  }
+
+  SpMatrix extract_upper_triangle(const SpMatrix& mtx) {
+    std::vector<Eigen::Triplet<Scalar>> triplets;
+    triplets.reserve(mtx.nonZeros());
+    for (int j = 0; j < mtx.outerSize(); ++j) {
+      for (SpMatrix::InnerIterator it(mtx, j); it; ++it) {
+        if (it.row() <= j) {
+          triplets.emplace_back(it.row(), j, it.value());
+        }
+      }
+    }
+    SpMatrix upper(mtx.rows(), mtx.cols());
+    upper.setFromTriplets(triplets.begin(), triplets.end());
+    upper.makeCompressed();
+    return upper;
+  }
+
+  std::pair<SpMatrix, bool> make_abs_split_hessian_block(const SpMatrix& H) {
+    const int n = H.rows();
+    if (n == 0) {
+      return {H, false};
+    }
+
+    const SpMatrix H_t = SpMatrix(H.transpose());
+    const SpMatrix S = (H + H_t) * 0.5;
+    const SpMatrix A = (H - H_t) * 0.5;
+    const SpMatrix S_upper = extract_upper_triangle(S);
+
+    bool factorized = false;
+    Scalar shift_used = 0.0;
+    Eigen::SimplicialLDLT<SpMatrix, Eigen::Upper> solver;
+    solver.analyzePattern(S_upper);
+    for (const Scalar shift : {0.0, 1e-12, 1e-10, 1e-8, 1e-6}) {
+      solver.setShift(shift);
+      solver.factorize(S_upper);
+      if (solver.info() != Eigen::Success) {
+        continue;
+      }
+
+      shift_used = shift;
+      factorized = true;
+      break;
+    }
+    if (!factorized) {
+      logger_->warn("abs_split skipped because SimplicialLDLT factorization failed");
+      return {H, false};
+    }
+
+    const Eigen::VectorXd D = solver.vectorD();
+    bool all_positive = true;
+    for (int i = 0; i < n; ++i) {
+      if (D[i] <= 0.0) {
+        all_positive = false;
+        break;
+      }
+    }
+    if (shift_used == 0.0 && all_positive) {
+      return {H, false};
+    }
+
+    std::vector<Eigen::Triplet<Scalar>> abs_diag_triplets;
+    abs_diag_triplets.reserve(n);
+    for (int i = 0; i < n; ++i) {
+      abs_diag_triplets.emplace_back(i, i, std::abs(D[i]));
+    }
+    SpMatrix D_abs(n, n);
+    D_abs.setFromTriplets(abs_diag_triplets.begin(), abs_diag_triplets.end());
+
+    const SpMatrix LD = solver.matrixL() * D_abs;
+    const SpMatrix S_abs_perm = LD * solver.matrixU();
+    const SpMatrix S_abs =
+        SpMatrix(solver.permutationP().transpose() * S_abs_perm * solver.permutationP());
+    const SpMatrix H_abs = S_abs + A;
+    return {H_abs, true};
+  }
+
+  SpMatrix apply_abs_split_to_full_KKT(const SpMatrix& full_KKT, int primal_var_count) {
+    const SpMatrix H = extract_sparse_block(full_KKT, 0, 0, primal_var_count, primal_var_count);
+    SpMatrix H_abs;
+    bool modified;
+    std::tie(H_abs, modified) = make_abs_split_hessian_block(H);
+    if (!modified) {
+      return full_KKT;
+    }
+
+    std::vector<Eigen::Triplet<Scalar>> triplets;
+    triplets.reserve(full_KKT.nonZeros() + H_abs.nonZeros());
+    for (int j = 0; j < full_KKT.outerSize(); ++j) {
+      for (SpMatrix::InnerIterator it(full_KKT, j); it; ++it) {
+        if (it.row() < primal_var_count && it.col() < primal_var_count) {
+          continue;
+        }
+        triplets.emplace_back(it.row(), it.col(), it.value());
+      }
+    }
+    for (int j = 0; j < H_abs.outerSize(); ++j) {
+      for (SpMatrix::InnerIterator it(H_abs, j); it; ++it) {
+        triplets.emplace_back(it.row(), it.col(), it.value());
+      }
+    }
+    SpMatrix replaced(full_KKT.rows(), full_KKT.cols());
+    replaced.setFromTriplets(triplets.begin(), triplets.end());
+    return replaced;
   }
 
   bool check_spmatrix_has_nan(const SpMatrix& mtx, std::string name) {

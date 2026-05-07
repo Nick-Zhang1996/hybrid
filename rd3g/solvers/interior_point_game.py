@@ -36,6 +36,29 @@ def as_numpy_array(value):
     return np.asarray(value)
 
 
+def permutation_matrix_from_vector(P_vec):
+    """Create a sparse permutation matrix from a qdldl permutation vector."""
+    l = len(P_vec)
+    rows = np.arange(l)
+    cols = np.asarray(P_vec)
+    data = np.ones(l)
+    return csc_matrix((data, (rows, cols)), shape=(l, l))
+
+
+def reconstruct_qdldl_matrix(L_zero_diag, D_diag, P_vec):
+    """Reconstruct the original symmetric matrix from qdldl factors."""
+    n = len(D_diag)
+    P = permutation_matrix_from_vector(P_vec)
+    L = L_zero_diag + scipy.sparse.eye(n, format='csc')
+    D = scipy.sparse.diags(D_diag)
+    reconstructed = P.T @ L @ D @ L.T @ P
+    reconstructed = reconstructed.tocsc()
+    reconstructed.eliminate_zeros()
+    reconstructed.sort_indices()
+    reconstructed.sum_duplicates()
+    return reconstructed
+
+
 @dataclass
 class BrGameResult:
     """ Result of a Best Response game (per agent game) """
@@ -51,12 +74,12 @@ class BrGameResult:
     def verify(self):
         """ Verify the LDL decomposition of Ki_reg. """
         # C = P @ Ki_reg @ P.T, C = L @ D @ L.T
-        # P is the permutation matrix, P.T = inv(P)
         P = self.get_P()
-        L = self.get_L()
         C_upper = scipy.sparse.triu(csc_matrix(P @ self.Ki_reg @ P.T), format='csc')
-        D = scipy.sparse.diags(self.D_diag)
-        C = scipy.sparse.triu(L @ D @ L.T)
+        C = scipy.sparse.triu(
+            reconstruct_qdldl_matrix(self.L_zero_diag, self.D_diag, self.P_vec),
+            format='csc',
+        )
         assert scipy.sparse.linalg.norm(C_upper - C) < 1e-10
 
     def get_inv_D(self):
@@ -69,12 +92,7 @@ class BrGameResult:
         return L
 
     def get_P(self):
-        l = len(self.P_vec)
-        rows = np.arange(l)
-        cols = self.P_vec
-        data = np.ones(l)
-        P = csc_matrix((data, (rows, cols)), shape=(l, l))
-        return P
+        return permutation_matrix_from_vector(self.P_vec)
 
 
 def create_partial_identity(n, k):
@@ -263,6 +281,8 @@ class InteriorPointGameConfig(BaseSolverConfig):
     Necessary for AMD pivoting to work. """
     inertia_correction: bool = False
     """ Apply inertia correction to each agent KKT """
+    abs_split: bool = False
+    """ Replace the primal Hessian block H=S+A with |S|+A when S is indefinite """
     reduce_kkt_system: bool = False
     """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
@@ -480,6 +500,7 @@ class InteriorPointGame(BaseSolver):
                 solver_config.reg,
                 solver_config.reg_inertia,
                 solver_config.inertia_correction,
+                solver_config.abs_split,
                 solver_config.rollout_each_step,
                 solver_config.precondition_with_potential,
                 solver_config.variational_gne,
@@ -792,12 +813,16 @@ class InteriorPointGame(BaseSolver):
         reg_vec = [val.reg for val in br_game_vec]
         logger.info(f'Saddle agents: {saddle_agent_idx}, reg: {reg_vec}')
 
+        primal_var_count = (n+m)*N*T
+        LHS_csc = dm_to_csc(LHS)
+        if self.config.abs_split:
+            LHS_csc = self.apply_abs_split_to_game_kkt(LHS_csc)
+
         if self.config.inertia_correction:
             # Inertia correcting regularization
             in_reg_mtx = self.make_full_KKT_reg(reg_vec)
-            LHS += in_reg_mtx
+            LHS_csc += in_reg_mtx
 
-        primal_var_count = (n+m)*N*T
         # size of x, u, lamda, mu
         sizes = [0, n*N*T, m*N*T, n*N*T, dual_h_dim]
         offsets = list(accumulate(sizes))
@@ -807,13 +832,12 @@ class InteriorPointGame(BaseSolver):
         # Apply Levenberg-Marquardt Regularization
         # H = H + reg * I
         ind = np.arange(primal_var_count)
-        reg_matrix = scipy.sparse.eye(LHS.shape[0], format="csc")
+        reg_matrix = scipy.sparse.eye(LHS_csc.shape[0], format="csc")
         reg_matrix[ind, ind] = self.reg
         # Apply constraint relaxation to allow AMD permutation in LDL
-        ind = np.arange(primal_var_count, LHS.shape[0])
+        ind = np.arange(primal_var_count, LHS_csc.shape[0])
         reg_matrix[ind, ind] = -self.reg
-        LHS += reg_matrix
-        LHS_csc = dm_to_csc(LHS)
+        LHS_csc += reg_matrix
         RHS_np = np.asarray(RHS)
 
         if self.config.precondition_with_potential:
@@ -847,7 +871,7 @@ class InteriorPointGame(BaseSolver):
                 new_dy, _, solver, A_upper = ldl_solve(
                     iter_LHS, iter_RHS, p, solver, A_upper)
                 p.s('total_res')
-                total_res = np.linalg.norm(LHS @ new_dy - RHS)
+                total_res = np.linalg.norm(LHS_csc @ new_dy - RHS_np)
                 p.e('total_res')
                 if total_res > last_residual:
                     break
@@ -1362,6 +1386,53 @@ class InteriorPointGame(BaseSolver):
 
         # assert np.sum(np.abs((A-AT.T).data)) < 1e-10
         return H, A
+
+    def apply_abs_split_to_game_kkt(self, full_KKT):
+        """Apply the |S|+A transform to the primal Hessian block of the full KKT."""
+        primal_var_count = (self.n + self.m) * self.N * self.T
+        H = full_KKT[:primal_var_count, :primal_var_count].tocsc()
+        H_t = H.T.tocsc()
+        S = ((H + H_t) * 0.5).tocsc()
+        A = ((H - H_t) * 0.5).tocsc()
+        S_upper = scipy.sparse.triu(S, format='csc')
+        S_upper.eliminate_zeros()
+        S_upper.sort_indices()
+        S_upper.sum_duplicates()
+        eye = scipy.sparse.eye(primal_var_count, format='csc')
+        factorized = None
+        last_exc = None
+        for shift in [0.0, 1e-12, 1e-10, 1e-8, 1e-6]:
+            shifted_upper = S_upper if shift == 0.0 else (S_upper + shift * eye).tocsc()
+            shifted_upper.eliminate_zeros()
+            shifted_upper.sort_indices()
+            shifted_upper.sum_duplicates()
+            try:
+                # pylint:disable-next=c-extension-no-member
+                solver = qdldl.Solver(shifted_upper, upper=True)
+                factorized = (shift, *solver.factors())
+                break
+            except RuntimeError as exc:
+                last_exc = exc
+        if factorized is None:
+            logger.warning(
+                'abs_split skipped because qdldl failed on the primal Hessian block: %s',
+                last_exc,
+            )
+            return full_KKT
+
+        shift, L_zero_diag, D_diag, P_vec = factorized
+        if shift == 0.0 and np.all(D_diag > 0):
+            return full_KKT
+
+        S_abs = reconstruct_qdldl_matrix(L_zero_diag, np.abs(D_diag), P_vec)
+        H_abs = (S_abs + A).tocsc()
+        H_abs.eliminate_zeros()
+        H_abs.sort_indices()
+        H_abs.sum_duplicates()
+        top = scipy.sparse.hstack([H_abs, full_KKT[:primal_var_count, primal_var_count:]], format='csc')
+        bottom = scipy.sparse.hstack([full_KKT[primal_var_count:, :primal_var_count],
+                                      full_KKT[primal_var_count:, primal_var_count:]], format='csc')
+        return scipy.sparse.vstack([top, bottom], format='csc')
 
     def residual_components(self, r):
         """ Check the residual for each subcomponents
