@@ -1,4 +1,4 @@
-// Interior-point game solver compatible with CasADi codegen.
+// RD3G solver compatible with casadi codegen
 #pragma once
 
 #include <dlfcn.h>
@@ -27,9 +27,6 @@
 #include <Eigen/LU>
 #include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
-#include <Eigen/SparseLU>
-#include <Eigen/SuperLUSupport>
-#include <Eigen/UmfPackSupport>
 
 // sparse solvers
 #include <Eigen/OrderingMethods>
@@ -52,15 +49,14 @@ using std::min;
 // SpMatrix was taken
 using Vector = Eigen::VectorXd;
 using SpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, casadi_int>;
-using UmfSpMatrix = Eigen::SparseMatrix<double, Eigen::ColMajor, SuiteSparse_long>;
 using MappedSparseMatrix = Eigen::Map<SpMatrix>;
 
 namespace fs = std::filesystem;
 
 // Work buffer for casadi functions
 struct FuncWorkBuffer {
-  std::vector<const double*> args;
-  std::vector<double*> res;
+  std::vector<const double *> args;
+  std::vector<double *> res;
   std::vector<casadi_int> iw;
   std::vector<double> w;
 };
@@ -78,7 +74,7 @@ struct SparseMatrixResult {
 // pointers, not the actual content
 FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec) {
   size_t sz_arg = 0, sz_res = 0, sz_iw = 0, sz_w = 0;
-  for (const auto& fun : fun_vec) {
+  for (const auto &fun : fun_vec) {
     size_t sz_arg_, sz_res_, sz_iw_, sz_w_;
     fun.sz_work(sz_arg_, sz_res_, sz_iw_, sz_w_);
     sz_arg = sz_arg > sz_arg_ ? sz_arg : sz_arg_;
@@ -86,8 +82,8 @@ FuncWorkBuffer get_max_buffer(std::vector<cas::Function> fun_vec) {
     sz_iw = sz_iw > sz_iw_ ? sz_iw : sz_iw_;
     sz_w = sz_w > sz_w_ ? sz_w : sz_w_;
   }
-  std::vector<const double*> args(sz_arg);
-  std::vector<double*> res(sz_res);
+  std::vector<const double *> args(sz_arg);
+  std::vector<double *> res(sz_res);
   std::vector<casadi_int> iw(sz_iw);
   std::vector<double> w(sz_w);
   return {args, res, iw, w};
@@ -103,21 +99,18 @@ cas::Function safe_load_fun(std::string fun_name, fs::path lib_path) {
 }
 
 // Create MappedSparseMatrix sparsity pattern and data
-inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double* data) {
-  MappedSparseMatrix retval(sp.size1(), sp.size2(), sp.nnz(), const_cast<casadi_int*>(sp.colind()),
-                            const_cast<casadi_int*>(sp.row()), data);
+inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double *data) {
+  MappedSparseMatrix retval(sp.size1(), sp.size2(), sp.nnz(), const_cast<casadi_int *>(sp.colind()),
+                            const_cast<casadi_int *>(sp.row()), data);
   return retval;
 }
 
-class InteriorPointGame {
+class Rd3gCasadi {
  protected:
-  int n_, m_, N_, T_, n_hi_, h_multiplier_cols_, dual_h_dim_;
-  Scalar dt_, bc_a_, bc_b_, reg0_, reg_;
-  Scalar reg_inertia_;
+  int n_, m_, N_, T_, n_h_;
+  Scalar dt_, rho_, rho_b_, bc_a_, bc_b_, reg0_, reg_;
   Scalar tolerance_;
-  Scalar tau_decay_;
   int line_search_max_iter_;
-  int max_failed_line_search_;
   int max_iterations_;
   int max_in_reg_iter_;
   Scalar max_in_reg_val_;
@@ -126,11 +119,9 @@ class InteriorPointGame {
   mutable Profiler<false> profiler_;
   int verbose_;  // 0:error, 1:warning, 2:info, 3:debug
   const bool inertia_correction_;
+  const bool reduce_kkt_system_;
   const bool rollout_each_step_;
-  const bool precondition_with_potential_;
-  const bool variational_gne_;
-  const std::string linear_solver_method_;
-  int line_search_fail_count_;
+  int line_search_no_progress_counter_;
 
   std::shared_ptr<spdlog::logger> logger_;
 
@@ -148,6 +139,7 @@ class InteriorPointGame {
 
   bool debug_got_vals_;  // We only need the first vals
   SpMatrix debug_full_KKT_;
+  SpMatrix debug_reduced_KKT_;
   SpMatrix debug_full_r0_;
   std::vector<double> debug_context;
   MatrixXd debug_full_dy;
@@ -156,44 +148,36 @@ class InteriorPointGame {
 
  public:
   // NOTE n,m may need to be template variables for performance
-  InteriorPointGame(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
-                    const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
-                    const bool inertia_correction, const bool rollout_each_step,
-                    const bool precondition_with_potential, const bool variational_gne,
-                    const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
-                    const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
-                    const Scalar max_in_reg_val, const std::string linear_solver_method,
-                    const int verbose, const std::string base_dir,
-                    const std::string casadi_module_name)
+  Rd3gCasadi(const int N, const int T, const int n_h, const Scalar dt, const Scalar rho,
+             const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
+             const bool inertia_correction, const bool reduce_kkt_system,
+             const bool rollout_each_step, const Scalar tolerance, const int backtracking_max_iter,
+             const int max_iter, const int max_in_reg_iter, const Scalar max_in_reg_val,
+             const int verbose, const std::string base_dir, const std::string casadi_module_name)
       : N_{N},
         T_{T},
-        n_hi_{n_hi},
-        h_multiplier_cols_{variational_gne ? 1 : N},
-        dual_h_dim_{n_hi * (variational_gne ? 1 : N)},
+        n_h_{n_h},
         dt_{dt},
+        rho_{rho},
+        rho_b_{rho_b},
         bc_a_{bc_a},
         bc_b_{bc_b},
         reg0_{reg},
         reg_{reg},
-        reg_inertia_{reg_inertia},
         inertia_correction_{inertia_correction},
+        reduce_kkt_system_{reduce_kkt_system},
         rollout_each_step_{rollout_each_step},
-        precondition_with_potential_{precondition_with_potential},
-        variational_gne_{variational_gne},
         tolerance_{tolerance},
-        tau_decay_{tau_decay},
-        line_search_max_iter_{line_search_max_iter},
-        max_failed_line_search_{max_failed_line_search},
+        line_search_max_iter_{backtracking_max_iter},
         x0_{},
         profiler_{},
         max_iterations_{max_iter},
         max_in_reg_iter_{max_in_reg_iter},
         max_in_reg_val_{max_in_reg_val},
-        linear_solver_method_{linear_solver_method},
         verbose_{verbose},
-        line_search_fail_count_{0},
+        line_search_no_progress_counter_{0},
         debug_got_vals_{false} {
-    const std::string logger_name{"interior_point_game_cpp"};
+    const std::string logger_name{"rd3g_casadi_cpp"};
     logger_ = spdlog::get(logger_name);
     if (!logger_) {
       logger_ = spdlog::stdout_color_mt(logger_name);
@@ -220,11 +204,7 @@ class InteriorPointGame {
     // Load CasADi dll for given game following naming convention,
     // game (module name), N, T -> this determines a unique dll name.
     std::stringstream ss;
-    ss << "lib" << casadi_module_name << "_ipm";
-    if (variational_gne_) {
-      ss << "_vne";
-    }
-    ss << "_N" << N << "_T" << T << ".so";
+    ss << "lib" << casadi_module_name << "_rd3g_N" << N << "_T" << T << ".so";
     fs::path lib_path = fs::path(base_dir) / "build" / "lib" / ss.str();
 
     r_ = safe_load_fun("r", lib_path);
@@ -260,11 +240,11 @@ class InteriorPointGame {
     assert(get_m.n_out() == 1);
     m_ = m_buffer[0];
 
-    logger_->debug("RD3G CasADi initialized, n={}, m={}, dual_h_dim={}, variational_gne={}", n_, m_,
-                   dual_h_dim_, variational_gne_);
+    logger_->debug("RD3G CasADi initialized, n={}, m={}", n_, m_);
   }
 
-  void set_x0(const MatrixXd& val) { x0_ = MatrixXd(val); }
+  void set_x0(const MatrixXd &val) { x0_ = MatrixXd(val); }
+  void post_step_update() { rho_ *= rho_b_; }
 
   // Evaluate dr_dy function from casadi using python arguments.
   // Demonstrating data representation conversion and call procedure
@@ -281,16 +261,16 @@ class InteriorPointGame {
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
-    wb_.args[0] = static_cast<double*>(x_val.ptr);
-    wb_.args[1] = static_cast<double*>(u_val.ptr);
-    wb_.args[2] = static_cast<double*>(lamda_val.ptr);
-    wb_.args[3] = static_cast<double*>(mu_val.ptr);
-    wb_.args[4] = static_cast<double*>(context_val.ptr);
-    wb_.args[5] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[6] = static_cast<double*>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double *>(x_val.ptr);
+    wb_.args[1] = static_cast<double *>(u_val.ptr);
+    wb_.args[2] = static_cast<double *>(lamda_val.ptr);
+    wb_.args[3] = static_cast<double *>(mu_val.ptr);
+    wb_.args[4] = static_cast<double *>(context_val.ptr);
+    wb_.args[5] = static_cast<double *>(int_param_val.ptr);
+    wb_.args[6] = static_cast<double *>(double_param_val.ptr);
     assert(dr_dy_.n_in() == 7);
 
-    const casadi::Sparsity& res_sp = dr_dy_.sparsity_out(0);  // 0th output sparsity
+    const casadi::Sparsity &res_sp = dr_dy_.sparsity_out(0);  // 0th output sparsity
     // Allocate output buffer
     std::vector<double> res_buffer(res_sp.nnz());
     wb_.res[0] = res_buffer.data();
@@ -314,19 +294,20 @@ class InteriorPointGame {
   //      reduced_KKT:
   //      reduced_r0:
   //      active_h_indices:
-  std::tuple<SpMatrix, MatrixXd, std::vector<int>> reduce_KKT_system(const SpMatrix& full_KKT,
-                                                                     const SpMatrix& full_r0,
-                                                                     const MatrixXd& h_val) {
+  std::tuple<SpMatrix, MatrixXd, std::vector<int>> reduce_KKT_system(const SpMatrix &full_KKT,
+                                                                     const SpMatrix &full_r0,
+                                                                     const MatrixXd &h_val) {
     // Starting index of first h() in residual
     // Skipping through dLLi_dx, dLLi_du, dynamics constraint
     // Also starting index of mu, multiplier for h(), in y
     const int h_in_r_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
-    assert(h_val.rows() * h_val.cols() == dual_h_dim_);
+    assert(h_val.rows() == n_h_ * N_);
+    assert(h_val.cols() == 1);
 
     // Maps rows in full_r0 to reduced_r0, -1 means delete
     std::vector<int> old_to_new_idx(full_r0.rows(), -1);
     std::vector<int> active_h_indices;
-    active_h_indices.reserve(dual_h_dim_);
+    active_h_indices.reserve(n_h_ * N_);
     int reduced_r_dim = 0;
 
     // Always keep dL/dx, dL/du, dynamics constraints
@@ -343,6 +324,7 @@ class InteriorPointGame {
     }
 
     // Construct reduced_r0
+    // TODO should this be sparse?
     MatrixXd reduced_r0(reduced_r_dim, 1);
 
     for (int i = 0; i < full_r0.rows(); i++) {
@@ -377,7 +359,7 @@ class InteriorPointGame {
   // Returns:
   //   x: solution
   //   res: residual, norm(Ax-b)
-  std::tuple<MatrixXd, Scalar> solve_linear_system(const SpMatrix& A, const MatrixXd& b,
+  std::tuple<SpMatrix, Scalar> solve_linear_system(const SpMatrix &A, const MatrixXd &b,
                                                    std::string method) {
     if (method == "lscg") {
       Eigen::LeastSquaresConjugateGradient<SpMatrix> solver;
@@ -393,12 +375,13 @@ class InteriorPointGame {
 
       MatrixXd x = solver.solve(b);
       if (solver.info() != Eigen::Success) {
+        // TODO use logging
         logger_->info("LSCG solver failed ");
       }
       // NOTE this is relative error |Ax-b|/|Ax|, make sure it's consistent
       // elsewhere
       // TODO should we use dense matrix for x?
-      return {x, static_cast<Scalar>(solver.error())};
+      return {x.sparseView(), static_cast<Scalar>(solver.error())};
     } else if (method == "ldl") {
       // SimplicialLDLT is a direct sparse solver for P*A*P' = L*D*L'
       // Note: Unlike qdldl Eigen defaults to reading the LOWER triangular part.
@@ -444,7 +427,7 @@ class InteriorPointGame {
 
       const Scalar residual = (A * x - b).norm();
 
-      return {x, residual};
+      return {x.sparseView(), residual};
     } else if (method == "lsqr") {
       Eigen::SparseQR<SpMatrix, Eigen::COLAMDOrdering<SpMatrix::StorageIndex>> solver;
 
@@ -464,95 +447,9 @@ class InteriorPointGame {
       }
 
       const Scalar residual = (A * x - b).norm();
-      return {x, residual};
-    } else if (method == "sparselu") {
-      // Built-in Eigen direct solver (no external dependencies)
-      Eigen::SparseLU<SpMatrix> solver;
-
-      solver.compute(A);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("SparseLU decomposition failed");
-        throw std::runtime_error("SparseLU decomposition failed");
-      }
-
-      MatrixXd x = solver.solve(b);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("SparseLU solver failed during solve phase");
-      }
-
-      const Scalar residual = (A * x - b).norm();
-      return {x, residual};
-
-    } else if (method == "superlu") {
-      // Requires: #include <Eigen/SuperLUSupport>
-      // Requires linking against the external SuperLU library
-      Eigen::SuperLU<SpMatrix> solver;
-
-      solver.compute(A);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("SuperLU decomposition failed");
-        throw std::runtime_error("SuperLU decomposition failed");
-      }
-
-      MatrixXd x = solver.solve(b);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("SuperLU solver failed during solve phase");
-      }
-
-      const Scalar residual = (A * x - b).norm();
-      return {x, residual};
-    } else if (method == "umfpack") {
-      // Requires: #include <Eigen/UmfPackSupport>
-      // Requires linking against SuiteSparse (umfpack, amd)
-      UmfSpMatrix A_umf = A;
-      Eigen::UmfPackLU<UmfSpMatrix> solver;
-
-      solver.compute(A_umf);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("UMFPACK decomposition failed");
-        throw std::runtime_error("UMFPACK decomposition failed");
-      }
-
-      MatrixXd x = solver.solve(b);
-      if (solver.info() != Eigen::Success) {
-        logger_->error("UMFPACK solver failed during solve phase");
-      }
-
-      const Scalar residual = (A * x - b).norm();
-      return {x, residual};
+      return {x.sparseView(), residual};
     }
     throw std::runtime_error("Unknown method type: " + method);
-  }
-
-  std::tuple<MatrixXd, Scalar> solve_preconditioned_system(const SpMatrix& LHS,
-                                                           const MatrixXd& RHS) {
-    const SpMatrix LHS_t = SpMatrix(LHS.transpose());
-    const SpMatrix S = (LHS + LHS_t) * 0.5;
-    const SpMatrix A = (LHS - LHS_t) * 0.5;
-
-    MatrixXd dy = MatrixXd::Zero(LHS.rows(), 1);
-    Scalar last_residual = std::numeric_limits<Scalar>::infinity();
-    Scalar total_residual = last_residual;
-
-    for (int i = 0; i < 10; ++i) {
-      MatrixXd iter_rhs = RHS - A * dy;
-      MatrixXd new_dy;
-      Scalar sym_residual;
-      std::tie(new_dy, sym_residual) = solve_linear_system(S, iter_rhs, "ldl");
-      (void)sym_residual;
-
-      total_residual = (LHS * new_dy - RHS).norm();
-      if (total_residual > last_residual) {
-        break;
-      }
-      dy = new_dy;
-      logger_->debug("Preconditioned iter total_residual={:.6f}", total_residual);
-      if (total_residual < 1e-2 || total_residual > 0.9 * last_residual) {
-        break;
-      }
-      last_residual = total_residual;
-    }
-    return {dy, total_residual};
   }
 
   // Solve dynamic game
@@ -576,10 +473,10 @@ class InteriorPointGame {
     auto double_param_val = double_param.request();
 
     // Call rollout(x0, u_guess, int_param, double_param) -> x
-    wb_.args[0] = static_cast<double*>(x0_val.ptr);
-    wb_.args[1] = static_cast<double*>(u_guess_val.ptr);
-    wb_.args[2] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[3] = static_cast<double*>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double *>(x0_val.ptr);
+    wb_.args[1] = static_cast<double *>(u_guess_val.ptr);
+    wb_.args[2] = static_cast<double *>(int_param_val.ptr);
+    wb_.args[3] = static_cast<double *>(double_param_val.ptr);
     assert(rollout_.n_in() == 4);
 
     casadi::Sparsity x_sp = rollout_.sparsity_out(0);
@@ -594,100 +491,52 @@ class InteriorPointGame {
 
     // u_guess, dense
     auto u = u_guess.cast<MatrixXd>();
+
     MatrixXd lamda = MatrixXd::Zero(n_ * N_, T_);
-    // get context, get h_val, calculate slack variable s, mu
-    // Call get_full_context_(x) -> full_context_buffer
-    wb_.args[0] = static_cast<double*>(x.data());
-    assert(get_full_context_.n_in() == 1);
-    assert(get_full_context_.sparsity_in(0).is_dense());
-    casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
-    assert(full_context_sp.is_dense());
-    std::vector<Scalar> full_context_buffer(full_context_sp.nnz());
-    wb_.res[0] = full_context_buffer.data();
-    assert(get_full_context_.n_out() == 1);
-    get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
-    wb_.res[0] = nullptr;
-
-    // Call h_(x, u, context, int_params, double_params) -> h_val_buffer
-    wb_.args[0] = static_cast<double*>(x.data());
-    wb_.args[1] = static_cast<double*>(u.data());
-    wb_.args[2] = static_cast<double*>(full_context_buffer.data());
-    wb_.args[3] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[4] = static_cast<double*>(double_param_val.ptr);
-    assert(h_.n_in() == 5);
-    casadi::Sparsity h_val_sp = h_.sparsity_out(0);
-    std::vector<double> h_val_buffer(h_val_sp.nnz());
-    wb_.res[0] = h_val_buffer.data();
-    assert(h_.n_out() == 1);
-    h_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
-    wb_.res[0] = nullptr;
-
-    Scalar tau = 0.1;  // Perturbed complementary slackness mu * s = tau > 0, homotopy param -> 0
-    // Slack variable
-    MatrixXd s =
-        (-Eigen::Map<Eigen::MatrixXd>(h_val_buffer.data(), h_val_sp.size1() * h_val_sp.size2(), 1))
-            .cwiseMax(1e-2);
-    MatrixXd mu = tau * s.cwiseInverse();  // Multiplier for h(x,u) + s
-
-    std::vector<std::pair<Scalar, Scalar>> filter_state;  // Primal, dual residual
-    line_search_fail_count_ = 0;
-
-    bool converged = false;
-    bool optimal = false;
+    MatrixXd mu = MatrixXd::Zero(n_h_ * N_, 1);
+    bool has_converged = false;
+    bool is_optimal = false;
     bool stop = false;
     Scalar residual = 1e10;
 
     int iter;
-    std::string msg{"no info"};
     for (iter = 0; iter < max_iterations_; iter++) {
       if (rollout_each_step_) {
         // Call rollout(x0, u_guess, int_param, double_param) -> x
-        wb_.args[0] = static_cast<double*>(x0_val.ptr);
-        wb_.args[1] = static_cast<double*>(u.data());
-        wb_.args[2] = static_cast<double*>(int_param_val.ptr);
-        wb_.args[3] = static_cast<double*>(double_param_val.ptr);
+        wb_.args[0] = static_cast<double *>(x0_val.ptr);
+        wb_.args[1] = static_cast<double *>(u.data());
+        wb_.args[2] = static_cast<double *>(int_param_val.ptr);
+        wb_.args[3] = static_cast<double *>(double_param_val.ptr);
         assert(rollout_.n_in() == 4);
         wb_.res[0] = x_buffer.data();
         assert(rollout_.n_out() == 1);
         rollout_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
         wb_.res[0] = nullptr;  // Avoid accidentally overwriting the buffer
       }
-      std::tie(stop, converged, optimal, residual) =
-          step(x, u, lamda, mu, s, filter_state, tau, int_param, double_param);
-      logger_->info("converged={},optimal={},residual={:.5f}", converged, optimal, residual);
-      const Scalar current_gap = s.cwiseProduct(mu).sum() / static_cast<Scalar>(dual_h_dim_);
-      tau = max(1e-8, tau_decay_ * current_gap);
-      logger_->debug("Perturbed Complementary Slackness: tau={:.8f}", tau);
-      if (converged) break;
-      if (line_search_fail_count_ >= max_failed_line_search_ || stop) {
-        msg = "Line search no progress";
+      std::tie(stop, has_converged, is_optimal, residual) =
+          step(x, u, lamda, mu, int_param, double_param);
+      logger_->info("converged={}, optimal={}, residual={:.5f}", has_converged, is_optimal,
+                    residual);
+      if (has_converged || stop) {
         break;
       }
     }
-    if (msg == "no info") {
-      if (converged && optimal) {
-        msg = "Converged to NE";
-      } else if (converged && !optimal) {
-        msg = "Converged to saddle point";
-      }
-    }
-    // Return: x,  u,  lamda,  mu,  residual, converged,  optimal,
+    // Return: x,  u,  lamda,  mu,  residual, has_converged,  is_optimal,
     // iterations,  msg
-    return {x, u, lamda, mu, residual, converged, optimal, iter, msg};
+    std::string msg{"no info"};
+    return {x, u, lamda, mu, residual, has_converged, is_optimal, iter, msg};
   }
 
   // Take one Newton step, modify x,u,lamda,mu IN PLACE
   // x_ref: n*N,T
   // u_ref: m*N,T
   // lamda: n*N,T
-  // mu: n_hi*N, 1
+  // mu: n_h*N, 1
   // Returns (stop, has_converged, is_optimal, residual)
   std::tuple<bool, bool, bool, Scalar> step(Eigen::Ref<MatrixXd> x, Eigen::Ref<MatrixXd> u,
                                             Eigen::Ref<MatrixXd> lamda, Eigen::Ref<MatrixXd> mu,
-                                            Eigen::Ref<MatrixXd> s,
-                                            std::vector<std::pair<Scalar, Scalar>>& filter_state,
-                                            const Scalar tau, py::array_t<double>& int_param,
-                                            py::array_t<double>& double_param) {
+                                            py::array_t<double> &int_param,
+                                            py::array_t<double> &double_param) {
     // Solve r0 + H @ dy = 0
     // i.e. full_r0 + full_KKT @ <dx, du, dlambda, dmu> = 0
     // identify inactive constraints (mu)
@@ -699,7 +548,7 @@ class InteriorPointGame {
     auto double_param_val = double_param.request();
     // Get game context
     // Call get_full_context_(x)
-    wb_.args[0] = static_cast<double*>(x.data());
+    wb_.args[0] = static_cast<double *>(x.data());
     assert(get_full_context_.n_in() == 1);
     assert(get_full_context_.sparsity_in(0).is_dense());
     casadi::Sparsity full_context_sp = get_full_context_.sparsity_out(0);
@@ -719,13 +568,13 @@ class InteriorPointGame {
     // logger_->debug("Getting r0 and KKT matrix...");
     // Get residual
     // full_r0 = r(x, u, lamda, mu, context, int_param, double_param)
-    wb_.args[0] = static_cast<double*>(x.data());
-    wb_.args[1] = static_cast<double*>(u.data());
-    wb_.args[2] = static_cast<double*>(lamda.data());
-    wb_.args[3] = static_cast<double*>(mu.data());
-    wb_.args[4] = static_cast<double*>(full_context_buffer.data());
-    wb_.args[5] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[6] = static_cast<double*>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double *>(x.data());
+    wb_.args[1] = static_cast<double *>(u.data());
+    wb_.args[2] = static_cast<double *>(lamda.data());
+    wb_.args[3] = static_cast<double *>(mu.data());
+    wb_.args[4] = static_cast<double *>(full_context_buffer.data());
+    wb_.args[5] = static_cast<double *>(int_param_val.ptr);
+    wb_.args[6] = static_cast<double *>(double_param_val.ptr);
     assert(r_.n_in() == 7);
     assert(r_.sparsity_in(0).is_dense());
     assert(r_.sparsity_in(1).is_dense());
@@ -760,6 +609,7 @@ class InteriorPointGame {
     wb_.res[1] = nullptr;
 
     auto full_r0 = get_mapped_spmatrix(full_r0_sp, full_r0_buffer.data());
+    Scalar r0_norm = full_r0.norm();
     assert(h_val_sp.is_dense());
     // auto h_val = get_mapped_spmatrix(h_val_sp, h_val_buffer.data());
     Eigen::Map<MatrixXd> h_val(h_val_buffer.data(), h_val_sp.size1(), h_val_sp.size2());
@@ -788,13 +638,7 @@ class InteriorPointGame {
     // later
     SpMatrix full_KKT = get_mapped_spmatrix(full_KKT_sp, full_KKT_buffer.data());
     check_spmatrix_has_nan(full_KKT, "full_KKT");
-    MatrixXd full_rhs = -MatrixXd(full_r0);
-    const int mu_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
-    for (int i = 0; i < dual_h_dim_; ++i) {
-      const Scalar slack_ratio = -s(i, 0) / mu(i, 0);
-      full_KKT.coeffRef(mu_offset + i, mu_offset + i) += slack_ratio;
-      full_rhs(mu_offset + i, 0) += -tau / mu(i, 0);
-    }
+
     // Check inertia for each agent KKT matrix Ki
     bool is_optimal = true;
     std::vector<int> saddle_agent_vec;
@@ -803,7 +647,7 @@ class InteriorPointGame {
 
     // Create regularization matrix for Ki, only upper left block (H part) is I
     const int primal_n = (n_ + m_) * T_;
-    const int dual_n = n_ * T_ + n_hi_;
+    const int dual_n = n_ * T_ + n_h_;
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(primal_n);
     for (int i = 0; i < primal_n; ++i) {
@@ -831,7 +675,7 @@ class InteriorPointGame {
       triplets.reserve(rows);
       for (int k = 0; k < rows; ++k) {
         // Primal (+reg), Dual/Constraints (-reg)
-        double val = (k < primal_n) ? reg_inertia_ : -reg_inertia_;
+        double val = (k < primal_n) ? reg_ : -reg_;
         triplets.emplace_back(k, k, val);
       }
       SpMatrix reg_matrix(rows, cols);
@@ -843,7 +687,6 @@ class InteriorPointGame {
       auto inertia = get_inertia(Ki_reg, solver);
       auto expected_inertia = std::make_tuple(primal_n, dual_n, 0);
       if (inertia != expected_inertia) {
-        // TODO use different regularization for inertia checking
         is_optimal = false;
         saddle_agent_vec.push_back(i);
         if (inertia_correction_) {
@@ -898,94 +741,100 @@ class InteriorPointGame {
     }
     logger_->info("Saddle agents: {}", saddle_agent_vec);
 
-    if (precondition_with_potential_) {
-      reg_ = reg_inertia_;
-    }
-
-    // Apply Levenberg-Marquardt regularization to the full game KKT.
-    {
-      const int rows = full_KKT.rows();
-      std::vector<Eigen::Triplet<double>> reg_triplets;
-      reg_triplets.reserve(rows);
-      const int primal_var_count = n_ * N_ * T_ + m_ * N_ * T_;
-      for (int k = 0; k < rows; ++k) {
-        const double val = (k < primal_var_count) ? reg_ : -reg_;
-        reg_triplets.emplace_back(k, k, val);
-      }
-      SpMatrix reg_matrix(rows, rows);
-      reg_matrix.setFromTriplets(reg_triplets.begin(), reg_triplets.end());
-      full_KKT += reg_matrix;
-    }
-
+    // TODO still need to add LM regularization
     if (inertia_correction_) {
       full_KKT += make_full_KKT_reg(reg_vec);
     }
 
     MatrixXd full_dy;
     Scalar residual;
-    if (precondition_with_potential_) {
-      std::tie(full_dy, residual) = solve_preconditioned_system(full_KKT, full_rhs);
-      logger_->info("Preconditioned KKT residual={:.5f}", residual);
+    if (reduce_kkt_system_) {
+      // Apply active set method, skim down full_r0 and full_KKT
+      // logger_->debug("Reduce KKT system...");
+      SpMatrix reduced_KKT;
+      MatrixXd reduced_r0;
+      // TODO maybe there's a more useful index? like new_to_old
+      std::vector<int> active_h_indices;
+      // Can't use r0 directly, can't differentiate between an inactive h<0 vs a
+      // tight h=0 since both are 0 in r
+      std::tie(reduced_KKT, reduced_r0, active_h_indices) =
+          reduce_KKT_system(full_KKT, full_r0, h_val.reshaped());
+      assert(reduced_KKT.rows() == reduced_KKT.cols());
+      // Solve reduced system reduced_r0 + reduced_KKT @ reduced_dy = 0
+
+      // TODO maybe use dense matrix for solution
+      Vector reduced_dy;
+
+      // Apply Levenberg-Marquardt Regularization
+      // logger_->debug("Apply Regularization...");
+      std::vector<Eigen::Triplet<double>> reg_triplets;
+      reg_triplets.reserve(reduced_KKT.rows());
+      // Primal Variables: Add +reg to diagonal
+      const int primal_var_count = (n_ + m_) * N_ * T_;
+      for (int i = 0; i < primal_var_count; ++i) {
+        reg_triplets.emplace_back(i, i, reg_);
+      }
+      // Dual Variables (Constraints): Add -reg to diagonal
+      for (int i = primal_var_count; i < reduced_KKT.rows(); ++i) {
+        reg_triplets.emplace_back(i, i, -reg_);
+      }
+      Eigen::SparseMatrix<double> reg_matrix(reduced_KKT.rows(), reduced_KKT.cols());
+      reg_matrix.setFromTriplets(reg_triplets.begin(), reg_triplets.end());
+      reduced_KKT += reg_matrix;
+
+      // logger_->debug("Solve linear system ...");
+      check_spmatrix_has_nan(reduced_KKT, "reduced_KKT");
+      if (reduced_r0.hasNaN()) {
+        logger_->warn("reduced_dy has nan");
+      }
+      std::tie(reduced_dy, residual) = solve_linear_system(reduced_KKT, -reduced_r0, "lscg");
+      if (reduced_dy.hasNaN()) {
+        logger_->warn("reduced_dy has nan");
+      }
+      const int mu_in_y_offset = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_;
+      assert(reduced_dy.rows() == mu_in_y_offset + active_h_indices.size());
+
+      // Reconstruct full_dy from reduced_dy
+      full_dy = MatrixXd::Zero(full_KKT.cols(), 1);
+      full_dy.block(0, 0, mu_in_y_offset, 1) = reduced_dy.block(0, 0, mu_in_y_offset, 1);
+      for (int i = 0; i < active_h_indices.size(); i++) {
+        full_dy(mu_in_y_offset + active_h_indices[i], 0) = reduced_dy(mu_in_y_offset + i, 0);
+      }
+      logger_->debug("reduced_dy sq_norm {:.5f}", pow(reduced_dy.norm(), 2));
+      debug_reduced_KKT_ = reduced_KKT;
     } else {
-      std::tie(full_dy, residual) = solve_linear_system(full_KKT, full_rhs, linear_solver_method_);
+      std::tie(full_dy, residual) = solve_linear_system(full_KKT, -full_r0, "lscg");
     }
     // FIXME why are they different???
     logger_->debug("full_dy sq_norm {:.5f}", pow(full_dy.norm(), 2));
 
     // Line Search, regularization bloating
     Scalar step = 1.0;
-    const int x_dim = n_ * N_ * T_;
-    const int u_dim = m_ * N_ * T_;
-    const int lamda_dim = n_ * N_ * T_;
-    const int mu_dim = dual_h_dim_;
-    const MatrixXd dx = full_dy.block(0, 0, x_dim, 1);
-    const MatrixXd du = full_dy.block(x_dim, 0, u_dim, 1);
-    const MatrixXd dlamda = full_dy.block(x_dim + u_dim, 0, lamda_dim, 1);
-    const MatrixXd dmu = full_dy.block(x_dim + u_dim + lamda_dim, 0, mu_dim, 1);
-    MatrixXd ds = -s + (MatrixXd::Constant(mu_dim, 1, tau) - s.cwiseProduct(dmu)).cwiseQuotient(mu);
-    Scalar alpha_p = 1.0;
-    Scalar alpha_d = 1.0;
-    for (int i = 0; i < mu_dim; ++i) {
-      if (ds(i, 0) < 0.0) {
-        alpha_p = min(alpha_p, -0.995 * s(i, 0) / ds(i, 0));
-      }
-      if (dmu(i, 0) < 0.0) {
-        alpha_d = min(alpha_d, -0.995 * mu(i, 0) / dmu(i, 0));
-      }
-    }
-    alpha_p = alpha_d = min(alpha_p, alpha_d);
-    logger_->debug("Max step size primal: {:.8f}, dual: {:.8f}", alpha_p, alpha_d);
     MatrixXd new_x(n_ * N_, T_);
     MatrixXd new_u(m_ * N_, T_);
     MatrixXd new_lamda(n_ * N_, T_);
-    MatrixXd new_mu(dual_h_dim_, 1);
-    MatrixXd new_s(dual_h_dim_, 1);
+    MatrixXd new_mu(n_h_ * N_, 1);
     int ls_iter;
-    MatrixXd full_r(full_r0.rows() + mu_dim, 1);
-    full_r.block(0, 0, full_r0.rows(), 1) = MatrixXd(full_r0);
-    full_r.block(full_r0.rows(), 0, mu_dim, 1) =
-        mu.cwiseProduct(s) - MatrixXd::Constant(mu_dim, 1, tau);
-    full_r.block(mu_offset, 0, mu_dim, 1) += s;
-    const Scalar comp_res = full_r.block(full_r0.rows(), 0, mu_dim, 1).lpNorm<1>();
-    const Scalar primal_res =
-        full_r.block(x_dim + u_dim + lamda_dim, 0, mu_dim + mu_dim, 1).lpNorm<1>() - comp_res;
-    const Scalar dual_res = full_r.block(0, 0, x_dim + u_dim, 1).lpNorm<1>() + comp_res;
-    Scalar trial_primal_res = primal_res;
-    Scalar trial_dual_res = dual_res;
-    if (filter_state.empty()) {
-      filter_state.emplace_back(max(primal_res * 1.2, static_cast<Scalar>(1e4)),
-                                -std::numeric_limits<Scalar>::infinity());
-    }
+    Scalar new_r_norm = -1;
     for (ls_iter = 0; ls_iter < line_search_max_iter_; ls_iter++) {
-      new_x = x + step * alpha_p * dx.reshaped(n_ * N_, T_);
-      new_u = u + step * alpha_p * du.reshaped(m_ * N_, T_);
-      new_lamda = lamda + step * alpha_d * dlamda.reshaped(n_ * N_, T_);
-      new_mu = mu + step * alpha_d * dmu.reshaped(mu_dim, 1);
-      new_s = s + step * alpha_p * ds;
+      // check r(y+step_size*dy).norm()
+      // Construct new x,u,lamda,mu
+      int offset = 0;
+      const int x_dim = n_ * N_ * T_;
+      new_x = x + step * full_dy.block(0, 0, x_dim, 1).reshaped(n_ * N_, T_);
+      offset += x_dim;
+      const int y_dim = m_ * N_ * T_;
+      new_u = u + step * full_dy.block(offset, 0, y_dim, 1).reshaped(m_ * N_, T_);
+      offset += y_dim;
+      const int lamda_dim = n_ * N_ * T_;
+      new_lamda = lamda + step * full_dy.block(offset, 0, lamda_dim, 1).reshaped(n_ * N_, T_);
+      offset += lamda_dim;
+      const int mu_dim = n_h_ * N_;  // mu is column vector
+      new_mu = mu + step * full_dy.block(offset, 0, mu_dim, 1).reshaped(mu_dim, 1);
 
       // Get game context
       // Call get_full_context_(x)
-      wb_.args[0] = static_cast<double*>(new_x.data());
+      wb_.args[0] = static_cast<double *>(new_x.data());
       assert(get_full_context_.n_in() == 1);
       assert(get_full_context_.sparsity_in(0).is_dense());
       wb_.res[0] = full_context_buffer.data();
@@ -994,13 +843,13 @@ class InteriorPointGame {
       get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
       wb_.res[0] = nullptr;
 
-      wb_.args[0] = static_cast<double*>(new_x.data());
-      wb_.args[1] = static_cast<double*>(new_u.data());
-      wb_.args[2] = static_cast<double*>(new_lamda.data());
-      wb_.args[3] = static_cast<double*>(new_mu.data());
-      wb_.args[4] = static_cast<double*>(full_context_buffer.data());
-      wb_.args[5] = static_cast<double*>(int_param_val.ptr);
-      wb_.args[6] = static_cast<double*>(double_param_val.ptr);
+      wb_.args[0] = static_cast<double *>(new_x.data());
+      wb_.args[1] = static_cast<double *>(new_u.data());
+      wb_.args[2] = static_cast<double *>(new_lamda.data());
+      wb_.args[3] = static_cast<double *>(new_mu.data());
+      wb_.args[4] = static_cast<double *>(full_context_buffer.data());
+      wb_.args[5] = static_cast<double *>(int_param_val.ptr);
+      wb_.args[6] = static_cast<double *>(double_param_val.ptr);
       assert(r_.sparsity_in(0).is_dense());
       assert(r_.sparsity_in(1).is_dense());
       assert(r_.sparsity_in(2).is_dense());
@@ -1019,94 +868,54 @@ class InteriorPointGame {
       wb_.res[0] = nullptr;
 
       auto new_r = get_mapped_spmatrix(full_r0_sp, new_r_buffer.data());
-      MatrixXd trial_full_r(new_r.rows() + mu_dim, 1);
-      trial_full_r.block(0, 0, new_r.rows(), 1) = MatrixXd(new_r);
-      trial_full_r.block(new_r.rows(), 0, mu_dim, 1) =
-          new_mu.cwiseProduct(new_s) - MatrixXd::Constant(mu_dim, 1, tau);
-      trial_full_r.block(mu_offset, 0, mu_dim, 1) += new_s;
-      const Scalar trial_comp_res = trial_full_r.block(new_r.rows(), 0, mu_dim, 1).lpNorm<1>();
-      trial_primal_res =
-          trial_full_r.block(x_dim + u_dim + lamda_dim, 0, mu_dim + mu_dim, 1).lpNorm<1>() -
-          trial_comp_res;
-      trial_dual_res = trial_full_r.block(0, 0, x_dim + u_dim, 1).lpNorm<1>() + trial_comp_res;
-      logger_->debug("step={:.8f}, trial_primal_res={:.5f}, trial_dual_res={:.5f}", step,
-                     trial_primal_res, trial_dual_res);
-
-      const bool improve_optimality = trial_dual_res < dual_res - bc_a_ * primal_res;
-      const bool improve_feasibility = trial_primal_res < (1 - bc_a_) * primal_res;
-      if (!improve_optimality && !improve_feasibility) {
+      new_r_norm = new_r.norm();
+      logger_->debug("Line Search step {:.5f}, new_r_norm {:.5f}", step, new_r_norm);
+      if (new_r_norm > (1 - bc_a_ * step) * r0_norm) {
         step *= bc_b_;
-        continue;
+      } else {
+        break;
       }
-
-      bool is_dominated = false;
-      for (const auto& [filter_primal_res, filter_dual_res] : filter_state) {
-        const bool filter_improve_optimality =
-            trial_dual_res < filter_dual_res - bc_a_ * filter_primal_res;
-        const bool filter_improve_feasibility = trial_primal_res < (1 - bc_a_) * filter_primal_res;
-        if (!filter_improve_optimality && !filter_improve_feasibility) {
-          is_dominated = true;
-          break;
-        }
-      }
-      if (is_dominated) {
-        step *= bc_b_;
-        continue;
-      }
-
-      if (!improve_optimality && improve_feasibility) {
-        filter_state.emplace_back(max(static_cast<Scalar>(1e-4), primal_res), dual_res);
-      }
-      break;
     }
     if (ls_iter == line_search_max_iter_) {
       reg_ = min(reg_ * 10.0, 0.1);
       step = 0.0;
-      line_search_fail_count_++;
-      new_x = x;
-      new_u = u;
-      new_lamda = lamda;
-      new_mu = mu;
-      new_s = s;
-      trial_primal_res = primal_res;
-      trial_dual_res = dual_res;
+      line_search_no_progress_counter_++;
       logger_->debug("Line Search no progress, inflating reg to {:.5f}", reg_);
     } else {
       reg_ = reg0_;
-      line_search_fail_count_ = 0;
+      line_search_no_progress_counter_ = 0;
     }
     logger_->debug("Line search stopped after {}/{} iterations", ls_iter + 1,
                    line_search_max_iter_);
     logger_->debug("Step size = {:.5f}", step);
-    bool stop = line_search_fail_count_ >= max_failed_line_search_;
+    bool stop = line_search_no_progress_counter_ >= 2;
 
     x = new_x;
     u = new_u;
     lamda = new_lamda;
     mu = new_mu;
-    s = new_s;
 
-    const Scalar total_residual = trial_primal_res + trial_dual_res;
-    bool has_converged = total_residual < tolerance_;
+    bool has_converged = new_r_norm < tolerance_;
     if (!debug_got_vals_) {
       debug_full_KKT_ = full_KKT;
-      debug_full_r0_ = full_rhs.sparseView();
+      debug_full_r0_ = full_r0;
       debug_full_dy = full_dy;
       debug_got_vals_ = true;
     }
 
     // Returns (has_converged, is_optimal, residual)
-    return {stop, has_converged, is_optimal, total_residual};
+    return {stop, has_converged, is_optimal, new_r_norm};
   }
 
   SparseMatrixResult debug_get_full_KKT() { return get_spr(debug_full_KKT_); }
+  SparseMatrixResult debug_get_reduced_KKT() { return get_spr(debug_reduced_KKT_); }
   SparseMatrixResult debug_get_full_r0() { return get_spr(debug_full_r0_); }
   std::vector<double> debug_get_context() { return debug_context; }
   MatrixXd debug_get_x() { return debug_x; }
   MatrixXd debug_get_u() { return debug_u; }
   MatrixXd debug_get_full_dy() { return debug_full_dy; }
 
-  SparseMatrixResult get_spr(const SpMatrix& mtx) {
+  SparseMatrixResult get_spr(const SpMatrix &mtx) {
     SparseMatrixResult res;
     res.shape = {mtx.rows(), mtx.cols()};
     res.data.assign(mtx.valuePtr(), mtx.valuePtr() + mtx.nonZeros());
@@ -1115,9 +924,9 @@ class InteriorPointGame {
     return res;
   }
 
-  bool check_spmatrix_has_nan(const SpMatrix& mtx, std::string name) {
+  bool check_spmatrix_has_nan(const SpMatrix &mtx, std::string name) {
     bool has_nan = false;
-    const double* values = mtx.valuePtr();
+    const double *values = mtx.valuePtr();
     for (int i = 0; i < mtx.nonZeros(); ++i) {
       if (std::isnan(values[i])) {
         has_nan = true;
@@ -1131,8 +940,8 @@ class InteriorPointGame {
   }
 
   // Make regularization matrix given regularization coefficient from each agent
-  SpMatrix make_full_KKT_reg(const std::vector<double>& reg_vec) {
-    int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + dual_h_dim_;
+  SpMatrix make_full_KKT_reg(const std::vector<double> &reg_vec) {
+    int l = n_ * N_ * T_ + m_ * N_ * T_ + n_ * N_ * T_ + n_h_ * N_;
 
     typedef Eigen::Triplet<Scalar> T;
     std::vector<T> triplet_list;
@@ -1170,8 +979,8 @@ class InteriorPointGame {
   //        Caller must ensure identical sparsity pattern
   // Return:
   //  inertia tuple
-  std::tuple<int, int, int> get_inertia(const SpMatrix& mtx,
-                                        Eigen::SimplicialLDLT<SpMatrix>& solver) {
+  std::tuple<int, int, int> get_inertia(const SpMatrix &mtx,
+                                        Eigen::SimplicialLDLT<SpMatrix> &solver) {
     solver.factorize(mtx);
     // Eigen::SimplicialLDLT<SpMatrix> solver;
     // solver.compute(mtx);
@@ -1180,7 +989,7 @@ class InteriorPointGame {
       throw std::runtime_error("LDL decomposition failed");
     }
     // Check Inertia
-    const auto& D = solver.vectorD();
+    const auto &D = solver.vectorD();
     int pos = 0;
     int neg = 0;
     int zero = 0;
@@ -1205,13 +1014,13 @@ class InteriorPointGame {
     auto int_param_val = int_param.request();
     auto double_param_val = double_param.request();
 
-    wb_.args[0] = static_cast<double*>(x0_val.ptr);
-    wb_.args[1] = static_cast<double*>(u_val.ptr);
-    wb_.args[2] = static_cast<double*>(int_param_val.ptr);
-    wb_.args[3] = static_cast<double*>(double_param_val.ptr);
+    wb_.args[0] = static_cast<double *>(x0_val.ptr);
+    wb_.args[1] = static_cast<double *>(u_val.ptr);
+    wb_.args[2] = static_cast<double *>(int_param_val.ptr);
+    wb_.args[3] = static_cast<double *>(double_param_val.ptr);
     assert(rollout_.n_in() == 4);
 
-    const casadi::Sparsity& res_sp = rollout_.sparsity_out(0);  // 0th output sparsity
+    const casadi::Sparsity &res_sp = rollout_.sparsity_out(0);  // 0th output sparsity
     // Allocate output buffer
     std::vector<double> res_buffer(res_sp.nnz());
     wb_.res[0] = res_buffer.data();
@@ -1226,25 +1035,6 @@ class InteriorPointGame {
     // res.data = res_buffer;
     // res.row.assign(res_sp.row(), res_sp.row() + res_sp.nnz());
     // res.colind.assign(res_sp.colind(), res_sp.colind() + res_sp.size2() + 1);
-    Eigen::Map<MatrixXd> res(res_buffer.data(), res_sp.size1(), res_sp.size2());
-    return res;
-  }
-
-  // Evaluate get_full_context function from casadi using python arguments.
-  MatrixXd get_full_context(py::array_t<double> x) {
-    auto x_val = x.request();
-
-    wb_.args[0] = static_cast<double*>(x_val.ptr);
-    assert(get_full_context_.n_in() == 1);
-
-    const casadi::Sparsity& res_sp = get_full_context_.sparsity_out(0);
-    std::vector<double> res_buffer(res_sp.nnz());
-    wb_.res[0] = res_buffer.data();
-    assert(get_full_context_.n_out() == 1);
-    assert(res_sp.is_dense());
-
-    get_full_context_(wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
-
     Eigen::Map<MatrixXd> res(res_buffer.data(), res_sp.size1(), res_sp.size2());
     return res;
   }

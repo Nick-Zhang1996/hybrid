@@ -64,12 +64,12 @@ def test_casadi_game():
     n = game.config.n
     m = game.config.m
     T = game.config.T
-    n_hi = game.config.n_hi
+    n_h = game.config.n_h
 
     x = cas.SX.sym('x', n*N, T)
     u = cas.SX.sym('u', m*N, T)
     lamda = cas.SX.sym('lamda', N*n, T)
-    mu = cas.SX.sym('mu', n_hi, N)
+    mu = cas.SX.sym('mu', n_h, N)
 
     x_k = cas.SX.sym('x_k', n, N)
     # x_k_i = cas.SX.sym('x_k_i', n)
@@ -97,7 +97,7 @@ def test_casadi_game():
     N = solver.N
     n = solver.n
     m = solver.m
-    r_dim = N*(T*(n+m) + T*n + n_hi)
+    r_dim = N*(T*(n+m) + T*n + n_h)
     print(r_dim)
 
     # r derivative

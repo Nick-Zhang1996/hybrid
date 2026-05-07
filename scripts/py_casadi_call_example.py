@@ -36,7 +36,7 @@ if __name__ == "__main__":
     cpp_solver = interior_point_game.InteriorPointGame(
         game.config.N,
         game.config.T,
-        game.config.n_hi,
+        getattr(game.config, 'n_h', getattr(game.config, 'n_hi', 0)),
         game.config.dt,
         solver_config.bc_a,
         solver_config.bc_b,
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     n = game.config.n
     m = game.config.m
     T = game.config.T
-    n_hi = game.config.n_hi
+    n_hi = getattr(game.config, 'n_h', getattr(game.config, 'n_hi', 0))
 
     x = np.zeros((N*n, T))
     u = np.zeros((N*m, T))

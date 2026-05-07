@@ -111,3 +111,12 @@ target_link_libraries(interior_point_game
     ${AMD_LIBRARY}
     ${SUPERLU_LIBRARY}
 )
+
+# --- CasADi - RD3G ----
+pybind11_add_module(rd3g_casadi solvers/rd3g_casadi.cpp)
+target_include_directories(rd3g_casadi PUBLIC ${CASADI_INCLUDE_DIR})
+target_link_libraries(rd3g_casadi
+    PRIVATE
+    spdlog::spdlog
+    ${CASADI_LIB}
+)
