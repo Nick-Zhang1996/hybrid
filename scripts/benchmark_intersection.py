@@ -1,14 +1,14 @@
-""" Benchmark intersection game with RD3G CasADi. Almost identical to benchmark_merge """
+"""Benchmark the interior-point game solver on the intersection game."""
 import numpy as np  # Only needed if you want to calculate percentiles
 import matplotlib.pyplot as plt
 import logging
 import numpy as np
 
 from rd3g.games.intersection_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
+logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger('main')
@@ -32,8 +32,8 @@ for car_count in range(2, 9):
     for i in range(100):
         np.random.seed(i)
         game = create_random_game(car_count=car_count, horizon=20)
-        solver_config = RD3GCasadiConfig(inertia_correction=False)
-        solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+        solver_config = InteriorPointGameConfig(inertia_correction=False)
+        solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
         if cpp:
             solver.init_cpp_backend()
             sol = solver.solve_cpp_backend()

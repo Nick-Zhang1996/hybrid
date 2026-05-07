@@ -6,7 +6,7 @@ import casadi as cas
 import numpy as np
 from rd3g.games.car_merge_kinematic_bicycle_casadi import CarMergeKinematicBicycleCasadiConfig
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
 
 def test_casadi_config():
@@ -56,10 +56,10 @@ def test_casadi_config():
 
 @pytest.mark.skip('currently broken')
 def test_casadi_game():
-    """ Test auto-differentiation correctness for RD3G CasADi solver"""
+    """Test auto-differentiation correctness for the interior-point game solver."""
     game = create_random_game(car_count=3, horizon=20)
-    config = RD3GCasadiConfig()
-    solver = RD3GCasadi(config, game)
+    config = InteriorPointGameConfig()
+    solver = InteriorPointGame(config, game)
     N = game.config.N
     n = game.config.n
     m = game.config.m

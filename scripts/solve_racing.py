@@ -1,4 +1,4 @@
-""" Prototype to solve car racing game with RD3G CasADi """
+"""Prototype to solve the car racing game with the interior-point game solver."""
 import logging
 
 import pickle
@@ -6,10 +6,10 @@ import numpy as np
 
 from rd3g.utilities.util import talk
 from rd3g.games.car_racing_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
+logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger('main')
@@ -20,9 +20,9 @@ load = False
 variational_gne = True
 
 np.random.seed()
-solver_config = RD3GCasadiConfig(
+solver_config = InteriorPointGameConfig(
     inertia_correction=False, iterations=20, variational_gne=variational_gne)
-game = create_random_game(car_count=8, horizon=10, variational_gne=variational_gne)
+game = create_random_game(car_count=4, horizon=10, variational_gne=variational_gne)
 
 gc = game.config
 # load from pickle
@@ -35,7 +35,7 @@ if load:
 else:
     u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 
-solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
 
 if cpp:
     solver.init_cpp_backend()

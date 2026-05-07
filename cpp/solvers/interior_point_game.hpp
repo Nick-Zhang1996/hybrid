@@ -1,4 +1,4 @@
-// RD3G solver compatible with casadi codegen
+// Interior-point game solver compatible with CasADi codegen.
 #pragma once
 
 #include <dlfcn.h>
@@ -109,7 +109,7 @@ inline MappedSparseMatrix get_mapped_spmatrix(casadi::Sparsity sp, double* data)
   return retval;
 }
 
-class Rd3gCasadi {
+class InteriorPointGame {
  protected:
   int n_, m_, N_, T_, n_hi_, h_multiplier_cols_, dual_h_dim_;
   Scalar dt_, bc_a_, bc_b_, reg0_, reg_;
@@ -156,14 +156,15 @@ class Rd3gCasadi {
 
  public:
   // NOTE n,m may need to be template variables for performance
-  Rd3gCasadi(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
-             const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
-             const bool inertia_correction, const bool rollout_each_step,
-             const bool precondition_with_potential, const bool variational_gne,
-             const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
-             const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
-             const Scalar max_in_reg_val, const std::string linear_solver_method, const int verbose,
-             const std::string base_dir, const std::string casadi_module_name)
+  InteriorPointGame(const int N, const int T, const int n_hi, const Scalar dt, const Scalar bc_a,
+                    const Scalar bc_b, const Scalar reg, const Scalar reg_inertia,
+                    const bool inertia_correction, const bool rollout_each_step,
+                    const bool precondition_with_potential, const bool variational_gne,
+                    const Scalar tolerance, const Scalar tau_decay, const int line_search_max_iter,
+                    const int max_failed_line_search, const int max_iter, const int max_in_reg_iter,
+                    const Scalar max_in_reg_val, const std::string linear_solver_method,
+                    const int verbose, const std::string base_dir,
+                    const std::string casadi_module_name)
       : N_{N},
         T_{T},
         n_hi_{n_hi},
@@ -192,7 +193,7 @@ class Rd3gCasadi {
         verbose_{verbose},
         line_search_fail_count_{0},
         debug_got_vals_{false} {
-    const std::string logger_name{"rd3g_casadi_cpp"};
+    const std::string logger_name{"interior_point_game_cpp"};
     logger_ = spdlog::get(logger_name);
     if (!logger_) {
       logger_ = spdlog::stdout_color_mt(logger_name);

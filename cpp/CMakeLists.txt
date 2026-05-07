@@ -95,15 +95,15 @@ add_executable(casadi_eigen examples/casadi_eigen.cpp)
 target_include_directories(casadi_eigen PUBLIC ${CASADI_INCLUDE_DIR})
 target_link_libraries(casadi_eigen ${CASADI_LIB})
 
-# --- CasADi - RD3G ----
-pybind11_add_module(rd3g_casadi solvers/rd3g_casadi.cpp)
-target_include_directories(rd3g_casadi  PUBLIC 
-                                        ${CASADI_INCLUDE_DIR}
-                                        PRIVATE
-                                        ${SUPERLU_INCLUDE_DIR}
-                                        ${SUITESPARSE_INCLUDE_DIR}
-                                        )
-target_link_libraries(rd3g_casadi 
+# --- CasADi - Interior Point Game ----
+pybind11_add_module(interior_point_game solvers/interior_point_game.cpp)
+target_include_directories(interior_point_game PUBLIC
+                                               ${CASADI_INCLUDE_DIR}
+                                               PRIVATE
+                                               ${SUPERLU_INCLUDE_DIR}
+                                               ${SUITESPARSE_INCLUDE_DIR}
+                                               )
+target_link_libraries(interior_point_game
     PRIVATE 
     spdlog::spdlog
     ${CASADI_LIB}
@@ -111,4 +111,3 @@ target_link_libraries(rd3g_casadi
     ${AMD_LIBRARY}
     ${SUPERLU_LIBRARY}
 )
-

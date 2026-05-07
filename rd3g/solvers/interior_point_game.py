@@ -1,4 +1,4 @@
-""" Residual Descent Differential Dynamic Game Solver (RD3G) with CasADi """
+"""Interior-point game solver built on CasADi."""
 # pylint: disable=invalid-name, forgotten-debug-statement
 
 import logging
@@ -240,9 +240,11 @@ def ldl_solve(A, b, profiler, solver=None, A_upper=None):
 
 
 @dataclass(frozen=True)
-class RD3GCasadiConfig(BaseSolverConfig):
-    """Configs for Residual Game.
-     NOTE Some changes here require rerun codegen and recompiling the cpp program """
+class InteriorPointGameConfig(BaseSolverConfig):
+    """Configuration for the interior-point game solver.
+
+    NOTE: Some changes here require rerunning codegen and recompiling the C++ module.
+    """
     tolerance: float = 5e-4  # 1e-5  # 5e-4 in benchmark
     """ The residual threhold for stopping solver iterations. """
     iterations: int = 20  # 20 in benchmark
@@ -289,11 +291,11 @@ class LineSearchSuccess(Exception):
     """ Line search found a step size that gives adequate residual reduction """
 
 
-class RD3GCasadi(BaseSolver):
-    """Residual Descent Differential Dynamic Game Solver (RD3G) with CasADi
+class InteriorPointGame(BaseSolver):
+    """Interior-point game solver with CasADi-backed derivatives.
 
     Attributes:
-        config (RD3GCasadiConfig): Configuration nametuple to
+        config (InteriorPointGameConfig): Configuration dataclass to
             specify solver iterations, cpp binary, tolerance etc.
         N (int): Number of agents
         T (int): Horizon length
@@ -305,7 +307,7 @@ class RD3GCasadi(BaseSolver):
 
     """
 
-    def __init__(self, config: RD3GCasadiConfig, game, cpp_only=False):
+    def __init__(self, config: InteriorPointGameConfig, game, cpp_only=False):
         """ cpp_only: if True, skip constructing casadi function construction """
         BaseSolver.__init__(self, config, game)
 
@@ -457,7 +459,7 @@ class RD3GCasadi(BaseSolver):
         """ Load CPP solver"""
         # logger.error("Build directory %s not found. Did you compile?", build_dir)
         # pylint:disable-next=import-outside-toplevel, no-name-in-module
-        from build.lib import rd3g_casadi
+        from build.lib import interior_point_game
         # The source code need to be generated and compiled before the following code can be run
 
         # Load compiled solver, compare results
@@ -468,7 +470,7 @@ class RD3GCasadi(BaseSolver):
 
         try:
             # pylint:disable-next=c-extension-no-member
-            self.cpp_solver = rd3g_casadi.Rd3gCasadi(
+            self.cpp_solver = interior_point_game.InteriorPointGame(
                 game.config.N,
                 game.config.T,
                 getattr(game.config, 'n_h', getattr(game.config, 'n_hi', 0)),

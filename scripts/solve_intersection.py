@@ -1,13 +1,13 @@
-""" Prototype to solve intersection game with RD3G CasADi """
+"""Prototype to solve the intersection game with the interior-point game solver."""
 from time import time
 import logging
 import numpy as np
 
 from rd3g.games.intersection_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
+logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
@@ -19,11 +19,11 @@ cpp = False
 variational_gne = False
 
 logger.info('Creating game...')
-game = create_random_game(car_count=5, horizon=20, variational_gne=variational_gne)
+game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
 logger.info('Setting up solver...')
-solver_config = RD3GCasadiConfig(
+solver_config = InteriorPointGameConfig(
     iterations=50, inertia_correction=False, variational_gne=variational_gne)
-solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
 if cpp:
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()

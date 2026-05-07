@@ -1,4 +1,4 @@
-#include "rd3g_casadi.hpp"
+#include "interior_point_game.hpp"
 
 #include <Python.h>  // For testing include
 #include <pybind11/eigen.h>
@@ -8,7 +8,7 @@
 
 namespace py = pybind11;
 // using Scalar = double;
-using ClassName = Rd3gCasadi;
+using ClassName = InteriorPointGame;
 
 void bind_sparse_struct(py::module &m) {
   py::class_<SparseMatrixResult>(m, "SparseMatrixResult")
@@ -18,10 +18,10 @@ void bind_sparse_struct(py::module &m) {
       .def_readonly("shape", &SparseMatrixResult::shape);
 }
 
-PYBIND11_MODULE(rd3g_casadi, m) {
+PYBIND11_MODULE(interior_point_game, m) {
   bind_sparse_struct(m);
-  m.doc() = "RD3G CasADi solver";
-  py::class_<ClassName>(m, "Rd3gCasadi")
+  m.doc() = "Interior-point game solver";
+  py::class_<ClassName>(m, "InteriorPointGame")
       .def(py::init<int,          // N
                     int,          // T
                     int,          // n_hi

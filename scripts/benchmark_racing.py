@@ -1,13 +1,13 @@
-""" Benchmark game with RD3G CasADi """
+"""Benchmark the interior-point game solver on the racing game."""
 import logging
 import numpy as np
 import pyttsx3
 
 from rd3g.games.car_racing_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('rd3g.solvers.rd3g_casadi')
+logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.WARNING)
 
 logger = logging.getLogger('main')
@@ -35,9 +35,9 @@ def benchmark(cpp, vne, precond):
         for i in range(50):
             np.random.seed(i)
             game = create_random_game(car_count=car_count, horizon=10, variational_gne=vne)
-            solver_config = RD3GCasadiConfig(
+            solver_config = InteriorPointGameConfig(
                 inertia_correction=False, variational_gne=vne, precondition_with_potential=precond)
-            solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+            solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
             if cpp:
                 solver.init_cpp_backend()
                 sol = solver.solve_cpp_backend()

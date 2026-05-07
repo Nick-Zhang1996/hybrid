@@ -13,9 +13,9 @@ from scipy.sparse import csc_matrix
 from rd3g.utilities.util import BASEDIR
 from rd3g.utilities.casadi_util import generate_code
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
-from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 
-from rd3g.src.build.lib import rd3g_casadi
+from build.lib import interior_point_game
 
 
 if __name__ == "__main__":
@@ -23,8 +23,8 @@ if __name__ == "__main__":
     # For any specific game, a separate source file is created for each pair of (T, N)
     # This example shows generating src file for one specific pair of (T,N)
     game = create_random_game(car_count=3, horizon=20)
-    solver_config = RD3GCasadiConfig()
-    solver = RD3GCasadi(solver_config, game)
+    solver_config = InteriorPointGameConfig()
+    solver = InteriorPointGame(solver_config, game)
     generate_code(solver)
 
     # The generated source code need to be compiled before the following code can be run
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     # Example for sending matrices to/from casadi
     module_name = game.__module__.rsplit('.', maxsplit=1)[-1]
 
-    cpp_solver = rd3g_casadi.Rd3gCasadi(
+    cpp_solver = interior_point_game.InteriorPointGame(
         game.config.N,
         game.config.T,
         game.config.n_hi,
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         solver_config.linear_solver_method,
         0,
         BASEDIR,
-        module_name
+        module_name,
     )
 
     N = game.config.N
