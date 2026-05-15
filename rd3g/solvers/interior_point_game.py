@@ -289,6 +289,8 @@ class InteriorPointGameConfig(BaseSolverConfig):
     """ Rollout control to get new state trajectory at the start of each solver iter """
     precondition_with_potential: bool = True
     """ Precondition the game KKT with a potential KKT to speed up computing"""
+    check_spectral_radius: bool = False
+    """ Check Spectral radius of inv(S)A in a numerically efficient way to ensure convergence"""
     variational_gne: bool = True
     """ If True, use one shared multiplier per canonical constraint """
     max_in_reg_iter: int = 10
@@ -847,19 +849,7 @@ class InteriorPointGame(BaseSolver):
             S_csc = (LHS_csc + LHS_csc_T) * 0.5
             A_csc = (LHS_csc - LHS_csc_T) * 0.5
             p.e('prep')
-            # S_norm = scipy.sparse.linalg.norm(S_csc)
-            # data = A_csc.data
-            # row_idx = A_csc.indices
-            # col_idx = np.repeat(np.arange(A_csc.shape[1]), np.diff(A_csc.indptr))
-            # nonzero_mask = data != 0
-            # if np.any(nonzero_mask):
-            #     nz_order = np.argsort(np.abs(data[nonzero_mask]))[::-1]
-            #     nz_data = data[nonzero_mask][nz_order]
-            #     nz_row_idx = row_idx[nonzero_mask][nz_order]
-            #     nz_col_idx = col_idx[nonzero_mask][nz_order]
-            #     for i, j, val in zip(nz_row_idx, nz_col_idx, nz_data):
-            #         print(f'i={i} ({self.y_idx_str(i)}) j={j} ({self.r_idx_str(j)}) val={val}')
-            # DEBUG: find spectral radius of inv(S) @ A
+
             dy = np.zeros((2*nNT+mNT+dual_h_dim, 1))
             t0 = time()
             A_upper = None
@@ -883,6 +873,71 @@ class InteriorPointGame(BaseSolver):
             dt = time() - t0
             logger.info(f'Preconditioned KKT: {dt=:.4f}, {total_res=:.4f}')
             p.e('Precondition')
+            if self.config.check_spectral_radius:
+                p.s('Check p(inv(S)A)')
+                # Instead of checking p(inv(S)A) < 1, we can equivalently check S+A inv(S) A > 0
+                # Sigma := S + A inv(S) A, S = LDL.T
+                # Sigma = S + A inv(L.T) inv(D) inv(L) A, Let Y:= inv(L) A
+                # Sigma = S - Y.T inv(D) Y
+                # L is lower triangular, so Y is cheap, D is diagonal, so inv(D) is cheap
+                try:
+                    L_zero_diag, D_S, P_vec = solver.factors()
+                    perm = np.asarray(P_vec)
+                    L = L_zero_diag + scipy.sparse.eye(S_csc.shape[0], format='csc')
+                    # qdldl works in permutated space, change basis to that space.
+                    A_perm = A_csc[perm, :][:, perm].tocsc()
+                    Y = scipy.sparse.linalg.spsolve_triangular(
+                        L,
+                        A_perm.toarray(),
+                        lower=True,
+                        unit_diagonal=True,
+                    )
+                    # We are assuming S is non-singular already, just for safety
+                    inv_D_S = np.divide(1.0, D_S, out=np.zeros_like(D_S), where=D_S != 0)
+
+                    # Naively check spectral radius
+                    # M  = inv(S) A = inv(L.T) inv(D) Y
+                    # L.T @ M = inv(D) @ Y
+                    inv_SA_perm = scipy.sparse.linalg.spsolve_triangular(
+                        L.T,
+                        inv_D_S[:, None] * Y,
+                        lower=False,
+                        unit_diagonal=True,
+                    )
+                    spectral_radius = (
+                        np.max(np.abs(scipy.linalg.eigvals(inv_SA_perm)))
+                        if inv_SA_perm.size else 0.0
+                    )
+
+                    Sigma_perm = S_csc[perm, :][:, perm].toarray()
+                    Sigma_perm -= Y.T @ (inv_D_S[:, None] * Y)
+                    # Ensure symmetry, may be unnecessary
+                    Sigma_perm = 0.5 * (Sigma_perm + Sigma_perm.T)
+                    Sigma_upper = scipy.sparse.triu(
+                        scipy.sparse.csc_matrix(Sigma_perm), format='csc')
+                    Sigma_upper.eliminate_zeros()
+                    Sigma_upper.sort_indices()
+                    Sigma_upper.sum_duplicates()
+                    # pylint:disable-next=c-extension-no-member
+                    sigma_solver = qdldl.Solver(Sigma_upper, upper=True)
+                    _, D_sigma, _ = sigma_solver.factors()
+                    sigma_pos = np.sum(D_sigma > 0)
+                    sigma_neg = np.sum(D_sigma < 0)
+                    sigma_zero = len(D_sigma) - sigma_pos - sigma_neg
+                    s_pos = np.sum(D_S > 0)
+                    s_neg = np.sum(D_S < 0)
+                    s_zero = len(D_S) - s_pos - s_neg
+                # Instead of checking p(inv(S)A) < 1, we can equivalently check S+A inv(S) A > 0
+                    logger.info(
+                        'Spectral radius check: '
+                        f'rho(inv(S)A)={spectral_radius:.6g}, '
+                        'inertia: '
+                        f'Sigma={(sigma_pos, sigma_neg, sigma_zero)}, '
+                        f'S={(s_pos, s_neg, s_zero)}, '
+                    )
+                except (RuntimeError, scipy.linalg.LinAlgError) as exc:
+                    logger.info('Spectral radius check skipped: %s', exc)
+                p.e('Check p(inv(S)A)')
         else:
             p.s('Solve Linear (full KKT)')
             t0 = time()
@@ -1429,7 +1484,8 @@ class InteriorPointGame(BaseSolver):
         H_abs.eliminate_zeros()
         H_abs.sort_indices()
         H_abs.sum_duplicates()
-        top = scipy.sparse.hstack([H_abs, full_KKT[:primal_var_count, primal_var_count:]], format='csc')
+        top = scipy.sparse.hstack(
+            [H_abs, full_KKT[:primal_var_count, primal_var_count:]], format='csc')
         bottom = scipy.sparse.hstack([full_KKT[primal_var_count:, :primal_var_count],
                                       full_KKT[primal_var_count:, primal_var_count:]], format='csc')
         return scipy.sparse.vstack([top, bottom], format='csc')

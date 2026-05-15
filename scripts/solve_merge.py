@@ -14,7 +14,7 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 np.random.seed(123421)
-cpp = True
+cpp = False
 variational_gne = True
 game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
 solver_config = InteriorPointGameConfig(
