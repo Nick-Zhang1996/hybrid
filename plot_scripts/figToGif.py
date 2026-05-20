@@ -6,7 +6,7 @@ from PIL import Image
 def resolveLogname():
     # setup log file
     # log file will record state of the vehicle for later analysis
-    logFolder = "./gifs/"
+    logFolder = "./outputs/gifs/"
     logPrefix = "iteration"
     logSuffix = ".gif"
     no = 1

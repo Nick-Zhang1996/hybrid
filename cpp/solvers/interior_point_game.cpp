@@ -11,7 +11,7 @@ namespace py = pybind11;
 using ClassName = InteriorPointGame;
 
 void bind_sparse_struct(py::module &m) {
-  py::class_<SparseMatrixResult>(m, "SparseMatrixResult")
+  py::class_<SparseMatrixResult>(m, "SparseMatrixResult", py::module_local())
       .def_readonly("data", &SparseMatrixResult::data)
       .def_readonly("row", &SparseMatrixResult::row)
       .def_readonly("colind", &SparseMatrixResult::colind)

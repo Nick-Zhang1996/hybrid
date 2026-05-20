@@ -9,6 +9,10 @@ import pyttsx3
 
 # root folder of repo.
 BASEDIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUTPUT_DIR = os.path.join(BASEDIR, 'outputs')
+BENCHMARK_PLOTS_DIR = os.path.join(OUTPUT_DIR, 'benchmarks')
+PICS_DIR = os.path.join(OUTPUT_DIR, 'pics')
+GIFS_DIR = os.path.join(OUTPUT_DIR, 'gifs')
 
 
 engine = pyttsx3.init()
@@ -55,7 +59,13 @@ def print_current_memory_usage(text=''):
 def resolve_logname(prefix='run', suffix='log'):
     """ Find next available logname, e.g. [prefix]_3.[suffix]"""
     no = 1
-    log_folder = os.path.join(BASEDIR, 'logs')
+    if suffix == 'gif':
+        log_folder = GIFS_DIR
+    elif suffix in {'png', 'jpg', 'jpeg', 'pdf', 'svg'}:
+        log_folder = PICS_DIR
+    else:
+        log_folder = os.path.join(BASEDIR, 'logs')
+    os.makedirs(log_folder, exist_ok=True)
     filename = os.path.join(log_folder, f'{prefix}_{no}.{suffix}')
     while os.path.isfile(filename):
         no += 1

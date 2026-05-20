@@ -261,7 +261,8 @@ class CarRacingCasadi(CasadiGame):
         # Create the animation
         anim = FuncAnimation(fig, update, frames=self.config.T, blit=False)
 
-        folder = os.path.join(BASEDIR, 'gifs')
+        folder = os.path.join(BASEDIR, 'outputs', 'gifs')
+        os.makedirs(folder, exist_ok=True)
         gif_filename = os.path.join(folder, f'racing_{self.config.N}car.gif')
         if save_gif:
             anim.save(gif_filename, writer='pillow')
@@ -274,7 +275,8 @@ class CarRacingCasadi(CasadiGame):
         # NOTE save initial, middle, final snapshots
         if save_snapshots:
             from PIL import Image  # pylint: disable=import-outside-toplevel
-            folder = os.path.join(BASEDIR, 'pics')
+            folder = os.path.join(BASEDIR, 'outputs', 'pics')
+            os.makedirs(folder, exist_ok=True)
             update(0)
             fig.canvas.draw()
             frame = Image.frombytes('RGB', fig.canvas.get_width_height(),

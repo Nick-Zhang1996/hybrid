@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import PercentFormatter
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
 CARS = np.array([2, 3, 4, 5, 6, 7, 8], dtype=float)
-OUTPUT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = ROOT_DIR / "outputs" / "benchmarks"
 
 CONFIGS = [
     {
@@ -28,28 +29,28 @@ CONFIGS = [
         "conv_mean": np.array([0.85, 0.85, 0.53, 0.59, 0.25, 0.26, 0.27]),
         "optimal_mean": np.array([0.84, 0.85, 0.50, 0.58, 0.23, 0.22, 0.25]),
     },
+    # {
+    #    "label": "IPM", # IPM without VNE
+    #    "color": "#0055AA",
+    #    "marker": "s",
+    #    "linestyle": "-",
+    #    "runtime_mean": np.array(
+    #        [7.761335372924805, 14.16980266571045, 40.58115243911743,
+    #         84.0429162979126, 71.83857679367065, 95.17242431640625,
+    #         135.7657790184021]
+    #    ),
+    #    "runtime_var": np.array(
+    #        [0.003562006717174882, 0.01849313556069774, 0.2779077248882174,
+    #         1.113932508520088, 0.6698600898017221, 1.1692867704444778,
+    #         1.9990461818433403]
+    #    ),
+    #    "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.53, 0.50, 0.30]),
+    #    "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.53, 0.50, 0.30]),
+    # },
     {
-        "label": "IPM",
-        "color": "#0055AA",
+        "label": "IPM",  # IPM + VNE
+        "color": "#CA676A",
         "marker": "s",
-        "linestyle": "-",
-        "runtime_mean": np.array(
-            [7.761335372924805, 14.16980266571045, 40.58115243911743,
-             84.0429162979126, 71.83857679367065, 95.17242431640625,
-             135.7657790184021]
-        ),
-        "runtime_var": np.array(
-            [0.003562006717174882, 0.01849313556069774, 0.2779077248882174,
-             1.113932508520088, 0.6698600898017221, 1.1692867704444778,
-             1.9990461818433403]
-        ),
-        "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.53, 0.50, 0.30]),
-        "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.53, 0.50, 0.30]),
-    },
-    {
-        "label": "IPM + VNE",
-        "color": "#D55E00",
-        "marker": "^",
         "linestyle": "-.",
         "runtime_mean": np.array(
             [7.288565635681152, 13.858742713928223, 30.7962965965271,
@@ -64,28 +65,28 @@ CONFIGS = [
         "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
         "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
     },
+    # {
+    #     "label": "IPM + VNE + Precond.",
+    #     "color": "#009E73",
+    #     "marker": "D",
+    #     "linestyle": ":",
+    #     "runtime_mean": np.array(
+    #         [3.7877464294433594, 5.803897380828857, 12.848892211914062,
+    #          19.959585666656494, 27.584717273712158, 37.57180690765381,
+    #          62.17010498046875]
+    #     ),
+    #     "runtime_var": np.array(
+    #         [0.001305362991297443, 0.002761745883725553, 0.025913257188358324,
+    #          0.053253872326030204, 0.11183415707784548, 0.18337279271597706,
+    #          0.4708664846496959]
+    #     ),
+    #     "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
+    #     "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
+    # },
     {
-        "label": "IPM + VNE + Precond.",
-        "color": "#009E73",
+        "label": "IPM + Potential Surgery",  # IPM + VNE + |S|+A
+        "color": "#8565C5",
         "marker": "D",
-        "linestyle": ":",
-        "runtime_mean": np.array(
-            [3.7877464294433594, 5.803897380828857, 12.848892211914062,
-             19.959585666656494, 27.584717273712158, 37.57180690765381,
-             62.17010498046875]
-        ),
-        "runtime_var": np.array(
-            [0.001305362991297443, 0.002761745883725553, 0.025913257188358324,
-             0.053253872326030204, 0.11183415707784548, 0.18337279271597706,
-             0.4708664846496959]
-        ),
-        "conv_mean": np.array([0.88, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
-        "optimal_mean": np.array([0.76, 0.89, 0.61, 0.52, 0.52, 0.51, 0.30]),
-    },
-    {
-        "label": "Robust IPM",
-        "color": "#CC79A7",
-        "marker": "v",
         "linestyle": "--",
         "runtime_mean": np.array(
             [7.753942012786865, 11.276869773864746, 23.011724948883057,
@@ -142,6 +143,7 @@ def style_axes(ax: plt.Axes, ylabel: str, percent_axis: bool = False) -> None:
 
 
 def save_figure(fig: plt.Figure, stem: str) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUTPUT_DIR / f"{stem}.png", bbox_inches="tight")
 
 

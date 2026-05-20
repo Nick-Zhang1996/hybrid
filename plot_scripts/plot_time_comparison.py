@@ -1,6 +1,10 @@
 """ Plot Solver runtime comparison"""
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = ROOT_DIR / "outputs" / "benchmarks"
 
 # --- Data Configuration ---
 cars = [2, 3, 4, 5, 6, 7, 8]
@@ -110,5 +114,6 @@ plt.legend(fontsize=11, loc='upper left')
 plt.tight_layout()
 
 # Save and Show
-plt.savefig('four_solvers_comparison.png', dpi=300)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+plt.savefig(OUTPUT_DIR / 'four_solvers_comparison.png', dpi=300)
 plt.show()

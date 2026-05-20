@@ -1,6 +1,10 @@
 # With inertia correction (all time in ms)
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = ROOT_DIR / "outputs" / "benchmarks"
 
 # --- Merge game ---
 in_time_mean = [13.701128959655762, 31.11893653869629, 60.20157337188721,
@@ -163,7 +167,8 @@ ax.legend(loc='upper left', frameon=True, fancybox=False, edgecolor='black', fra
 
 # --- 5. Save ---
 # plt.savefig('runtime_comparison.pdf', format='pdf', dpi=300)
-plt.savefig('runtime_comparison.png', format='png', dpi=300)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+plt.savefig(OUTPUT_DIR / 'runtime_comparison.png', format='png', dpi=300)
 
 print("Plot generated: runtime_comparison.pdf")
 plt.show()
