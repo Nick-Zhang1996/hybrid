@@ -126,6 +126,12 @@ def load_benchmark_data(input_path: Path) -> tuple[np.ndarray, list[dict]]:
         config = dict(raw_config)
         for key in ("runtime_mean", "runtime_var", "conv_mean", "optimal_mean"):
             config[key] = np.asarray(config[key], dtype=float)
+        config["optimality_ratio"] = np.divide(
+            config["optimal_mean"],
+            config["conv_mean"],
+            out=np.zeros_like(config["optimal_mean"], dtype=float),
+            where=config["conv_mean"] > 0.0,
+        )
 
         style = STYLE_BY_LABEL.get(
             config["label"],
@@ -212,8 +218,8 @@ def main() -> None:
     plot_rate(
         cars,
         configs,
-        "optimal_mean",
-        "Optimal Rate",
+        "optimality_ratio",
+        "Optimality Ratio",
         f"{output_prefix}_optimal",
         args.show,
     )

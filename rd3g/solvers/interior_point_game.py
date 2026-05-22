@@ -287,7 +287,7 @@ class InteriorPointGameConfig(BaseSolverConfig):
     """ Eliminate equality-constrained variables before solving the main KKT system """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
-    precondition_with_potential: bool = True
+    precondition_with_potential: bool = False
     """ Precondition the game KKT with a potential KKT to speed up computing"""
     check_spectral_radius: bool = False
     """ Check Spectral radius of inv(S)A in a numerically efficient way to ensure convergence"""

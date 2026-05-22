@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
+# from rd3g.games.car_racing_casadi import create_random_game
+# from rd3g.games.intersection_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
@@ -47,17 +49,17 @@ BENCHMARK_SPECS = [
         variational_gne=False,
     ),
     BenchmarkSpec(
-        label="IPM (no abs split)",
+        label="IPM",
         solver_name="ipm",
-        variational_gne=True,
-        precondition_with_potential=True,
+        variational_gne=False,
+        precondition_with_potential=False,
         abs_split=False,
     ),
     BenchmarkSpec(
-        label="IPM (abs split)",
+        label="IPM + Potential Surgery",
         solver_name="ipm",
-        variational_gne=True,
-        precondition_with_potential=True,
+        variational_gne=False,
+        precondition_with_potential=False,
         abs_split=True,
     ),
 ]
@@ -69,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs",
         type=int,
-        default=10,
+        default=50,
         help="Number of random seeds to evaluate for each car count.",
     )
     parser.add_argument(
