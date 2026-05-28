@@ -15,8 +15,8 @@ class Example:
         y = cas.SX.sym("y")
         z = cas.vertcat(x, y)
 
-        val = 1.2
-        j1 = x**2 + y**2 + 0.2*val * x**2 * y - 4*y
+        val = 0.2
+        j1 = x**2 + y**2 + 0.2*val * x * y - 4*y
         j2 = 1.3*x**2 + 1.6*y**2 - 2*val * x * y - 3*x
         r = cas.vertcat(cas.gradient(j1, x), cas.gradient(j2, y))
         dr = cas.jacobian(r, z)

@@ -71,6 +71,7 @@ if __name__ == "__main__":
     codegen_racing(4, 10, solvers=solvers)
     for T in [20]:
         for i in range(2, 9):
-            codegen_merge(i, T, solvers=solvers)
-            codegen_intersection(i, T, solvers=solvers)
-            codegen_racing(i, T, solvers=solvers)
+            pass
+            # codegen_merge(i, T, solvers=solvers)
+            # codegen_intersection(i, T, solvers=solvers)
+            # codegen_racing(i, T, solvers=solvers)

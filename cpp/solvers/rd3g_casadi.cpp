@@ -32,6 +32,7 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     Scalar,       // bc_b
                     Scalar,       // reg
                     bool,         // inertia_correction
+                    bool,         // keep_only_active_constraints_in_ki
                     bool,         // reduce_kkt_system
                     bool,         // rollout_each_step
                     Scalar,       // tolerance
@@ -45,7 +46,8 @@ PYBIND11_MODULE(rd3g_casadi, m) {
                     >(),
            py::arg("N"), py::arg("T"), py::arg("n_h"), py::arg("dt"), py::arg("rho"),
            py::arg("rho_b"), py::arg("bc_a"), py::arg("bc_b"), py::arg("reg"),
-           py::arg("inertia_correction"), py::arg("reduce_kkt_system"),
+           py::arg("inertia_correction"), py::arg("keep_only_active_constraints_in_ki"),
+           py::arg("reduce_kkt_system"),
            py::arg("rollout_each_step"), py::arg("tolerance"), py::arg("backtracking_max_iter"),
            py::arg("max_iter"), py::arg("max_in_reg_iter"), py::arg("max_in_reg_val"),
            py::arg("verbose"), py::arg("base_dir"), py::arg("casadi_module_name"))

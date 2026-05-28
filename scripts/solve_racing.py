@@ -16,7 +16,7 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 cpp = True
-load = False
+load = True
 variational_gne = True
 
 np.random.seed()
@@ -27,7 +27,7 @@ game = create_random_game(car_count=4, horizon=10, variational_gne=variational_g
 gc = game.config
 # load from pickle
 if load:
-    with open('/home/zzhang615/dcsl/buzzracer/outputs/triage_1.p', 'rb') as f:
+    with open('/home/nick/dcsl/buzzracer/outputs/input.p', 'rb') as f:
         data = pickle.load(f)
     game.config = data['gc']
     game.config.__post_init__()
@@ -50,5 +50,5 @@ print(f'{sol.elapsed_time=}, {sol.residual=}')
 # solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)
-if sol.residual < 1e-3:
-    solver.animate(sol.u, None, save_gif=True)
+# if sol.residual < 1e-3:
+#     solver.animate(sol.u, None, save_gif=True)

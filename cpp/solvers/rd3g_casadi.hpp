@@ -119,6 +119,7 @@ class Rd3gCasadi {
   mutable Profiler<false> profiler_;
   int verbose_;  // 0:error, 1:warning, 2:info, 3:debug
   const bool inertia_correction_;
+  const bool keep_only_active_constraints_in_ki_;
   const bool reduce_kkt_system_;
   const bool rollout_each_step_;
   int line_search_no_progress_counter_;
@@ -150,7 +151,8 @@ class Rd3gCasadi {
   // NOTE n,m may need to be template variables for performance
   Rd3gCasadi(const int N, const int T, const int n_h, const Scalar dt, const Scalar rho,
              const Scalar rho_b, const Scalar bc_a, const Scalar bc_b, const Scalar reg,
-             const bool inertia_correction, const bool reduce_kkt_system,
+             const bool inertia_correction, const bool keep_only_active_constraints_in_ki,
+             const bool reduce_kkt_system,
              const bool rollout_each_step, const Scalar tolerance, const int backtracking_max_iter,
              const int max_iter, const int max_in_reg_iter, const Scalar max_in_reg_val,
              const int verbose, const std::string base_dir, const std::string casadi_module_name)
@@ -165,6 +167,7 @@ class Rd3gCasadi {
         reg0_{reg},
         reg_{reg},
         inertia_correction_{inertia_correction},
+        keep_only_active_constraints_in_ki_{keep_only_active_constraints_in_ki},
         reduce_kkt_system_{reduce_kkt_system},
         rollout_each_step_{rollout_each_step},
         tolerance_{tolerance},
@@ -353,6 +356,47 @@ class Rd3gCasadi {
     reduced_KKT.setFromTriplets(triplets.begin(), triplets.end());
 
     return {reduced_KKT, reduced_r0, active_h_indices};
+  }
+
+  std::tuple<SpMatrix, std::vector<int>> reduce_Ki_system(const SpMatrix &Ki,
+                                                          const MatrixXd &h_i_val) {
+    // K_i uses the same ordering for residual rows and primal/dual variables,
+    // so removing an inactive h row and its corresponding mu column means
+    // keeping the same active index set on both axes.
+    const int h_in_r_offset = (n_ + m_) * T_ + n_ * T_;
+    assert(h_i_val.rows() * h_i_val.cols() == n_h_);
+
+    std::vector<int> old_to_new_idx(Ki.rows(), -1);
+    std::vector<int> active_h_indices;
+    active_h_indices.reserve(n_h_);
+    int reduced_dim = 0;
+
+    for (int i = 0; i < h_in_r_offset; ++i) {
+      old_to_new_idx[i] = reduced_dim++;
+    }
+
+    for (int i = 0; i < n_h_; ++i) {
+      if (h_i_val(i, 0) >= 0.0) {
+        old_to_new_idx[h_in_r_offset + i] = reduced_dim++;
+        active_h_indices.push_back(i);
+      }
+    }
+
+    std::vector<Eigen::Triplet<Scalar>> triplets;
+    triplets.reserve(Ki.nonZeros());
+    for (int j = 0; j < Ki.outerSize(); ++j) {
+      for (SpMatrix::InnerIterator it(Ki, j); it; ++it) {
+        const int new_row = old_to_new_idx[it.row()];
+        const int new_col = old_to_new_idx[it.col()];
+        if (new_row != -1 && new_col != -1) {
+          triplets.emplace_back(new_row, new_col, it.value());
+        }
+      }
+    }
+
+    SpMatrix reduced_Ki(reduced_dim, reduced_dim);
+    reduced_Ki.setFromTriplets(triplets.begin(), triplets.end());
+    return {reduced_Ki, active_h_indices};
   }
 
   // Solve linear system of the form Ax = b
@@ -645,16 +689,7 @@ class Rd3gCasadi {
     saddle_agent_vec.reserve(N_);
     std::vector<Scalar> reg_vec(N_, 0);
 
-    // Create regularization matrix for Ki, only upper left block (H part) is I
     const int primal_n = (n_ + m_) * T_;
-    const int dual_n = n_ * T_ + n_h_;
-    std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(primal_n);
-    for (int i = 0; i < primal_n; ++i) {
-      triplets.emplace_back(i, i, 1.0);
-    }
-    SpMatrix I_H(primal_n + dual_n, primal_n + dual_n);
-    I_H.setFromTriplets(triplets.begin(), triplets.end());
 
     for (int i = 0; i < N_; i++) {
       // Call K_i
@@ -667,10 +702,19 @@ class Rd3gCasadi {
       // The arguments are the same as r, dr_dy. No need to reset wb_.args
       Ki_vec_[i](wb_.args.data(), wb_.res.data(), wb_.iw.data(), wb_.w.data(), 0);
       wb_.res[0] = nullptr;
+      SpMatrix Ki_for_inertia = Ki;
+      int active_h_count = n_h_;
+      if (keep_only_active_constraints_in_ki_) {
+        MatrixXd h_i_val = h_val.col(i);
+        std::vector<int> active_h_indices;
+        std::tie(Ki_for_inertia, active_h_indices) = reduce_Ki_system(Ki_for_inertia, h_i_val);
+        active_h_count = active_h_indices.size();
+      }
+
       // Apply Levenberg-Marquardt Regularization
       // Without this AMD permutation will fail
-      int rows = Ki.rows();
-      int cols = Ki.cols();
+      int rows = Ki_for_inertia.rows();
+      int cols = Ki_for_inertia.cols();
       std::vector<Eigen::Triplet<double>> triplets;
       triplets.reserve(rows);
       for (int k = 0; k < rows; ++k) {
@@ -680,12 +724,20 @@ class Rd3gCasadi {
       }
       SpMatrix reg_matrix(rows, cols);
       reg_matrix.setFromTriplets(triplets.begin(), triplets.end());
-      SpMatrix Ki_reg = Ki + reg_matrix;
+      SpMatrix Ki_reg = Ki_for_inertia + reg_matrix;
+
+      std::vector<Eigen::Triplet<double>> I_H_triplets;
+      I_H_triplets.reserve(primal_n);
+      for (int k = 0; k < primal_n; ++k) {
+        I_H_triplets.emplace_back(k, k, 1.0);
+      }
+      SpMatrix I_H(rows, cols);
+      I_H.setFromTriplets(I_H_triplets.begin(), I_H_triplets.end());
       // LDL decomposition
       Eigen::SimplicialLDLT<SpMatrix> solver;
       solver.analyzePattern(Ki_reg);  // .compute() without .factorize()
       auto inertia = get_inertia(Ki_reg, solver);
-      auto expected_inertia = std::make_tuple(primal_n, dual_n, 0);
+      auto expected_inertia = std::make_tuple(primal_n, n_ * T_ + active_h_count, 0);
       if (inertia != expected_inertia) {
         is_optimal = false;
         saddle_agent_vec.push_back(i);

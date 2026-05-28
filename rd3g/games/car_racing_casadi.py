@@ -15,6 +15,7 @@ import casadi as cas
 
 from buzzracer.types import CurvilinearState
 from buzzracer.tracks.curvilinear_track import CurvilinearTrack
+from buzzracer.tracks.survey_track import SurveyTrack
 from buzzracer.cars.car_param import CarConfig
 from buzzracer.tracks.track_factory import TrackFactory
 
@@ -543,7 +544,7 @@ class CarRacingCasadi(CasadiGame):
         return
 
 
-def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
+def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('survey_track'),
                        variational_gne=True):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig

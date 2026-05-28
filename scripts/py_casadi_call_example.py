@@ -43,6 +43,7 @@ if __name__ == "__main__":
         solver_config.reg,
         solver_config.reg_inertia,
         solver_config.inertia_correction,
+        solver_config.keep_only_active_constraints_in_ki,
         solver_config.abs_split,
         solver_config.rollout_each_step,
         solver_config.precondition_with_potential,

@@ -51,14 +51,14 @@ BENCHMARK_SPECS = [
     BenchmarkSpec(
         label="IPM",
         solver_name="ipm",
-        variational_gne=False,
+        variational_gne=True,
         precondition_with_potential=False,
         abs_split=False,
     ),
     BenchmarkSpec(
         label="IPM + Potential Surgery",
         solver_name="ipm",
-        variational_gne=False,
+        variational_gne=True,
         precondition_with_potential=False,
         abs_split=True,
     ),
@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runs",
         type=int,
-        default=50,
+        default=200,
         help="Number of random seeds to evaluate for each car count.",
     )
     parser.add_argument(

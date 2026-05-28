@@ -285,6 +285,8 @@ class InteriorPointGameConfig(BaseSolverConfig):
     """ Replace the primal Hessian block H=S+A with |S|+A when S is indefinite """
     reduce_kkt_system: bool = False
     """ Eliminate equality-constrained variables before solving the main KKT system """
+    keep_only_active_constraints_in_ki: bool = True
+    """ Remove inactive h rows and associated mu columns before checking K_i inertia """
     rollout_each_step: bool = False
     """ Rollout control to get new state trajectory at the start of each solver iter """
     precondition_with_potential: bool = False
@@ -502,6 +504,7 @@ class InteriorPointGame(BaseSolver):
                 solver_config.reg,
                 solver_config.reg_inertia,
                 solver_config.inertia_correction,
+                solver_config.keep_only_active_constraints_in_ki,
                 solver_config.abs_split,
                 solver_config.rollout_each_step,
                 solver_config.precondition_with_potential,
@@ -737,6 +740,7 @@ class InteriorPointGame(BaseSolver):
         is_optimal = True
         saddle_agent_idx = []
         br_game_vec = []
+        primal_var_count = (n+m)*T
         for i in range(N):
             # Construct KKT matrix for agent i K_i
             Ki = self.Ki_casadi_vec[i](*args)
@@ -744,21 +748,34 @@ class InteriorPointGame(BaseSolver):
             ri = self.ri_casadi_vec[i](*args)
             # self.check_Ki(Ki)
 
+            Ki_for_inertia = Ki
+            ri_for_inertia = ri.toarray()
+            active_ki_indices = None
+            if self.config.keep_only_active_constraints_in_ki:
+                h_i_val = h_val[:, 0 if self.variational_gne else i]
+                Ki_for_inertia, ri_for_inertia, active_ki_indices = (
+                    self.reduce_ki_to_active_constraints(Ki, ri_for_inertia, h_i_val)
+                )
+
             # Apply Levenberg-Marquardt Regularization
             # H = H + reg * I
-            primal_var_count = (n+m)*T
             ind = np.arange(primal_var_count)
-            reg_matrix = scipy.sparse.eye(Ki.shape[0], format="csc")
+            reg_matrix = scipy.sparse.eye(Ki_for_inertia.shape[0], format="csc")
             reg_matrix[ind, ind] = self.config.reg_inertia
             # Apply constraint relaxation to allow AMD permutation in LDL
-            ind = np.arange(primal_var_count, Ki.shape[0])
+            ind = np.arange(primal_var_count, Ki_for_inertia.shape[0])
             reg_matrix[ind, ind] = -self.config.reg_inertia
-            Ki_reg = Ki + reg_matrix
+            Ki_reg = Ki_for_inertia + reg_matrix
 
             in_Ki, solver = self.get_inertia(Ki_reg)
-            dy_i = solver.solve(-ri.toarray())
+            reduced_dy_i = solver.solve(-ri_for_inertia)
+            if active_ki_indices is None:
+                dy_i = reduced_dy_i
+            else:
+                dy_i = np.zeros((Ki.shape[0], 1))
+                dy_i[active_ki_indices, 0] = np.asarray(reduced_dy_i).reshape(-1)
 
-            exp_in_Ki = (primal_var_count, Ki.shape[0]-primal_var_count, 0)
+            exp_in_Ki = (primal_var_count, Ki_reg.shape[0]-primal_var_count, 0)
             # logger.debug(f'K{i} inertia {in_Ki}, optimal {exp_in_Ki}')
             L_zero_diag, D_diag, P_vec = solver.factors()
 
@@ -1700,6 +1717,25 @@ class InteriorPointGame(BaseSolver):
                     row.append(n*N*T + k*(m*N) + i*m + idx)
         reg_mtx = csc_matrix((data, (row, row)), shape=(l, l))
         return reg_mtx
+
+    def reduce_ki_to_active_constraints(self, Ki, ri, h_i_val):
+        """Remove inactive h rows and the associated mu columns from a player KKT.
+
+        K_i uses the same ordering for residual rows and primal/dual variables,
+        so the same active index set is applied to both axes.
+        """
+        primal_var_count = (self.n + self.m) * self.T
+        dynamics_constraint_count = self.n * self.T
+        h_row_offset = primal_var_count + dynamics_constraint_count
+
+        active_h_indices = np.flatnonzero(np.asarray(h_i_val).reshape(-1) >= 0.0)
+        active_ki_indices = np.concatenate(
+            [np.arange(h_row_offset), h_row_offset + active_h_indices]
+        )
+
+        reduced_Ki = Ki[active_ki_indices, :][:, active_ki_indices].tocsc()
+        reduced_ri = np.asarray(ri).reshape(-1, 1)[active_ki_indices, :]
+        return reduced_Ki, reduced_ri, active_ki_indices
 
     def get_inertia(self, mtx):
         """ Given matrix mtx, give inertia (pos,neg,zero), and qdldl solver instance"""

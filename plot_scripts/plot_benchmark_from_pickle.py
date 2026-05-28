@@ -180,6 +180,8 @@ def plot_rate(
     """Plot a rate curve such as convergence or optimality."""
     fig, ax = plt.subplots(constrained_layout=True)
     for config in configs:
+        if "RD3G" in config["label"]:
+            continue
         markerfacecolor = "white" if config["label"].startswith("RD3G") else config["color"]
         ax.plot(
             cars,
