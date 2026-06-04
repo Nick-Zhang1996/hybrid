@@ -723,7 +723,7 @@ class InteriorPointGame(BaseSolver):
         p.e('prep')
 
         p.s('Form KKT')
-        r0_val, _ = self.r_casadi(*args)
+        r0_val, h_val = self.r_casadi(*args)
         dr_dy_val = self.dr_dy_casadi(*args)
         # Add eliminated slack variable as a function of mu
         LHS = dr_dy_val
