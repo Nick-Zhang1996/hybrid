@@ -16,7 +16,7 @@ np.random.seed(123421)
 cpp = False
 variational_gne = True
 
-game = create_random_game(aircraft_count=3, horizon=10, variational_gne=variational_gne)
+game = create_random_game(aircraft_count=3, horizon=20, variational_gne=variational_gne)
 solver_config = InteriorPointGameConfig(
     inertia_correction=False,
     variational_gne=variational_gne,

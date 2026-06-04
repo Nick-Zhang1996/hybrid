@@ -39,7 +39,7 @@ class AirTrafficControlCasadiConfig(CasadiGameConfig):
     V_min: float = 70.0
     V_max: float = 250.0
     a_max: float = 0.3
-    omega_max: float = 0.05
+    omega_max: float = 0.1  # 0.05
 
     # Airport model. Columns in runway_positions are runway thresholds [x_R, y_R].
     runway_count: int = 2
@@ -716,14 +716,14 @@ def create_random_game(aircraft_count=3, horizon=20, variational_gne=False,
         psi_r = default.runway_headings[runway_idx, 0]
         # Keep aircraft close to the runway threshold while staggering any queue
         # assigned to the same runway enough to satisfy the 200 m separation rule.
-        d_long = -(np.random.uniform(360.0, 640.0) +
+        d_long = -(np.random.uniform(1000.0, 2000.0) +
                    queue_idx * (default.D_min + 100.0))
-        d_lat = np.random.uniform(-30.0, 30.0)
+        d_lat = np.random.uniform(-150.0, 150.0)
         long_axis = np.array([np.cos(psi_r), np.sin(psi_r)])
         lat_axis = np.array([-np.sin(psi_r), np.cos(psi_r)])
         pos = p + d_long * long_axis + d_lat * lat_axis
         speed = np.random.uniform(75.0, 95.0)
-        heading = psi_r + np.random.uniform(-0.03, 0.03)
+        heading = psi_r + np.pi/180.0*np.random.uniform(-40, 40)
         return np.array([pos[0], pos[1], speed, heading])
 
     x0_vec = []
