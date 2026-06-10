@@ -70,10 +70,12 @@ class ILQGameConfig(BaseSolverConfig):
 @dataclass
 class ILQPolicy:
     """Time-indexed affine feedback policy in deviation coordinates."""
-    P: list
-    """P[i][k] maps global state deviation to player i control feedback."""
-    v: list
-    """v[i][k] is player i feedforward control deviation."""
+    P: object
+    """Stacked feedback gains with shape (m*N, n*N*T)."""
+    v: object
+    """Stacked feedforward controls with shape (m*N, T)."""
+    feedforward_norm: float
+    """Root-mean-square feedforward control norm."""
 
 
 class ILQGame(BaseSolver):
@@ -202,7 +204,8 @@ class ILQGame(BaseSolver):
         self.collision_h_casadi = cas.Function(
             'ilq_collision_h', [xki, xkj] + config_params, [col_h_val])
 
-        self._construct_lq_approx_casadi(config_params)
+        self._construct_lq_policy_casadi(config_params)
+        self._construct_policy_rollout_casadi(config_params)
 
         logger.info('Constructing ILQGame CasADi functions... Done')
 
@@ -379,6 +382,179 @@ class ILQGame(BaseSolver):
             self._casadi_function_options(),
         )
 
+    def _construct_lq_policy_casadi(self, config_params):
+        """Build one JIT-able function for rollout, LQ approximation, and policy solve."""
+        gc = self.game.config
+        nN = self.n * self.N
+        mN = self.m * self.N
+        eye_x = cas.SX.eye(nN)
+        eye_u = cas.SX.eye(self.m)
+        eye_mN = cas.SX.eye(mN)
+
+        u = cas.SX.sym('u_policy', mN, self.T)
+        barrier_weight = cas.SX.sym('barrier_weight_policy', 1, 1)
+        x0 = gc.get_param('x0')
+        X = self.game.rollout(x0, u)
+        full_x = [cas.reshape(x0, nN, 1)] + [X[:, k] for k in range(self.T)]
+
+        A_vec = []
+        B_vec = []
+        Q_vec = [[None for _ in range(self.T)] for _ in range(self.N)]
+        q_vec = [[None for _ in range(self.T)] for _ in range(self.N)]
+        R_vec = [[[None for _ in range(self.T)] for _ in range(self.N)] for _ in range(self.N)]
+        r_vec = [[[None for _ in range(self.T)] for _ in range(self.N)] for _ in range(self.N)]
+        h_context_cols = []
+
+        for k in range(self.T):
+            u_stage = u[:, k]
+
+            x_dyn = full_x[k]
+            context_dyn = self._stage_context_expr(x_dyn)
+            _, A, B = self.stage_dynamics_casadi(
+                x_dyn, u_stage, context_dyn, *config_params)
+            A_vec.append(A)
+            B_vec.append(B)
+
+            x_cost = full_x[k + 1]
+            context_cost = self._stage_context_expr(x_cost)
+            h_context_cols.append(context_cost)
+            for i in range(self.N):
+                outputs = self.stage_cost_quad_casadi[k][i](
+                    x_cost, u_stage, context_cost, barrier_weight, *config_params)
+                Q = 0.5 * (outputs[0] + outputs[0].T)
+                Q += self.config.state_regularization * eye_x
+                Q_vec[i][k] = Q
+                q_vec[i][k] = outputs[1]
+
+                idx = 2
+                for j in range(self.N):
+                    R = 0.5 * (outputs[idx] + outputs[idx].T)
+                    if i == j:
+                        R += self.config.control_regularization * eye_u
+                    R_vec[i][j][k] = R
+                    r_vec[i][j][k] = outputs[idx + 1]
+                    idx += 2
+
+        Z = [cas.SX.zeros(nN, nN) for _ in range(self.N)]
+        zeta = [cas.SX.zeros(nN, 1) for _ in range(self.N)]
+        P_by_time = [cas.SX.zeros(mN, nN) for _ in range(self.T)]
+        v_by_time = [cas.SX.zeros(mN, 1) for _ in range(self.T)]
+
+        for k in range(self.T - 1, -1, -1):
+            A = A_vec[k]
+            B = B_vec[k]
+            S = cas.SX.zeros(mN, mN)
+            Y = cas.SX.zeros(mN, nN)
+            y = cas.SX.zeros(mN, 1)
+            M = []
+            ell = []
+
+            for i in range(self.N):
+                row = slice(i * self.m, (i + 1) * self.m)
+                Bi = B[:, row]
+                M_i = Q_vec[i][k] + Z[i]
+                ell_i = q_vec[i][k] + zeta[i]
+                M.append(M_i)
+                ell.append(ell_i)
+
+                for j in range(self.N):
+                    col = slice(j * self.m, (j + 1) * self.m)
+                    block = Bi.T @ M_i @ B[:, col]
+                    if i == j:
+                        block += R_vec[i][i][k]
+                    S[row, col] = block
+
+                Y[row, :] = Bi.T @ M_i @ A
+                y[row, :] = Bi.T @ ell_i + r_vec[i][i][k]
+
+            sol = cas.solve(
+                S + self.config.lq_regularization * eye_mN,
+                cas.horzcat(Y, y),
+            )
+            P = sol[:, :nN]
+            v = -sol[:, nN]
+            P_by_time[k] = P
+            v_by_time[k] = v
+
+            F = A - B @ P
+            beta = B @ v
+            next_Z = []
+            next_zeta = []
+            for i in range(self.N):
+                Zi = F.T @ M[i] @ F
+                zi = F.T @ (M[i] @ beta + ell[i])
+                for j in range(self.N):
+                    row = slice(j * self.m, (j + 1) * self.m)
+                    Pj = P[row, :]
+                    vj = v[row]
+                    Zi += Pj.T @ R_vec[i][j][k] @ Pj
+                    zi -= Pj.T @ (R_vec[i][j][k] @ vj + r_vec[i][j][k])
+                next_Z.append(0.5 * (Zi + Zi.T))
+                next_zeta.append(zi)
+            Z = next_Z
+            zeta = next_zeta
+
+        context_traj = (
+            cas.horzcat(*h_context_cols)
+            if h_context_cols
+            else cas.SX.zeros(self.n_c * self.N, 0)
+        )
+        h_vec = cas.vec(self.game.h(X, u, context_traj))
+        P_stack = cas.horzcat(*P_by_time)
+        v_stack = cas.horzcat(*v_by_time)
+        feedforward_norm = cas.sqrt(cas.dot(cas.vec(v_stack), cas.vec(v_stack)) / (self.N * self.T))
+
+        self.lq_policy_casadi = cas.Function(
+            'ilq_lq_policy',
+            [u, barrier_weight] + config_params,
+            [X, P_stack, v_stack, h_vec, feedforward_norm],
+            self._casadi_function_options(),
+        )
+
+    def _construct_policy_rollout_casadi(self, config_params):
+        """Build a JIT-able nonlinear rollout for a stacked affine policy."""
+        nN = self.n * self.N
+        mN = self.m * self.N
+        gc = self.game.config
+
+        u_ref = cas.SX.sym('u_ref_policy_rollout', mN, self.T)
+        x_ref = cas.SX.sym('x_ref_policy_rollout', nN, self.T)
+        P_stack = cas.SX.sym('P_policy_rollout', mN, nN * self.T)
+        v_stack = cas.SX.sym('v_policy_rollout', mN, self.T)
+        step_size = cas.SX.sym('step_size_policy_rollout', 1, 1)
+
+        xk = cas.reshape(gc.get_param('x0'), nN, 1)
+        x_cols = []
+        u_cols = []
+        context_cols = []
+        for k in range(self.T):
+            x_ref_k = cas.reshape(gc.get_param('x0'), nN, 1) if k == 0 else x_ref[:, k - 1]
+            dx = xk - x_ref_k
+            Pk = P_stack[:, k * nN:(k + 1) * nN]
+            uk = u_ref[:, k] - self.config.feedback_scale * (Pk @ dx) + step_size * v_stack[:, k]
+            context = self._stage_context_expr(xk)
+            x_next, _, _ = self.stage_dynamics_casadi(xk, uk, context, *config_params)
+            x_cols.append(x_next)
+            u_cols.append(uk)
+            context_cols.append(self._stage_context_expr(x_next))
+            xk = x_next
+
+        X = cas.horzcat(*x_cols)
+        U = cas.horzcat(*u_cols)
+        context_traj = (
+            cas.horzcat(*context_cols)
+            if context_cols
+            else cas.SX.zeros(self.n_c * self.N, 0)
+        )
+        h_vec = cas.vec(self.game.h(X, U, context_traj))
+
+        self.policy_rollout_casadi = cas.Function(
+            'ilq_policy_rollout',
+            [u_ref, x_ref, P_stack, v_stack, step_size] + config_params,
+            [X, U, h_vec],
+            self._casadi_function_options(),
+        )
+
     def _params_np(self):
         gc = self.game.config
         return [gc.get_int_param_np(), gc.get_double_param_np()]
@@ -411,7 +587,15 @@ class ILQGame(BaseSolver):
             np.zeros((self.n_c * self.N, self.T), order='F'),
             *params,
         )
-        self.lq_approx_casadi(u, self.barrier_weight, *params)
+        policy_outputs = self.lq_policy_casadi(u, self.barrier_weight, *params)
+        self.policy_rollout_casadi(
+            u,
+            np.asarray(policy_outputs[0], dtype=float, order='F'),
+            policy_outputs[1],
+            policy_outputs[2],
+            self.config.step_size,
+            *params,
+        )
         self._casadi_primed = True
         logger.info('Priming ILQGame CasADi functions... Done')
 
@@ -483,8 +667,27 @@ class ILQGame(BaseSolver):
 
     def _evaluate_lq_approx(self, u):
         """Evaluate and unpack the combined CasADi LQ approximation function."""
+        if not hasattr(self, 'lq_approx_casadi'):
+            gc = self.game.config
+            self._construct_lq_approx_casadi(
+                [gc.get_int_param_sx(), gc.get_double_param_sx()])
         outputs = self.lq_approx_casadi(u, self.barrier_weight, *self._params_np())
         return self._unpack_lq_approx(outputs)
+
+    def _evaluate_lq_policy(self, u):
+        """Evaluate and unpack the combined CasADi LQ policy function."""
+        outputs = self.lq_policy_casadi(u, self.barrier_weight, *self._params_np())
+        return self._unpack_lq_policy(outputs)
+
+    def _unpack_lq_policy(self, outputs):
+        """Convert CasADi policy outputs to contiguous numeric arrays."""
+        x = np.asarray(outputs[0], dtype=float, order='F')
+        P = outputs[1]
+        v = outputs[2]
+        h_vec = np.asarray(outputs[3], dtype=float).reshape(-1, order='F')
+        ref_violation = 0.0 if h_vec.size == 0 else float(np.max(np.maximum(h_vec, 0.0)))
+        feedforward_norm = float(outputs[4])
+        return x, ILQPolicy(P=P, v=v, feedforward_norm=feedforward_norm), ref_violation
 
     def _unpack_lq_approx(self, outputs):
         """Convert stacked CasADi LQ approximation outputs to solver lists."""
@@ -534,6 +737,7 @@ class ILQGame(BaseSolver):
 
     def _solve_lq_game(self, As, Bs, Qs, qs, Rs, rs):
         """Solve the local finite-horizon LQ game by backward recursion."""
+        t = self.profiler
         nN = self.n * self.N
         m = self.m
         N = self.N
@@ -545,6 +749,7 @@ class ILQGame(BaseSolver):
         vs_reversed = []
 
         for k in range(T - 1, -1, -1):
+            t.s('assemble stationary system')
             S = np.zeros((N * m, N * m))
             Y = np.zeros((N * m, nN))
             y = np.zeros((N * m, 1))
@@ -570,8 +775,14 @@ class ILQGame(BaseSolver):
                 y[i * m:(i + 1) * m, :] = y_i
 
             S_reg = S + self.config.lq_regularization * np.eye(N * m)
+            t.e('assemble stationary system')
+
+            t.s('_solve_stationary_system')
             P_stack = self._solve_stationary_system(S_reg, Y)
             v_stack = -self._solve_stationary_system(S_reg, y)
+            t.e('_solve_stationary_system')
+
+            t.s('split policy')
             P_k = [
                 P_stack[i * m:(i + 1) * m, :].reshape((m, nN), order='F')
                 for i in range(N)
@@ -582,7 +793,9 @@ class ILQGame(BaseSolver):
             ]
             Ps_reversed.append(P_k)
             vs_reversed.append(v_k)
+            t.e('split policy')
 
+            t.s('update value recursion')
             F = As[k].copy().tocsc()
             beta = np.zeros((nN, 1))
             for j in range(N):
@@ -606,7 +819,9 @@ class ILQGame(BaseSolver):
                 next_zeta.append(np.asarray(zi).reshape((nN, 1), order='F'))
             Z = next_Z
             zeta = next_zeta
+            t.e('update value recursion')
 
+        t.s('reorder policy')
         Ps = [[] for _ in range(N)]
         vs = [[] for _ in range(N)]
         for k in range(T):
@@ -615,6 +830,7 @@ class ILQGame(BaseSolver):
             for i in range(N):
                 Ps[i].append(P_k[i])
                 vs[i].append(v_k[i])
+        t.e('reorder policy')
 
         return ILQPolicy(P=Ps, v=vs)
 
@@ -626,32 +842,21 @@ class ILQGame(BaseSolver):
             sol, _, _, _ = np.linalg.lstsq(A, B, rcond=None)
             return sol
 
-    def _rollout_policy(self, u_ref, full_x_ref, policy, step_size):
+    def _rollout_policy(self, u_ref, x_ref, policy, step_size):
         """Execute an affine feedback policy on the nonlinear dynamics."""
-        params = self._params_np()
-        nN = self.n * self.N
-        mN = self.m * self.N
-        x = np.zeros((nN, self.T), order='F')
-        u = np.zeros((mN, self.T), order='F')
-        xk = self.game.config.x0.reshape((nN, 1), order='F')
-
-        for k in range(self.T):
-            dx = xk - full_x_ref[:, [k]]
-            uk = u_ref[:, [k]].copy()
-            for i in range(self.N):
-                du_i = (
-                    -self.config.feedback_scale * policy.P[i][k] @ dx
-                    + step_size * policy.v[i][k]
-                )
-                uk[i * self.m:(i + 1) * self.m, :] += du_i
-
-            context = self._stage_context_np(xk)
-            x_next, _, _ = self.stage_dynamics_casadi(xk, uk, context, *params)
-            xk = np.asarray(x_next, dtype=float).reshape((nN, 1), order='F')
-            u[:, [k]] = uk
-            x[:, [k]] = xk
-
-        return x, u
+        x, u, h_vec = self.policy_rollout_casadi(
+            u_ref,
+            x_ref,
+            policy.P,
+            policy.v,
+            step_size,
+            *self._params_np(),
+        )
+        x = np.asarray(x, dtype=float, order='F')
+        u = np.asarray(u, dtype=float, order='F')
+        h_vec = np.asarray(h_vec, dtype=float).reshape(-1, order='F')
+        violation = 0.0 if h_vec.size == 0 else float(np.max(np.maximum(h_vec, 0.0)))
+        return x, u, violation
 
     def _constraint_violation(self, x, u):
         if self.n_h == 0:
@@ -668,44 +873,36 @@ class ILQGame(BaseSolver):
         return float(np.max(np.maximum(h_np, 0.0)))
 
     def _policy_feedforward_norm(self, policy):
-        vals = [
-            np.linalg.norm(policy.v[i][k])
-            for i in range(self.N)
-            for k in range(self.T)
-        ]
-        if not vals:
-            return 0.0
-        return float(np.linalg.norm(vals) / np.sqrt(len(vals)))
+        return policy.feedforward_norm
 
-    def _select_rollout(self, u, x, full_x, policy, old_residual, old_violation):
+    def _select_rollout(self, u, x, x_ref, policy, old_residual, old_violation):
         """Line-search over feedforward step sizes for a stable rollout."""
         if not self.config.use_line_search:
-            return self._rollout_policy(u, full_x, policy, self.config.step_size), self.config.step_size
+            return self._rollout_policy(u, x_ref, policy, self.config.step_size), self.config.step_size
 
         best = None
         step = self.config.step_size
         old_merit = old_residual + old_violation
         for _ in range(self.config.line_search_max_iter):
             try:
-                trial_x, trial_u = self._rollout_policy(u, full_x, policy, step)
+                trial_x, trial_u, violation = self._rollout_policy(u, x_ref, policy, step)
             except RuntimeError:
                 step *= self.config.line_search_decay
                 continue
 
             control_step = np.linalg.norm(trial_u - u)
-            violation = self._constraint_violation(trial_x, trial_u)
             merit = control_step / np.sqrt(trial_u.size) + violation
             finite = np.isfinite(trial_x).all() and np.isfinite(trial_u).all()
             if finite and control_step <= self.config.max_control_step_norm:
                 if best is None or merit < best[2]:
-                    best = ((trial_x, trial_u), step, merit)
+                    best = ((trial_x, trial_u, violation), step, merit)
                 if merit <= max(old_merit, self.config.tolerance):
                     break
             step *= self.config.line_search_decay
 
         if best is None:
             logger.warning('ILQGame line search failed; keeping previous rollout')
-            return (x, u), 0.0
+            return (x, u, old_violation), 0.0
         del old_residual, old_violation
         return best[0], best[1]
 
@@ -714,30 +911,24 @@ class ILQGame(BaseSolver):
         t = self.profiler
         t.s()
 
-        t.s('casadi lq approximation')
-        lq_outputs = self.lq_approx_casadi(u, self.barrier_weight, *self._params_np())
-        t.e('casadi lq approximation')
+        t.s('casadi policy solve')
+        policy_outputs = self.lq_policy_casadi(u, self.barrier_weight, *self._params_np())
+        t.e('casadi policy solve')
 
-        t.s('unpack lq approximation')
-        x_ref, As, Bs, Qs, qs, Rs, rs, ref_violation = self._unpack_lq_approx(lq_outputs)
-        full_x = self._full_x(x_ref)
-        t.e('unpack lq approximation')
-
-        t.s('solve lq game')
-        policy = self._solve_lq_game(As, Bs, Qs, qs, Rs, rs)
+        t.s('unpack policy')
+        x_ref, policy, ref_violation = self._unpack_lq_policy(policy_outputs)
         self.last_policy = policy
         feedforward_norm = self._policy_feedforward_norm(policy)
-        t.e('solve lq game')
+        t.e('unpack policy')
 
         t.s('rollout policy')
-        (new_x, new_u), accepted_step = self._select_rollout(
-            u, x_ref, full_x, policy, feedforward_norm, max(violation, ref_violation))
+        (new_x, new_u, new_violation), accepted_step = self._select_rollout(
+            u, x_ref, x_ref, policy, feedforward_norm, max(violation, ref_violation))
         t.e('rollout policy')
 
         t.s('residual checks')
         control_delta = float(np.linalg.norm(new_u - u) / np.sqrt(new_u.size))
         state_delta = float(np.linalg.norm(new_x - x_ref) / np.sqrt(new_x.size))
-        new_violation = self._constraint_violation(new_x, new_u)
         residual = max(feedforward_norm, control_delta, state_delta)
         if new_violation > self.config.constraint_tolerance:
             self.barrier_weight = min(
