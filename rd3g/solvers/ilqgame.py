@@ -16,6 +16,7 @@ from rd3g.utilities.time_util import TimeUtil
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+ExecutionTimer = TimeUtil
 
 __all__ = [
     'ILQGame',
@@ -62,6 +63,8 @@ class ILQGameConfig(BaseSolverConfig):
     """Maximum rollout line-search trials."""
     max_control_step_norm: float = 1e3
     """Reject rollout trials with very large control motion."""
+    jit: bool = True
+    """JIT compile the combined CasADi LQ-approximation function."""
 
 
 @dataclass
@@ -113,13 +116,15 @@ class ILQGame(BaseSolver):
                 f'but n_h={self.n_h} is not divisible by T={self.T}.'
             )
 
-        self.profiler = TimeUtil(True)
+        self.profiler = ExecutionTimer(True)
         self.residual_vec = []
         self.violation_vec = []
         self.barrier_weight = float(config.barrier_weight)
         self.last_policy = None
+        self._casadi_primed = False
         self.validate()
         self.construct_casadi_fun()
+        self.prime_casadi()
 
     def validate(self):
         """Check dimensions supplied by the game."""
@@ -197,23 +202,33 @@ class ILQGame(BaseSolver):
         self.collision_h_casadi = cas.Function(
             'ilq_collision_h', [xki, xkj] + config_params, [col_h_val])
 
+        self._construct_lq_approx_casadi(config_params)
+
         logger.info('Constructing ILQGame CasADi functions... Done')
+
+    def _casadi_function_options(self):
+        """Return options for heavyweight CasADi functions."""
+        return {'jit': True} if self.config.jit else {}
 
     def _construct_context_stage_function(self):
         """Build a function mapping a stacked stage state to stacked context."""
         n = self.n
-        N = self.N
-        n_c = self.n_c
         xki = cas.SX.sym('xki', n, 1)
+        xnN = cas.SX.sym('xnN', n * self.N, 1)
         context_val = self.game.get_context(xki)
-        get_context_casadi = cas.Function('ilq_get_context_agent', [xki], [context_val])
-        get_context_n_N = get_context_casadi.map(N)
-
-        xnN = cas.SX.sym('xnN', n * N, 1)
-        x_n_N = cas.reshape(xnN, n, N)
-        context_n_N = get_context_n_N(x_n_N)
-        context_flat = cas.reshape(context_n_N, n_c * N, 1)
+        self.get_context_agent_casadi = cas.Function('ilq_get_context_agent', [xki], [context_val])
+        context_flat = self._stage_context_expr(xnN)
         return cas.Function('ilq_get_context_stage', [xnN], [context_flat])
+
+    def _stage_context_expr(self, x_stage):
+        """Return symbolic stacked context for one stage."""
+        if self.n_c == 0:
+            return cas.SX.zeros(0, 1)
+        x_mat = cas.reshape(x_stage, self.n, self.N)
+        return cas.vertcat(*[
+            self.game.get_context(x_mat[:, i])
+            for i in range(self.N)
+        ])
 
     def _stage_dynamics_expr(self, x_stage, u_stage, context_stage):
         """Return symbolic stacked next state for one time step."""
@@ -291,6 +306,79 @@ class ILQGame(BaseSolver):
         phi_quad = -np.log(delta) + z / delta + 0.5 * (z / delta) ** 2
         return cas.if_else(h < -delta, phi_log, phi_quad)
 
+    def _construct_lq_approx_casadi(self, config_params):
+        """Build one JIT-able function for rollout, linearization, and costs."""
+        gc = self.game.config
+        nN = self.n * self.N
+        mN = self.m * self.N
+        eye_x = cas.SX.eye(nN)
+        eye_u = cas.SX.eye(self.m)
+
+        u = cas.SX.sym('u_lq_approx', mN, self.T)
+        barrier_weight = cas.SX.sym('barrier_weight', 1, 1)
+        x0 = gc.get_param('x0')
+        X = self.game.rollout(x0, u)
+        full_x = [cas.reshape(x0, nN, 1)] + [X[:, k] for k in range(self.T)]
+
+        A_blocks = []
+        B_blocks = []
+        Q_blocks = []
+        q_cols = []
+        R_blocks = []
+        r_cols = []
+        h_context_cols = []
+
+        for k in range(self.T):
+            x_dyn = full_x[k]
+            u_stage = u[:, k]
+            context_dyn = self._stage_context_expr(x_dyn)
+            _, A, B = self.stage_dynamics_casadi(
+                x_dyn, u_stage, context_dyn, *config_params)
+            A_blocks.append(A)
+            B_blocks.append(B)
+
+            x_cost = full_x[k + 1]
+            context_cost = self._stage_context_expr(x_cost)
+            h_context_cols.append(context_cost)
+            for i in range(self.N):
+                outputs = self.stage_cost_quad_casadi[k][i](
+                    x_cost, u_stage, context_cost, barrier_weight, *config_params)
+                Q = 0.5 * (outputs[0] + outputs[0].T)
+                Q += self.config.state_regularization * eye_x
+                Q_blocks.append(Q)
+                q_cols.append(outputs[1])
+
+                idx = 2
+                for j in range(self.N):
+                    R = 0.5 * (outputs[idx] + outputs[idx].T)
+                    if i == j:
+                        R += self.config.control_regularization * eye_u
+                    R_blocks.append(R)
+                    r_cols.append(outputs[idx + 1])
+                    idx += 2
+
+        context_traj = (
+            cas.horzcat(*h_context_cols)
+            if h_context_cols
+            else cas.SX.zeros(self.n_c * self.N, 0)
+        )
+        h_val = self.game.h(X, u, context_traj)
+
+        A_stack = cas.horzcat(*A_blocks)
+        B_stack = cas.horzcat(*B_blocks)
+        Q_stack = cas.horzcat(*Q_blocks)
+        q_stack = cas.horzcat(*q_cols)
+        R_stack = cas.horzcat(*R_blocks)
+        r_stack = cas.horzcat(*r_cols)
+        h_vec = cas.vec(h_val)
+
+        self.lq_approx_casadi = cas.Function(
+            'ilq_lq_approx',
+            [u, barrier_weight] + config_params,
+            [X, A_stack, B_stack, Q_stack, q_stack, R_stack, r_stack, h_vec],
+            self._casadi_function_options(),
+        )
+
     def _params_np(self):
         gc = self.game.config
         return [gc.get_int_param_np(), gc.get_double_param_np()]
@@ -303,6 +391,29 @@ class ILQGame(BaseSolver):
             u = u.reshape((self.m * self.N, self.T), order='F')
         assert u.shape == (self.m * self.N, self.T)
         return np.array(u, dtype=float, order='F', copy=True)
+
+    def prime_casadi(self):
+        """Run CasADi functions once so JIT compilation is outside solve timing."""
+        if self._casadi_primed:
+            return
+        logger.info('Priming ILQGame CasADi functions... ')
+        u = np.zeros((self.m * self.N, self.T), order='F')
+        params = self._params_np()
+        x = self.rollout_casadi(self.game.config.x0, u, *params)
+        x_np = np.asarray(x, dtype=float, order='F')
+        x0_flat = self.game.config.x0.reshape((self.n * self.N, 1), order='F')
+        u0 = u[:, [0]]
+        context0 = self._stage_context_np(x0_flat)
+        self.stage_dynamics_casadi(x0_flat, u0, context0, *params)
+        self.h_casadi(
+            x_np,
+            u,
+            np.zeros((self.n_c * self.N, self.T), order='F'),
+            *params,
+        )
+        self.lq_approx_casadi(u, self.barrier_weight, *params)
+        self._casadi_primed = True
+        logger.info('Priming ILQGame CasADi functions... Done')
 
     def _rollout_open_loop(self, u):
         """Roll out stacked open-loop controls and return x1..xT."""
@@ -369,6 +480,52 @@ class ILQGame(BaseSolver):
                     rs[i][j].append(r)
                     idx += 2
         return Qs, qs, Rs, rs
+
+    def _evaluate_lq_approx(self, u):
+        """Evaluate and unpack the combined CasADi LQ approximation function."""
+        outputs = self.lq_approx_casadi(u, self.barrier_weight, *self._params_np())
+        return self._unpack_lq_approx(outputs)
+
+    def _unpack_lq_approx(self, outputs):
+        """Convert stacked CasADi LQ approximation outputs to solver lists."""
+        nN = self.n * self.N
+        mN = self.m * self.N
+
+        x = np.asarray(outputs[0], dtype=float, order='F')
+        A_stack = dm_to_csc(outputs[1])
+        B_stack = dm_to_csc(outputs[2])
+        Q_stack = dm_to_csc(outputs[3])
+        q_stack = np.asarray(outputs[4], dtype=float, order='F')
+        R_stack = dm_to_csc(outputs[5])
+        r_stack = np.asarray(outputs[6], dtype=float, order='F')
+        h_vec = np.asarray(outputs[7], dtype=float).reshape(-1, order='F')
+
+        As = []
+        Bs = [[] for _ in range(self.N)]
+        for k in range(self.T):
+            As.append(A_stack[:, k * nN:(k + 1) * nN].tocsc())
+            Bk = B_stack[:, k * mN:(k + 1) * mN].tocsc()
+            for i in range(self.N):
+                Bs[i].append(Bk[:, i * self.m:(i + 1) * self.m].tocsc())
+
+        Qs = [[] for _ in range(self.N)]
+        qs = [[] for _ in range(self.N)]
+        Rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
+        rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
+        for k in range(self.T):
+            for i in range(self.N):
+                qi_idx = k * self.N + i
+                Qs[i].append(Q_stack[:, qi_idx * nN:(qi_idx + 1) * nN].tocsc())
+                qs[i].append(q_stack[:, [qi_idx]])
+                for j in range(self.N):
+                    rij_idx = (k * self.N + i) * self.N + j
+                    Rs[i][j].append(
+                        R_stack[:, rij_idx * self.m:(rij_idx + 1) * self.m].tocsc()
+                    )
+                    rs[i][j].append(r_stack[:, [rij_idx]])
+
+        ref_violation = 0.0 if h_vec.size == 0 else float(np.max(np.maximum(h_vec, 0.0)))
+        return x, As, Bs, Qs, qs, Rs, rs, ref_violation
 
     @staticmethod
     def _symmetrize_sparse(mat):
@@ -552,6 +709,61 @@ class ILQGame(BaseSolver):
         del old_residual, old_violation
         return best[0], best[1]
 
+    def step(self, x, u, violation):
+        """Run one timed iLQ-game iteration."""
+        t = self.profiler
+        t.s()
+
+        t.s('casadi lq approximation')
+        lq_outputs = self.lq_approx_casadi(u, self.barrier_weight, *self._params_np())
+        t.e('casadi lq approximation')
+
+        t.s('unpack lq approximation')
+        x_ref, As, Bs, Qs, qs, Rs, rs, ref_violation = self._unpack_lq_approx(lq_outputs)
+        full_x = self._full_x(x_ref)
+        t.e('unpack lq approximation')
+
+        t.s('solve lq game')
+        policy = self._solve_lq_game(As, Bs, Qs, qs, Rs, rs)
+        self.last_policy = policy
+        feedforward_norm = self._policy_feedforward_norm(policy)
+        t.e('solve lq game')
+
+        t.s('rollout policy')
+        (new_x, new_u), accepted_step = self._select_rollout(
+            u, x_ref, full_x, policy, feedforward_norm, max(violation, ref_violation))
+        t.e('rollout policy')
+
+        t.s('residual checks')
+        control_delta = float(np.linalg.norm(new_u - u) / np.sqrt(new_u.size))
+        state_delta = float(np.linalg.norm(new_x - x_ref) / np.sqrt(new_x.size))
+        new_violation = self._constraint_violation(new_x, new_u)
+        residual = max(feedforward_norm, control_delta, state_delta)
+        if new_violation > self.config.constraint_tolerance:
+            self.barrier_weight = min(
+                self.config.barrier_max,
+                self.barrier_weight * self.config.barrier_growth,
+            )
+        converged = (
+            residual <= self.config.tolerance
+            and new_violation <= self.config.constraint_tolerance
+        )
+        t.e('residual checks')
+
+        t.e()
+
+        return (
+            new_x,
+            new_u,
+            new_violation,
+            residual,
+            converged,
+            accepted_step,
+            feedforward_norm,
+            control_delta,
+            state_delta,
+        )
+
     def solve(self, u_ref=None):
         """Run iterative LQ-game approximations from an open-loop control guess."""
         u = self._initial_control(u_ref)
@@ -572,20 +784,17 @@ class ILQGame(BaseSolver):
                 violation,
             )
 
-            full_x = self._full_x(x)
-            As, Bs = self._linearize_dynamics(full_x, u)
-            Qs, qs, Rs, rs = self._quadraticize_costs(full_x, u)
-            policy = self._solve_lq_game(As, Bs, Qs, qs, Rs, rs)
-            self.last_policy = policy
-
-            feedforward_norm = self._policy_feedforward_norm(policy)
-            (new_x, new_u), accepted_step = self._select_rollout(
-                u, x, full_x, policy, feedforward_norm, violation)
-            control_delta = float(np.linalg.norm(new_u - u) / np.sqrt(new_u.size))
-            state_delta = float(np.linalg.norm(new_x - x) / np.sqrt(new_x.size))
-            new_violation = self._constraint_violation(new_x, new_u)
-
-            residual = max(feedforward_norm, control_delta, state_delta)
+            (
+                new_x,
+                new_u,
+                new_violation,
+                residual,
+                converged,
+                accepted_step,
+                feedforward_norm,
+                control_delta,
+                state_delta,
+            ) = self.step(x, u, violation)
             self.residual_vec.append(residual)
             self.violation_vec.append(new_violation)
             logger.info(
@@ -600,16 +809,6 @@ class ILQGame(BaseSolver):
             u = new_u
             x = new_x
             violation = new_violation
-            if violation > self.config.constraint_tolerance:
-                self.barrier_weight = min(
-                    self.config.barrier_max,
-                    self.barrier_weight * self.config.barrier_growth,
-                )
-
-            converged = (
-                residual <= self.config.tolerance
-                and violation <= self.config.constraint_tolerance
-            )
             if converged:
                 msg = 'Converged to an iLQ-game fixed point'
                 break
