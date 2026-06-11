@@ -901,7 +901,7 @@ class ILQGame(BaseSolver):
             step *= self.config.line_search_decay
 
         if best is None:
-            logger.warning('ILQGame line search failed; keeping previous rollout')
+            logger.info('ILQGame line search failed; keeping previous rollout')
             return (x, u, old_violation), 0.0
         del old_residual, old_violation
         return best[0], best[1]

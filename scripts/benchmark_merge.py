@@ -4,11 +4,14 @@ import numpy as np
 
 from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
+from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.WARNING)
+logger = logging.getLogger('rd3g.solvers.ilqgame')
+logger.setLevel(logging.ERROR)
 
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
@@ -27,6 +30,16 @@ def create_solver(solver_name, game, cpp, vne, precond):
             raise ValueError('rd3g_casadi does not support variational_gne=True')
         solver_config = RD3GCasadiConfig(inertia_correction=False)
         return RD3GCasadi(solver_config, game, cpp_only=cpp)
+    if solver_name == 'ilqgame':
+        if cpp:
+            raise ValueError('ilqgame does not support cpp=True')
+        solver_config = ILQGameConfig(
+            variational_gne=vne,
+            iterations=50,
+            step_size=0.5,
+            barrier_weight=1e-2,
+        )
+        return ILQGame(solver_config, game, cpp_only=cpp)
     raise ValueError(f'Unknown solver {solver_name!r}')
 
 
@@ -102,4 +115,6 @@ def benchmark(solver_name, cpp, vne, precond):
     print(f'{optimal_mean_vec=}')
 
 
-benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+if __name__ == '__main__':
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=True)
