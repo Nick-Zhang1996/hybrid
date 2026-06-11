@@ -7,10 +7,8 @@ from time import time
 import casadi as cas
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.sparse
 
 from rd3g.core.base_solver import BaseSolver, BaseSolverConfig, Solution
-from rd3g.utilities.casadi_util import dm_to_csc
 from rd3g.utilities.time_util import TimeUtil
 
 
@@ -64,7 +62,7 @@ class ILQGameConfig(BaseSolverConfig):
     max_control_step_norm: float = 1e3
     """Reject rollout trials with very large control motion."""
     jit: bool = True
-    """JIT compile the combined CasADi LQ-approximation function."""
+    """JIT compile optional CasADi helper functions when possible."""
 
 
 @dataclass
@@ -124,6 +122,7 @@ class ILQGame(BaseSolver):
         self.barrier_weight = float(config.barrier_weight)
         self.last_policy = None
         self._casadi_primed = False
+        self._casadi_jit_enabled = bool(config.jit)
         self.validate()
         self.construct_casadi_fun()
         self.prime_casadi()
@@ -137,7 +136,7 @@ class ILQGame(BaseSolver):
         assert self.game.config.x0.shape == (self.n, self.N)
 
     def construct_casadi_fun(self):
-        """Construct sparse CasADi derivative functions for the iLQ loop."""
+        """Construct CasADi derivative and dense LQ helper functions."""
         gc = self.game.config
         n = self.n
         m = self.m
@@ -156,7 +155,6 @@ class ILQGame(BaseSolver):
         x_stage = cas.SX.sym('x_stage', n * N, 1)
         u_stage = cas.SX.sym('u_stage', m * N, 1)
         context_stage = cas.SX.sym('context_stage', n_c * N, 1)
-        barrier_weight = cas.SX.sym('barrier_weight', 1, 1)
 
         f_val = self._stage_dynamics_expr(x_stage, u_stage, context_stage)
         A_val = cas.jacobian(f_val, x_stage)
@@ -168,29 +166,6 @@ class ILQGame(BaseSolver):
         )
 
         self.get_context_stage_casadi = self._construct_context_stage_function()
-
-        self.stage_cost_quad_casadi = []
-        for k in range(T):
-            stage_funs = []
-            for i in range(N):
-                cost = self._stage_cost_expr(
-                    k, i, x_stage, u_stage, context_stage, barrier_weight)
-                q_x = cas.jacobian(cost, x_stage).T
-                Q_xx = cas.hessian(cost, x_stage)[0]
-
-                outputs = [Q_xx, q_x]
-                for j in range(N):
-                    u_j = u_stage[j * m:(j + 1) * m]
-                    R_ij = cas.hessian(cost, u_j)[0]
-                    r_ij = cas.jacobian(cost, u_j).T
-                    outputs.extend([R_ij, r_ij])
-
-                stage_funs.append(cas.Function(
-                    f'ilq_cost_quad_k{k}_i{i}',
-                    [x_stage, u_stage, context_stage, barrier_weight] + config_params,
-                    outputs,
-                ))
-            self.stage_cost_quad_casadi.append(stage_funs)
 
         h_x = cas.SX.sym('x', n * N, T)
         h_u = cas.SX.sym('u', m * N, T)
@@ -204,14 +179,35 @@ class ILQGame(BaseSolver):
         self.collision_h_casadi = cas.Function(
             'ilq_collision_h', [xki, xkj] + config_params, [col_h_val])
 
-        self._construct_lq_policy_casadi(config_params)
+        self._construct_lq_stage_casadi(config_params)
         self._construct_policy_rollout_casadi(config_params)
 
         logger.info('Constructing ILQGame CasADi functions... Done')
 
     def _casadi_function_options(self):
-        """Return options for heavyweight CasADi functions."""
-        return {'jit': True} if self.config.jit else {}
+        """Return options for optional JIT CasADi helper functions."""
+        return {'jit': True} if self._casadi_jit_enabled else {}
+
+    def _casadi_jit_function(self, name, inputs, outputs):
+        """Create a JIT helper, falling back only if the local compiler rejects it."""
+        opts = self._casadi_function_options()
+        if not opts:
+            return cas.Function(name, inputs, outputs)
+        try:
+            return cas.Function(name, inputs, outputs, opts)
+        except RuntimeError as exc:
+            if not self._is_casadi_compile_failure(exc):
+                raise
+            logger.warning(
+                'CasADi JIT compilation failed for %s; retrying without JIT.',
+                name,
+            )
+            return cas.Function(name, inputs, outputs)
+
+    @staticmethod
+    def _is_casadi_compile_failure(exc):
+        text = str(exc).lower()
+        return 'compilation failed' in text or 'shell_compiler' in text
 
     def _construct_context_stage_function(self):
         """Build a function mapping a stacked stage state to stacked context."""
@@ -309,206 +305,129 @@ class ILQGame(BaseSolver):
         phi_quad = -np.log(delta) + z / delta + 0.5 * (z / delta) ** 2
         return cas.if_else(h < -delta, phi_log, phi_quad)
 
-    def _construct_lq_approx_casadi(self, config_params):
-        """Build one JIT-able function for rollout, linearization, and costs."""
-        gc = self.game.config
-        nN = self.n * self.N
-        mN = self.m * self.N
-        eye_x = cas.SX.eye(nN)
-        eye_u = cas.SX.eye(self.m)
+    def _construct_lq_stage_casadi(self, config_params):
+        """Build JIT helpers for dense LQ assembly and value recursion."""
+        self.lq_stage_assemble_casadi = [
+            self._construct_lq_stage_assemble_casadi(k, config_params)
+            for k in range(self.T)
+        ]
+        self.lq_stage_update_casadi = self._construct_lq_stage_update_casadi()
 
-        u = cas.SX.sym('u_lq_approx', mN, self.T)
-        barrier_weight = cas.SX.sym('barrier_weight', 1, 1)
-        x0 = gc.get_param('x0')
-        X = self.game.rollout(x0, u)
-        full_x = [cas.reshape(x0, nN, 1)] + [X[:, k] for k in range(self.T)]
-
-        A_blocks = []
-        B_blocks = []
-        Q_blocks = []
-        q_cols = []
-        R_blocks = []
-        r_cols = []
-        h_context_cols = []
-
-        for k in range(self.T):
-            x_dyn = full_x[k]
-            u_stage = u[:, k]
-            context_dyn = self._stage_context_expr(x_dyn)
-            _, A, B = self.stage_dynamics_casadi(
-                x_dyn, u_stage, context_dyn, *config_params)
-            A_blocks.append(A)
-            B_blocks.append(B)
-
-            x_cost = full_x[k + 1]
-            context_cost = self._stage_context_expr(x_cost)
-            h_context_cols.append(context_cost)
-            for i in range(self.N):
-                outputs = self.stage_cost_quad_casadi[k][i](
-                    x_cost, u_stage, context_cost, barrier_weight, *config_params)
-                Q = 0.5 * (outputs[0] + outputs[0].T)
-                Q += self.config.state_regularization * eye_x
-                Q_blocks.append(Q)
-                q_cols.append(outputs[1])
-
-                idx = 2
-                for j in range(self.N):
-                    R = 0.5 * (outputs[idx] + outputs[idx].T)
-                    if i == j:
-                        R += self.config.control_regularization * eye_u
-                    R_blocks.append(R)
-                    r_cols.append(outputs[idx + 1])
-                    idx += 2
-
-        context_traj = (
-            cas.horzcat(*h_context_cols)
-            if h_context_cols
-            else cas.SX.zeros(self.n_c * self.N, 0)
-        )
-        h_val = self.game.h(X, u, context_traj)
-
-        A_stack = cas.horzcat(*A_blocks)
-        B_stack = cas.horzcat(*B_blocks)
-        Q_stack = cas.horzcat(*Q_blocks)
-        q_stack = cas.horzcat(*q_cols)
-        R_stack = cas.horzcat(*R_blocks)
-        r_stack = cas.horzcat(*r_cols)
-        h_vec = cas.vec(h_val)
-
-        self.lq_approx_casadi = cas.Function(
-            'ilq_lq_approx',
-            [u, barrier_weight] + config_params,
-            [X, A_stack, B_stack, Q_stack, q_stack, R_stack, r_stack, h_vec],
-            self._casadi_function_options(),
-        )
-
-    def _construct_lq_policy_casadi(self, config_params):
-        """Build one JIT-able function for rollout, LQ approximation, and policy solve."""
-        gc = self.game.config
+    def _construct_lq_stage_assemble_casadi(self, k, config_params):
+        """Build a per-stage helper that returns the dense stationary system."""
         nN = self.n * self.N
         mN = self.m * self.N
         eye_x = cas.SX.eye(nN)
         eye_u = cas.SX.eye(self.m)
         eye_mN = cas.SX.eye(mN)
 
-        u = cas.SX.sym('u_policy', mN, self.T)
-        barrier_weight = cas.SX.sym('barrier_weight_policy', 1, 1)
-        x0 = gc.get_param('x0')
-        X = self.game.rollout(x0, u)
-        full_x = [cas.reshape(x0, nN, 1)] + [X[:, k] for k in range(self.T)]
+        x_dyn = cas.SX.sym(f'x_dyn_k{k}', nN, 1)
+        x_cost = cas.SX.sym(f'x_cost_k{k}', nN, 1)
+        u_stage = cas.SX.sym(f'u_stage_k{k}', mN, 1)
+        Z_stack = cas.SX.sym(f'Z_stack_k{k}', nN, nN * self.N)
+        zeta_stack = cas.SX.sym(f'zeta_stack_k{k}', nN, self.N)
+        barrier_weight = cas.SX.sym(f'barrier_weight_k{k}', 1, 1)
 
-        A_vec = []
-        B_vec = []
-        Q_vec = [[None for _ in range(self.T)] for _ in range(self.N)]
-        q_vec = [[None for _ in range(self.T)] for _ in range(self.N)]
-        R_vec = [[[None for _ in range(self.T)] for _ in range(self.N)] for _ in range(self.N)]
-        r_vec = [[[None for _ in range(self.T)] for _ in range(self.N)] for _ in range(self.N)]
-        h_context_cols = []
+        context_dyn = self._stage_context_expr(x_dyn)
+        context_cost = self._stage_context_expr(x_cost)
+        f_val = self._stage_dynamics_expr(x_dyn, u_stage, context_dyn)
+        A = cas.jacobian(f_val, x_dyn)
+        B = cas.jacobian(f_val, u_stage)
 
-        for k in range(self.T):
-            u_stage = u[:, k]
+        S = cas.SX.zeros(mN, mN)
+        Y = cas.SX.zeros(mN, nN)
+        y = cas.SX.zeros(mN, 1)
+        M_stack = cas.SX.zeros(nN, nN * self.N)
+        ell_stack = cas.SX.zeros(nN, self.N)
+        R_stack = cas.SX.zeros(self.m, self.m * self.N * self.N)
+        r_stack = cas.SX.zeros(self.m, self.N * self.N)
 
-            x_dyn = full_x[k]
-            context_dyn = self._stage_context_expr(x_dyn)
-            _, A, B = self.stage_dynamics_casadi(
-                x_dyn, u_stage, context_dyn, *config_params)
-            A_vec.append(A)
-            B_vec.append(B)
+        for i in range(self.N):
+            row = slice(i * self.m, (i + 1) * self.m)
+            z_col = slice(i * nN, (i + 1) * nN)
+            cost = self._stage_cost_expr(k, i, x_cost, u_stage, context_cost, barrier_weight)
+            q_i = cas.jacobian(cost, x_cost).T
+            Q_i = cas.hessian(cost, x_cost)[0]
+            Q_i = 0.5 * (Q_i + Q_i.T) + self.config.state_regularization * eye_x
+            M_i = Q_i + Z_stack[:, z_col]
+            ell_i = q_i + zeta_stack[:, i]
+            Bi = B[:, row]
 
-            x_cost = full_x[k + 1]
-            context_cost = self._stage_context_expr(x_cost)
-            h_context_cols.append(context_cost)
-            for i in range(self.N):
-                outputs = self.stage_cost_quad_casadi[k][i](
-                    x_cost, u_stage, context_cost, barrier_weight, *config_params)
-                Q = 0.5 * (outputs[0] + outputs[0].T)
-                Q += self.config.state_regularization * eye_x
-                Q_vec[i][k] = Q
-                q_vec[i][k] = outputs[1]
+            M_stack[:, z_col] = M_i
+            ell_stack[:, i] = ell_i
 
-                idx = 2
-                for j in range(self.N):
-                    R = 0.5 * (outputs[idx] + outputs[idx].T)
-                    if i == j:
-                        R += self.config.control_regularization * eye_u
-                    R_vec[i][j][k] = R
-                    r_vec[i][j][k] = outputs[idx + 1]
-                    idx += 2
+            for j in range(self.N):
+                col = slice(j * self.m, (j + 1) * self.m)
+                r_col = i * self.N + j
+                R_col = slice(r_col * self.m, (r_col + 1) * self.m)
+                u_j = u_stage[col]
+                R_ij = cas.hessian(cost, u_j)[0]
+                R_ij = 0.5 * (R_ij + R_ij.T)
+                if i == j:
+                    R_ij += self.config.control_regularization * eye_u
+                r_ij = cas.jacobian(cost, u_j).T
 
-        Z = [cas.SX.zeros(nN, nN) for _ in range(self.N)]
-        zeta = [cas.SX.zeros(nN, 1) for _ in range(self.N)]
-        P_by_time = [cas.SX.zeros(mN, nN) for _ in range(self.T)]
-        v_by_time = [cas.SX.zeros(mN, 1) for _ in range(self.T)]
+                R_stack[:, R_col] = R_ij
+                r_stack[:, r_col] = r_ij
 
-        for k in range(self.T - 1, -1, -1):
-            A = A_vec[k]
-            B = B_vec[k]
-            S = cas.SX.zeros(mN, mN)
-            Y = cas.SX.zeros(mN, nN)
-            y = cas.SX.zeros(mN, 1)
-            M = []
-            ell = []
+                block = Bi.T @ M_i @ B[:, col]
+                if i == j:
+                    block += R_ij
+                S[row, col] = block
 
-            for i in range(self.N):
-                row = slice(i * self.m, (i + 1) * self.m)
-                Bi = B[:, row]
-                M_i = Q_vec[i][k] + Z[i]
-                ell_i = q_vec[i][k] + zeta[i]
-                M.append(M_i)
-                ell.append(ell_i)
+            Y[row, :] = Bi.T @ M_i @ A
+            y[row, :] = Bi.T @ ell_i + r_stack[:, i * self.N + i]
 
-                for j in range(self.N):
-                    col = slice(j * self.m, (j + 1) * self.m)
-                    block = Bi.T @ M_i @ B[:, col]
-                    if i == j:
-                        block += R_vec[i][i][k]
-                    S[row, col] = block
-
-                Y[row, :] = Bi.T @ M_i @ A
-                y[row, :] = Bi.T @ ell_i + r_vec[i][i][k]
-
-            sol = cas.solve(
-                S + self.config.lq_regularization * eye_mN,
-                cas.horzcat(Y, y),
-            )
-            P = sol[:, :nN]
-            v = -sol[:, nN]
-            P_by_time[k] = P
-            v_by_time[k] = v
-
-            F = A - B @ P
-            beta = B @ v
-            next_Z = []
-            next_zeta = []
-            for i in range(self.N):
-                Zi = F.T @ M[i] @ F
-                zi = F.T @ (M[i] @ beta + ell[i])
-                for j in range(self.N):
-                    row = slice(j * self.m, (j + 1) * self.m)
-                    Pj = P[row, :]
-                    vj = v[row]
-                    Zi += Pj.T @ R_vec[i][j][k] @ Pj
-                    zi -= Pj.T @ (R_vec[i][j][k] @ vj + r_vec[i][j][k])
-                next_Z.append(0.5 * (Zi + Zi.T))
-                next_zeta.append(zi)
-            Z = next_Z
-            zeta = next_zeta
-
-        context_traj = (
-            cas.horzcat(*h_context_cols)
-            if h_context_cols
-            else cas.SX.zeros(self.n_c * self.N, 0)
+        S_reg = S + self.config.lq_regularization * eye_mN
+        return self._casadi_jit_function(
+            f'ilq_lq_stage_assemble_k{k}',
+            [x_dyn, x_cost, u_stage, Z_stack, zeta_stack, barrier_weight] + config_params,
+            [A, B, S_reg, Y, y, M_stack, ell_stack, R_stack, r_stack],
         )
-        h_vec = cas.vec(self.game.h(X, u, context_traj))
-        P_stack = cas.horzcat(*P_by_time)
-        v_stack = cas.horzcat(*v_by_time)
-        feedforward_norm = cas.sqrt(cas.dot(cas.vec(v_stack), cas.vec(v_stack)) / (self.N * self.T))
 
-        self.lq_policy_casadi = cas.Function(
-            'ilq_lq_policy',
-            [u, barrier_weight] + config_params,
-            [X, P_stack, v_stack, h_vec, feedforward_norm],
-            self._casadi_function_options(),
+    def _construct_lq_stage_update_casadi(self):
+        """Build a helper that applies the LQ value recursion after the solve."""
+        nN = self.n * self.N
+        mN = self.m * self.N
+
+        A = cas.SX.sym('A_lq_update', nN, nN)
+        B = cas.SX.sym('B_lq_update', nN, mN)
+        M_stack = cas.SX.sym('M_stack_lq_update', nN, nN * self.N)
+        ell_stack = cas.SX.sym('ell_stack_lq_update', nN, self.N)
+        R_stack = cas.SX.sym('R_stack_lq_update', self.m, self.m * self.N * self.N)
+        r_stack = cas.SX.sym('r_stack_lq_update', self.m, self.N * self.N)
+        P = cas.SX.sym('P_lq_update', mN, nN)
+        v = cas.SX.sym('v_lq_update', mN, 1)
+
+        F = A - B @ P
+        beta = B @ v
+        next_Z_stack = cas.SX.zeros(nN, nN * self.N)
+        next_zeta_stack = cas.SX.zeros(nN, self.N)
+
+        for i in range(self.N):
+            z_col = slice(i * nN, (i + 1) * nN)
+            M_i = M_stack[:, z_col]
+            ell_i = ell_stack[:, i]
+            Zi = F.T @ M_i @ F
+            zi = F.T @ (M_i @ beta + ell_i)
+            for j in range(self.N):
+                row = slice(j * self.m, (j + 1) * self.m)
+                r_col = i * self.N + j
+                R_col = slice(r_col * self.m, (r_col + 1) * self.m)
+                Pj = P[row, :]
+                vj = v[row, :]
+                R_ij = R_stack[:, R_col]
+                r_ij = r_stack[:, r_col]
+                Zi += Pj.T @ R_ij @ Pj
+                zi -= Pj.T @ (R_ij @ vj + r_ij)
+
+            next_Z_stack[:, z_col] = 0.5 * (Zi + Zi.T)
+            next_zeta_stack[:, i] = zi
+
+        return self._casadi_jit_function(
+            'ilq_lq_stage_update',
+            [A, B, M_stack, ell_stack, R_stack, r_stack, P, v],
+            [next_Z_stack, next_zeta_stack],
         )
 
     def _construct_policy_rollout_casadi(self, config_params):
@@ -587,12 +506,34 @@ class ILQGame(BaseSolver):
             np.zeros((self.n_c * self.N, self.T), order='F'),
             *params,
         )
-        policy_outputs = self.lq_policy_casadi(u, self.barrier_weight, *params)
+        full_x = self._full_x(x_np)
+        Z_stack = cas.DM.zeros(self.n * self.N, self.n * self.N * self.N)
+        zeta_stack = cas.DM.zeros(self.n * self.N, self.N)
+        P_zero_stage = np.zeros((self.m * self.N, self.n * self.N), order='F')
+        v_zero_stage = np.zeros((self.m * self.N, 1), order='F')
+        for k in range(self.T):
+            x_dyn = full_x[:, [k]]
+            x_cost = full_x[:, [k + 1]]
+            u_stage = u[:, [k]]
+            outputs = self.lq_stage_assemble_casadi[k](
+                x_dyn, x_cost, u_stage, Z_stack, zeta_stack, self.barrier_weight, *params)
+            self.lq_stage_update_casadi(
+                outputs[0],
+                outputs[1],
+                outputs[5],
+                outputs[6],
+                outputs[7],
+                outputs[8],
+                P_zero_stage,
+                v_zero_stage,
+            )
+        P_zero = np.zeros((self.m * self.N, self.n * self.N * self.T), order='F')
+        v_zero = np.zeros((self.m * self.N, self.T), order='F')
         self.policy_rollout_casadi(
             u,
-            np.asarray(policy_outputs[0], dtype=float, order='F'),
-            policy_outputs[1],
-            policy_outputs[2],
+            x_np,
+            P_zero,
+            v_zero,
             self.config.step_size,
             *params,
         )
@@ -614,225 +555,69 @@ class ILQGame(BaseSolver):
         context = self.get_context_stage_casadi(x_stage)
         return np.asarray(context, dtype=float).reshape((self.n_c * self.N, 1), order='F')
 
-    def _linearize_dynamics(self, full_x, u):
-        """Evaluate sparse dynamics Jacobians along the reference trajectory."""
-        params = self._params_np()
-        As = []
-        Bs = [[] for _ in range(self.N)]
-        for k in range(self.T):
-            xk = full_x[:, [k]]
-            uk = u[:, [k]]
-            context = self._stage_context_np(xk)
-            _, A_dm, B_dm = self.stage_dynamics_casadi(xk, uk, context, *params)
-            As.append(dm_to_csc(A_dm))
-            B = dm_to_csc(B_dm)
-            for i in range(self.N):
-                Bs[i].append(B[:, i * self.m:(i + 1) * self.m].tocsc())
-        return As, Bs
-
-    def _quadraticize_costs(self, full_x, u):
-        """Evaluate sparse cost Hessians and gradients along the trajectory."""
-        params = self._params_np()
-        Qs = [[] for _ in range(self.N)]
-        qs = [[] for _ in range(self.N)]
-        Rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
-        rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
-
-        state_eye = scipy.sparse.eye(self.n * self.N, format='csc')
-        control_eye = scipy.sparse.eye(self.m, format='csc')
-        for k in range(self.T):
-            x_stage = full_x[:, [k + 1]]
-            u_stage = u[:, [k]]
-            context = self._stage_context_np(x_stage)
-            for i in range(self.N):
-                outputs = self.stage_cost_quad_casadi[k][i](
-                    x_stage, u_stage, context, self.barrier_weight, *params)
-                Q = dm_to_csc(outputs[0])
-                q = np.asarray(outputs[1], dtype=float).reshape((self.n * self.N, 1), order='F')
-                Q = self._symmetrize_sparse(Q) + self.config.state_regularization * state_eye
-                Qs[i].append(Q)
-                qs[i].append(q)
-
-                idx = 2
-                for j in range(self.N):
-                    R = dm_to_csc(outputs[idx])
-                    r = np.asarray(outputs[idx + 1], dtype=float).reshape((self.m, 1), order='F')
-                    R = self._symmetrize_sparse(R)
-                    if i == j:
-                        R = R + self.config.control_regularization * control_eye
-                    Rs[i][j].append(R)
-                    rs[i][j].append(r)
-                    idx += 2
-        return Qs, qs, Rs, rs
-
-    def _evaluate_lq_approx(self, u):
-        """Evaluate and unpack the combined CasADi LQ approximation function."""
-        if not hasattr(self, 'lq_approx_casadi'):
-            gc = self.game.config
-            self._construct_lq_approx_casadi(
-                [gc.get_int_param_sx(), gc.get_double_param_sx()])
-        outputs = self.lq_approx_casadi(u, self.barrier_weight, *self._params_np())
-        return self._unpack_lq_approx(outputs)
-
-    def _evaluate_lq_policy(self, u):
-        """Evaluate and unpack the combined CasADi LQ policy function."""
-        outputs = self.lq_policy_casadi(u, self.barrier_weight, *self._params_np())
-        return self._unpack_lq_policy(outputs)
-
-    def _unpack_lq_policy(self, outputs):
-        """Convert CasADi policy outputs to contiguous numeric arrays."""
-        x = np.asarray(outputs[0], dtype=float, order='F')
-        P = outputs[1]
-        v = outputs[2]
-        h_vec = np.asarray(outputs[3], dtype=float).reshape(-1, order='F')
-        ref_violation = 0.0 if h_vec.size == 0 else float(np.max(np.maximum(h_vec, 0.0)))
-        feedforward_norm = float(outputs[4])
-        return x, ILQPolicy(P=P, v=v, feedforward_norm=feedforward_norm), ref_violation
-
-    def _unpack_lq_approx(self, outputs):
-        """Convert stacked CasADi LQ approximation outputs to solver lists."""
-        nN = self.n * self.N
-        mN = self.m * self.N
-
-        x = np.asarray(outputs[0], dtype=float, order='F')
-        A_stack = dm_to_csc(outputs[1])
-        B_stack = dm_to_csc(outputs[2])
-        Q_stack = dm_to_csc(outputs[3])
-        q_stack = np.asarray(outputs[4], dtype=float, order='F')
-        R_stack = dm_to_csc(outputs[5])
-        r_stack = np.asarray(outputs[6], dtype=float, order='F')
-        h_vec = np.asarray(outputs[7], dtype=float).reshape(-1, order='F')
-
-        As = []
-        Bs = [[] for _ in range(self.N)]
-        for k in range(self.T):
-            As.append(A_stack[:, k * nN:(k + 1) * nN].tocsc())
-            Bk = B_stack[:, k * mN:(k + 1) * mN].tocsc()
-            for i in range(self.N):
-                Bs[i].append(Bk[:, i * self.m:(i + 1) * self.m].tocsc())
-
-        Qs = [[] for _ in range(self.N)]
-        qs = [[] for _ in range(self.N)]
-        Rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
-        rs = [[[] for _ in range(self.N)] for _ in range(self.N)]
-        for k in range(self.T):
-            for i in range(self.N):
-                qi_idx = k * self.N + i
-                Qs[i].append(Q_stack[:, qi_idx * nN:(qi_idx + 1) * nN].tocsc())
-                qs[i].append(q_stack[:, [qi_idx]])
-                for j in range(self.N):
-                    rij_idx = (k * self.N + i) * self.N + j
-                    Rs[i][j].append(
-                        R_stack[:, rij_idx * self.m:(rij_idx + 1) * self.m].tocsc()
-                    )
-                    rs[i][j].append(r_stack[:, [rij_idx]])
-
-        ref_violation = 0.0 if h_vec.size == 0 else float(np.max(np.maximum(h_vec, 0.0)))
-        return x, As, Bs, Qs, qs, Rs, rs, ref_violation
-
-    @staticmethod
-    def _symmetrize_sparse(mat):
-        mat = mat.tocsc()
-        return ((mat + mat.T) * 0.5).tocsc()
-
-    def _solve_lq_game(self, As, Bs, Qs, qs, Rs, rs):
-        """Solve the local finite-horizon LQ game by backward recursion."""
+    def _solve_lq_game(self, full_x, u):
+        """Solve the finite-horizon LQ game with JIT matrix assembly."""
         t = self.profiler
         nN = self.n * self.N
-        m = self.m
         N = self.N
         T = self.T
+        mN = self.m * N
+        params = self._params_np()
 
-        Z = [scipy.sparse.csc_matrix((nN, nN)) for _ in range(N)]
-        zeta = [np.zeros((nN, 1)) for _ in range(N)]
-        Ps_reversed = []
-        vs_reversed = []
+        Z_stack = cas.DM.zeros(nN, nN * N)
+        zeta_stack = cas.DM.zeros(nN, N)
+        P_policy = np.empty((mN, nN * T), dtype=float, order='F')
+        v_policy = np.empty((mN, T), dtype=float, order='F')
 
         for k in range(T - 1, -1, -1):
-            t.s('assemble stationary system')
-            S = np.zeros((N * m, N * m))
-            Y = np.zeros((N * m, nN))
-            y = np.zeros((N * m, 1))
+            x_dyn = full_x[:, [k]]
+            x_cost = full_x[:, [k + 1]]
+            u_stage = u[:, [k]]
 
-            M = []
-            ell = []
-            for i in range(N):
-                M_i = (Qs[i][k] + Z[i]).tocsc()
-                ell_i = qs[i][k] + zeta[i]
-                M.append(M_i)
-                ell.append(ell_i)
-
-                Bi = Bs[i][k]
-                for j in range(N):
-                    block = Bi.T @ M_i @ Bs[j][k]
-                    if i == j:
-                        block = block + Rs[i][i][k]
-                    S[i * m:(i + 1) * m, j * m:(j + 1) * m] = block.toarray()
-
-                Y_i = Bi.T @ M_i @ As[k]
-                y_i = Bi.T @ ell_i + rs[i][i][k]
-                Y[i * m:(i + 1) * m, :] = Y_i.toarray()
-                y[i * m:(i + 1) * m, :] = y_i
-
-            S_reg = S + self.config.lq_regularization * np.eye(N * m)
-            t.e('assemble stationary system')
+            t.s('casadi stage assembly')
+            (
+                A,
+                B,
+                S_reg_dm,
+                Y_dm,
+                y_dm,
+                M_stack,
+                ell_stack,
+                R_stack,
+                r_stack,
+            ) = self.lq_stage_assemble_casadi[k](
+                x_dyn,
+                x_cost,
+                u_stage,
+                Z_stack,
+                zeta_stack,
+                self.barrier_weight,
+                *params,
+            )
+            t.e('casadi stage assembly')
 
             t.s('_solve_stationary_system')
-            P_stack = self._solve_stationary_system(S_reg, Y)
-            v_stack = -self._solve_stationary_system(S_reg, y)
+            S_reg = np.asarray(S_reg_dm, dtype=float, order='F')
+            Y = np.asarray(Y_dm, dtype=float, order='F')
+            y = np.asarray(y_dm, dtype=float, order='F').reshape((mN, 1), order='F')
+            rhs = np.empty((mN, nN + 1), dtype=float, order='F')
+            rhs[:, :nN] = Y
+            rhs[:, [nN]] = y
+            sol = self._solve_stationary_system(S_reg, rhs)
+            P = np.array(sol[:, :nN], dtype=float, order='F', copy=True)
+            v = np.array(-sol[:, [nN]], dtype=float, order='F', copy=True)
             t.e('_solve_stationary_system')
 
-            t.s('split policy')
-            P_k = [
-                P_stack[i * m:(i + 1) * m, :].reshape((m, nN), order='F')
-                for i in range(N)
-            ]
-            v_k = [
-                v_stack[i * m:(i + 1) * m, :].reshape((m, 1), order='F')
-                for i in range(N)
-            ]
-            Ps_reversed.append(P_k)
-            vs_reversed.append(v_k)
-            t.e('split policy')
+            P_policy[:, k * nN:(k + 1) * nN] = P
+            v_policy[:, [k]] = v
 
-            t.s('update value recursion')
-            F = As[k].copy().tocsc()
-            beta = np.zeros((nN, 1))
-            for j in range(N):
-                F = F - Bs[j][k] @ scipy.sparse.csc_matrix(P_k[j])
-                beta += Bs[j][k] @ v_k[j]
-            F = F.tocsc()
+            t.s('casadi value recursion')
+            Z_stack, zeta_stack = self.lq_stage_update_casadi(
+                A, B, M_stack, ell_stack, R_stack, r_stack, P, v)
+            t.e('casadi value recursion')
 
-            next_Z = []
-            next_zeta = []
-            for i in range(N):
-                Zi = F.T @ M[i] @ F
-                zi = F.T @ (M[i] @ beta + ell[i])
-                for j in range(N):
-                    Pj = scipy.sparse.csc_matrix(P_k[j])
-                    R_ij = Rs[i][j][k]
-                    vj = v_k[j]
-                    r_ij = rs[i][j][k]
-                    Zi = Zi + Pj.T @ R_ij @ Pj
-                    zi = zi - Pj.T @ (R_ij @ vj + r_ij)
-                next_Z.append(self._symmetrize_sparse(Zi))
-                next_zeta.append(np.asarray(zi).reshape((nN, 1), order='F'))
-            Z = next_Z
-            zeta = next_zeta
-            t.e('update value recursion')
-
-        t.s('reorder policy')
-        Ps = [[] for _ in range(N)]
-        vs = [[] for _ in range(N)]
-        for k in range(T):
-            P_k = Ps_reversed[T - 1 - k]
-            v_k = vs_reversed[T - 1 - k]
-            for i in range(N):
-                Ps[i].append(P_k[i])
-                vs[i].append(v_k[i])
-        t.e('reorder policy')
-
-        return ILQPolicy(P=Ps, v=vs)
+        feedforward_norm = float(np.linalg.norm(v_policy) / np.sqrt(N * T))
+        return ILQPolicy(P=P_policy, v=v_policy, feedforward_norm=feedforward_norm)
 
     @staticmethod
     def _solve_stationary_system(A, B):
@@ -911,19 +696,18 @@ class ILQGame(BaseSolver):
         t = self.profiler
         t.s()
 
-        t.s('casadi policy solve')
-        policy_outputs = self.lq_policy_casadi(u, self.barrier_weight, *self._params_np())
-        t.e('casadi policy solve')
+        x_ref = np.array(x, dtype=float, order='F', copy=True)
+        full_x = self._full_x(x_ref)
 
-        t.s('unpack policy')
-        x_ref, policy, ref_violation = self._unpack_lq_policy(policy_outputs)
+        t.s('hybrid lq solve')
+        policy = self._solve_lq_game(full_x, u)
         self.last_policy = policy
         feedforward_norm = self._policy_feedforward_norm(policy)
-        t.e('unpack policy')
+        t.e('hybrid lq solve')
 
         t.s('rollout policy')
         (new_x, new_u, new_violation), accepted_step = self._select_rollout(
-            u, x_ref, x_ref, policy, feedforward_norm, max(violation, ref_violation))
+            u, x_ref, x_ref, policy, feedforward_norm, violation)
         t.e('rollout policy')
 
         t.s('residual checks')

@@ -43,6 +43,27 @@ def create_solver(solver_name, game, cpp, vne, precond):
     raise ValueError(f'Unknown solver {solver_name!r}')
 
 
+def reset_solver_for_game(solver, game):
+    """Attach a new game sample and reset mutable per-solve state."""
+    solver.game = game
+    if hasattr(solver, 'x0'):
+        solver.x0 = game.config.x0
+    if hasattr(solver, 'reg'):
+        solver.reg = solver.config.reg
+    if hasattr(solver, 'rho'):
+        solver.rho = solver.config.rho_0
+    if hasattr(solver, 'line_search_fail_count'):
+        solver.line_search_fail_count = 0
+    if hasattr(solver, 'residual_vec'):
+        solver.residual_vec = []
+    if hasattr(solver, 'violation_vec'):
+        solver.violation_vec = []
+    if hasattr(solver, 'barrier_weight'):
+        solver.barrier_weight = float(solver.config.barrier_weight)
+    if hasattr(solver, 'last_policy'):
+        solver.last_policy = None
+
+
 def benchmark(solver_name, cpp, vne, precond):
     good_u_vec = []
     conv_mean_vec = []
@@ -55,12 +76,16 @@ def benchmark(solver_name, cpp, vne, precond):
         converge_vec = []
         optimal_vec = []
         dt_vec = []
+        np.random.seed(0)
+        game = create_random_game(car_count=car_count, horizon=20, variational_gne=vne)
+        solver = create_solver(solver_name, game, cpp, vne, precond)
+        if cpp:
+            solver.init_cpp_backend()
         for i in range(100):
             np.random.seed(i)
             game = create_random_game(car_count=car_count, horizon=20, variational_gne=vne)
-            solver = create_solver(solver_name, game, cpp, vne, precond)
+            reset_solver_for_game(solver, game)
             if cpp:
-                solver.init_cpp_backend()
                 sol = solver.solve_cpp_backend()
             else:
                 sol = solver.solve()
@@ -74,6 +99,7 @@ def benchmark(solver_name, cpp, vne, precond):
                 f'run {i}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.has_converged=}, {sol.is_optimal=}')
             if sol.is_optimal and sol.has_converged:
                 good_u_vec.append(sol.u)
+            print(f"{i}-", end="", flush=True)
 
             if i % 10 == 9:
                 convergence_rate = np.mean(converge_vec)

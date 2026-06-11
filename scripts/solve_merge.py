@@ -6,6 +6,7 @@ from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.ipopt_casadi import IpoptCasadi, IpoptCasadiConfig
+from rd3g.solvers.newton_casadi import NewtonCasadi, NewtonCasadiConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +32,9 @@ if solver_name == 'ilqgame':
 elif solver_name == 'ipopt':
     solver_config = IpoptCasadiConfig(variational_gne=variational_gne)
     solver = IpoptCasadi(solver_config, game, cpp_only=cpp)
+elif solver_name == 'newton':
+    solver_config = NewtonCasadiConfig(variational_gne=variational_gne)
+    solver = NewtonCasadi(solver_config, game, cpp_only=cpp)
 elif solver_name == 'interior_point':
     solver_config = InteriorPointGameConfig(
         inertia_correction=False,
