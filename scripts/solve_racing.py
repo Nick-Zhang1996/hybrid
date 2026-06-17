@@ -7,6 +7,7 @@ import numpy as np
 from rd3g.utilities.util import talk
 from rd3g.games.car_racing_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
+from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
@@ -18,10 +19,12 @@ logger.setLevel(logging.INFO)
 cpp = True
 load = True
 variational_gne = True
+solver_name = 'interior_point'
+
+if solver_name == 'algames':
+    cpp = False
 
 np.random.seed()
-solver_config = InteriorPointGameConfig(
-    inertia_correction=False, iterations=20, variational_gne=variational_gne)
 game = create_random_game(car_count=4, horizon=10, variational_gne=variational_gne)
 
 gc = game.config
@@ -35,7 +38,15 @@ if load:
 else:
     u_ref = np.zeros((gc.m*gc.N, gc.T), order='F')
 
-solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
+if solver_name == 'interior_point':
+    solver_config = InteriorPointGameConfig(
+        inertia_correction=False, iterations=20, variational_gne=variational_gne)
+    solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
+elif solver_name == 'algames':
+    solver_config = AlgamesJuliaConfig(iterations=20)
+    solver = AlgamesJulia(solver_config, game)
+else:
+    raise ValueError(f'Unknown solver_name={solver_name}')
 
 if cpp:
     solver.init_cpp_backend()

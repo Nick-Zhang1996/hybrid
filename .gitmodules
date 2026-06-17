@@ -2,3 +2,7 @@
 	path = extern/pybind11
 	url = https://github.com/pybind/pybind11
 	branch = stable
+[submodule "extern/AlgamesDriving.jl"]
+	path = extern/AlgamesDriving.jl
+	url = git@github.com:Nick-Zhang1996/AlgamesDriving.jl.git
+	branch = benchmark

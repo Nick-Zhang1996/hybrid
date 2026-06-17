@@ -18,7 +18,8 @@ for car_count in range(2, 9):
     converge_vec = []
     optimal_vec = []
     dt_vec = []
-    for i in range(50):
+    repeat_count = 50
+    for i in range(repeat_count):
         np.random.seed(i)
         game = create_random_game(car_count=car_count, horizon=20)
         solver_config = RD3GConfig(USE_CPP=True)
@@ -33,6 +34,7 @@ for car_count in range(2, 9):
             f'run {i}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.has_converged=}, {sol.is_optimal=}')
         if sol.is_optimal and sol.has_converged:
             good_u_vec.append(sol.u)
+        print(f'repeat {i + 1}/{repeat_count}', end='\r', flush=True)
 
         if i % 10 == 9:
             convergence_rate = np.mean(converge_vec)
@@ -41,6 +43,7 @@ for car_count in range(2, 9):
             mean_dt = np.mean(dt_vec)
             logger.debug(
                 f'{convergence_rate=}, {optimal_rate=}, {mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+    print()
     converge = np.mean(converge_vec)
     optimal = np.mean(optimal_vec)
     median_dt_ms = np.median(dt_vec) * 1000

@@ -6,6 +6,7 @@ from rd3g.games.car_merge_kinematic_bicycle_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
@@ -40,6 +41,16 @@ def create_solver(solver_name, game, cpp, vne, precond):
             barrier_weight=1e-2,
         )
         return ILQGame(solver_config, game, cpp_only=cpp)
+    if solver_name == 'algames':
+        if cpp:
+            raise ValueError('algames does not support cpp=True')
+        solver_config = AlgamesJuliaConfig(
+            iterations=20,
+            warmup_solve=True,
+            persistent_worker=True,
+            reuse_problem=False,
+        )
+        return AlgamesJulia(solver_config, game)
     raise ValueError(f'Unknown solver {solver_name!r}')
 
 
@@ -64,7 +75,7 @@ def reset_solver_for_game(solver, game):
         solver.last_policy = None
 
 
-def benchmark(solver_name, cpp, vne, precond):
+def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
     logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
@@ -82,7 +93,7 @@ def benchmark(solver_name, cpp, vne, precond):
         solver = create_solver(solver_name, game, cpp, vne, precond)
         if cpp:
             solver.init_cpp_backend()
-        for i in range(100):
+        for i in range(repeat_count):
             np.random.seed(i)
             game = create_random_game(car_count=car_count, horizon=20, variational_gne=vne)
             reset_solver_for_game(solver, game)
@@ -100,7 +111,7 @@ def benchmark(solver_name, cpp, vne, precond):
                 f'run {i}, {sol.iterations=}, {sol.elapsed_time=:.6f}, {sol.residual=:.6f} {sol.has_converged=}, {sol.is_optimal=}')
             if sol.is_optimal and sol.has_converged:
                 good_u_vec.append(sol.u)
-            print(f"{i}-", end="", flush=True)
+            print(f'repeat {i + 1}/{repeat_count}', end='\r', flush=True)
 
             if i % 10 == 9:
                 convergence_rate = np.mean(converge_vec)
@@ -109,6 +120,9 @@ def benchmark(solver_name, cpp, vne, precond):
                 mean_dt = np.mean(dt_vec)
                 logger.debug(
                     f'{convergence_rate=}, {optimal_rate=}, {mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+        if solver_name == 'algames':
+            solver.final()
+        print()
         converge_arr = np.asarray(converge_vec, dtype=bool)
         dt_arr = np.asarray(dt_vec)
         converged_dt_arr = dt_arr[converge_arr]
@@ -144,4 +158,4 @@ def benchmark(solver_name, cpp, vne, precond):
 
 if __name__ == '__main__':
     # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
-    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=True)
+    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)

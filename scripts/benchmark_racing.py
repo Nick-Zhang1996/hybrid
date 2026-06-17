@@ -7,6 +7,7 @@ from rd3g.games.car_racing_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
 from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
@@ -41,6 +42,16 @@ def create_solver(solver_name, game, cpp, vne, precond):
             barrier_weight=1e-2,
         )
         return ILQGame(solver_config, game, cpp_only=cpp)
+    if solver_name == 'algames':
+        if cpp:
+            raise ValueError('algames does not support cpp=True')
+        solver_config = AlgamesJuliaConfig(
+            iterations=20,
+            warmup_solve=True,
+            persistent_worker=True,
+            reuse_problem=False,
+        )
+        return AlgamesJulia(solver_config, game)
     raise ValueError(f'Unknown solver {solver_name!r}')
 
 
@@ -116,6 +127,8 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
                 logger.debug(
                     f'{convergence_rate=}, {optimal_rate=}, '
                     f'{mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+        if solver_name == 'algames':
+            solver.final()
         print()
         converge = np.mean(converge_vec).item()
         optimal = np.mean(optimal_vec).item()
@@ -172,5 +185,5 @@ def notify_done():
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=True)
+    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
     notify_done()

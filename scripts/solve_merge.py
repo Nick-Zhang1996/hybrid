@@ -8,6 +8,7 @@ from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.ipopt_casadi import IpoptCasadi, IpoptCasadiConfig
 from rd3g.solvers.newton_casadi import NewtonCasadi, NewtonCasadiConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
+from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
@@ -20,11 +21,11 @@ np.random.seed(12)
 cpp = False
 variational_gne = True
 game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
-solver_name = 'ilqgame'
+solver_name = 'algames'
 if solver_name == 'ilqgame':
     solver_config = ILQGameConfig(
         variational_gne=variational_gne,
-        iterations=50,
+        iterations=20,
         step_size=0.5,
         barrier_weight=1e-2,
     )
@@ -44,6 +45,11 @@ elif solver_name == 'interior_point':
 elif solver_name == 'rd3g':
     solver_config = RD3GCasadiConfig(inertia_correction=False)
     solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
+elif solver_name == 'algames':
+    if cpp:
+        raise ValueError('algames does not support cpp=True')
+    solver_config = AlgamesJuliaConfig(iterations=20)
+    solver = AlgamesJulia(solver_config, game)
 else:
     raise ValueError(f'Unknown solver_name={solver_name}')
 if cpp:

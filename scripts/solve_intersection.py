@@ -5,6 +5,7 @@ import numpy as np
 
 from rd3g.games.intersection_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
+from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
@@ -17,13 +18,22 @@ i = 10
 np.random.seed(i)
 cpp = False
 variational_gne = False
+solver_name = 'interior_point'
 
 logger.info('Creating game...')
 game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
 logger.info('Setting up solver...')
-solver_config = InteriorPointGameConfig(
-    iterations=50, inertia_correction=False, variational_gne=variational_gne)
-solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
+if solver_name == 'interior_point':
+    solver_config = InteriorPointGameConfig(
+        iterations=50, inertia_correction=False, variational_gne=variational_gne)
+    solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
+elif solver_name == 'algames':
+    if cpp:
+        raise ValueError('algames does not support cpp=True')
+    solver_config = AlgamesJuliaConfig(iterations=50)
+    solver = AlgamesJulia(solver_config, game)
+else:
+    raise ValueError(f'Unknown solver_name={solver_name}')
 if cpp:
     solver.init_cpp_backend()
     sol = solver.solve_cpp_backend()
