@@ -1,36 +1,72 @@
-"""Benchmark the interior-point game solver on the racing game."""
+"""Benchmark game solvers on the racing game."""
 import logging
+
 import numpy as np
-import pyttsx3
 
 from rd3g.games.car_racing_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
+from rd3g.solvers.ilqgame import ILQGame, ILQGameConfig
 from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
 logger.setLevel(logging.WARNING)
+logger = logging.getLogger('rd3g.solvers.ilqgame')
+logger.setLevel(logging.ERROR)
 
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-SOLVER = 'ipm'
 
-
-def create_solver(game, cpp, vne, precond):
-    if SOLVER == 'ipm':
+def create_solver(solver_name, game, cpp, vne, precond):
+    if solver_name == 'ipm':
         solver_config = InteriorPointGameConfig(
-            inertia_correction=False, variational_gne=vne, precondition_with_potential=precond)
+            inertia_correction=False,
+            variational_gne=vne,
+            precondition_with_potential=precond,
+            abs_split=True)
         return InteriorPointGame(solver_config, game, cpp_only=cpp)
-    if SOLVER == 'rd3g_casadi':
+    if solver_name == 'rd3g':
         if vne:
             raise ValueError('rd3g_casadi does not support variational_gne=True')
         solver_config = RD3GCasadiConfig(inertia_correction=False)
         return RD3GCasadi(solver_config, game, cpp_only=cpp)
-    raise ValueError(f'Unknown solver {SOLVER!r}')
+    if solver_name == 'ilqgame':
+        if cpp:
+            raise ValueError('ilqgame does not support cpp=True')
+        solver_config = ILQGameConfig(
+            variational_gne=vne,
+            iterations=20,
+            step_size=0.5,
+            barrier_weight=1e-2,
+        )
+        return ILQGame(solver_config, game, cpp_only=cpp)
+    raise ValueError(f'Unknown solver {solver_name!r}')
 
 
-def benchmark(cpp, vne, precond):
+def reset_solver_for_game(solver, game):
+    """Attach a new game sample and reset mutable per-solve state."""
+    solver.game = game
+    if hasattr(solver, 'x0'):
+        solver.x0 = game.config.x0
+    if hasattr(solver, 'reg'):
+        solver.reg = solver.config.reg
+    if hasattr(solver, 'rho'):
+        solver.rho = solver.config.rho_0
+    if hasattr(solver, 'line_search_fail_count'):
+        solver.line_search_fail_count = 0
+    if hasattr(solver, 'residual_vec'):
+        solver.residual_vec = []
+    if hasattr(solver, 'violation_vec'):
+        solver.violation_vec = []
+    if hasattr(solver, 'barrier_weight'):
+        solver.barrier_weight = float(solver.config.barrier_weight)
+    if hasattr(solver, 'last_policy'):
+        solver.last_policy = None
+
+
+def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range(2, 9), horizon=10):
+    logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
     conv_var_vec = []
@@ -41,17 +77,21 @@ def benchmark(cpp, vne, precond):
     converged_time_mean_vec = []
     converged_time_var_vec = []
 
-    # for car_count in range(2, 9):
-    for car_count in [8]:
+    for car_count in car_counts:
         converge_vec = []
         optimal_vec = []
         dt_vec = []
-        for i in range(50):
+        np.random.seed(0)
+        game = create_random_game(car_count=car_count, horizon=horizon, variational_gne=vne)
+        solver = create_solver(solver_name, game, cpp, vne, precond)
+        if cpp:
+            solver.init_cpp_backend()
+
+        for i in range(repeat_count):
             np.random.seed(i)
-            game = create_random_game(car_count=car_count, horizon=10, variational_gne=vne)
-            solver = create_solver(game, cpp, vne, precond)
+            game = create_random_game(car_count=car_count, horizon=horizon, variational_gne=vne)
+            reset_solver_for_game(solver, game)
             if cpp:
-                solver.init_cpp_backend()
                 sol = solver.solve_cpp_backend()
             else:
                 sol = solver.solve()
@@ -62,18 +102,21 @@ def benchmark(cpp, vne, precond):
             optimal_vec.append(sol.is_optimal and sol.has_converged)
             dt_vec.append(sol.elapsed_time)
             logger.debug(
-                f'run {i}, {sol.iterations=}, {sol.elapsed_time=:.6f},'
+                f'run {i}, {sol.iterations=}, {sol.elapsed_time=:.6f}, '
                 f'{sol.residual=:.6f} {sol.has_converged=}, {sol.is_optimal=}')
             if sol.is_optimal and sol.has_converged:
                 good_u_vec.append(sol.u)
+            print(f'repeat {i + 1}/{repeat_count}', end='\r', flush=True)
 
             if i % 10 == 9:
                 convergence_rate = np.mean(converge_vec)
                 optimal_rate = np.mean(optimal_vec)
                 median_dt = np.median(dt_vec)
                 mean_dt = np.mean(dt_vec)
-                logger.debug(f'{convergence_rate=}, {optimal_rate=},'
-                             f'{mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+                logger.debug(
+                    f'{convergence_rate=}, {optimal_rate=}, '
+                    f'{mean_dt*1000=:.1f}ms, {median_dt*1000=:.1f}ms')
+        print()
         converge = np.mean(converge_vec).item()
         optimal = np.mean(optimal_vec).item()
         converge_arr = np.asarray(converge_vec, dtype=bool)
@@ -96,15 +139,16 @@ def benchmark(cpp, vne, precond):
         conv_var_vec.append(np.var(converge_vec).item())
         optimal_var_vec.append(np.var(optimal_vec).item())
         logger.info(
-            f'{car_count} cars {converge=}, {optimal=},'
-            f'{mean_dt_ms=:.1f}ms, {var_dt_ms=:.1f}ms,'
-            f'{converged_mean_dt_ms=:.1f}ms, {converged_var_dt_ms=:.1f}ms')
+            f'{car_count} cars {converge=}, {optimal=}, {mean_dt_ms=:.1f}ms, '
+            f'{var_dt_ms=:.1f}ms, {converged_mean_dt_ms=:.1f}ms, '
+            f'{converged_var_dt_ms=:.1f}ms')
 
     # Report mean and covariance of optimal results, used as param for initial guess
     # stacked_u = np.hstack([val.reshape(game.m, game.N*game.T, order='F') for val in good_u_vec])
     # mean = np.mean(stacked_u, axis=1)
     # cov = np.cov(stacked_u)
     # logger.info(f'{mean=}, {cov=}')
+    print(f'{solver_name=}, {cpp=}, {vne=}, {precond=}')
     print(f'{time_mean_vec=}')
     print(f'{time_var_vec=}')
     print(f'{converged_time_mean_vec=}')
@@ -115,10 +159,18 @@ def benchmark(cpp, vne, precond):
     print(f'{optimal_var_vec=}')
 
 
-benchmark(cpp=True, vne=True, precond=True)
-# Say something to grep my attention
-engine = pyttsx3.init()
-engine.setProperty('rate', 150)  # Speed in words per minute
-text = "Solution Ready"
-engine.say(text)
-engine.runAndWait()
+def notify_done():
+    """Say something to grep attention when running the script interactively."""
+    try:
+        import pyttsx3
+    except ImportError:
+        return
+    engine = pyttsx3.init()
+    engine.setProperty('rate', 150)
+    engine.say('Solution Ready')
+    engine.runAndWait()
+
+
+if __name__ == '__main__':
+    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=True)
+    notify_done()

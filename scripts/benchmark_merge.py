@@ -35,7 +35,7 @@ def create_solver(solver_name, game, cpp, vne, precond):
             raise ValueError('ilqgame does not support cpp=True')
         solver_config = ILQGameConfig(
             variational_gne=vne,
-            iterations=50,
+            iterations=20,
             step_size=0.5,
             barrier_weight=1e-2,
         )
@@ -65,6 +65,7 @@ def reset_solver_for_game(solver, game):
 
 
 def benchmark(solver_name, cpp, vne, precond):
+    logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
     conv_var_vec = []
