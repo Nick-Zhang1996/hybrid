@@ -30,7 +30,7 @@ logger.setLevel(logging.INFO)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
     T: int = 20
-    dt: float = 0.05
+    dt: float = 0.02
     N: int = 4
     n: int = 5
     m: int = 2
@@ -544,7 +544,7 @@ class CarRacingCasadi(CasadiGame):
         return
 
 
-def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('survey_track'),
+def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
                        variational_gne=True):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig

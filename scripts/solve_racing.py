@@ -17,15 +17,18 @@ logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
 cpp = True
-load = True
+load = False
 variational_gne = True
 solver_name = 'interior_point'
+logger.info(f"{solver_name=}")
 
 if solver_name == 'algames':
     cpp = False
+if load:
+    logger.info("Loading initial states from pickle file")
 
 np.random.seed()
-game = create_random_game(car_count=4, horizon=10, variational_gne=variational_gne)
+game = create_random_game(car_count=4, horizon=20, variational_gne=variational_gne)
 
 gc = game.config
 # load from pickle
@@ -57,7 +60,7 @@ else:
 # Say something to grep my attention
 text = "Solution Ready"
 talk(text)
-print(f'{sol.elapsed_time=}, {sol.residual=}')
+print(f'{sol.elapsed_time=}, {sol.residual=}, {sol.has_converged=}, {sol.is_optimal=}')
 # solver.visualize(u_ref, None)
 # game.inspect_h(sol.u, None, solver)
 solver.visualize(sol.u, None)

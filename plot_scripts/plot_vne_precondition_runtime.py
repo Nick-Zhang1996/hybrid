@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 CARS = np.array([2, 3, 4, 5, 6, 7, 8], dtype=float)
 
 SCENARIOS = {
@@ -27,6 +28,12 @@ SCENARIOS = {
         "color": "#6d28d9",
         "marker": "D",
         "linestyle": ":",
+    },
+    "algames": {
+        "label": "ALGAMES",
+        "color": "#b91c1c",
+        "marker": "X",
+        "linestyle": "-.",
     },
 }
 
@@ -85,6 +92,34 @@ GAMES = {
                 ),
                 "converged_mean_ms": np.array([59.9, 74.0, 112.8, 227.9, 423.1, 663.6, 990.0]),
                 "converged_var_ms": np.array([0.2, 0.1, 0.3, 0.4, 1.5, 6.9, 10.4]),
+            },
+            "algames": {
+                "converged_rate": np.array([0.64, 0.59, 0.07, 0.11, 0.02, 0.04, 0.01]),
+                "optimal_rate": np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+                "overall_mean_ms": np.array(
+                    [
+                        40.457602519999995,
+                        90.28213739000002,
+                        161.86449126,
+                        285.79389384999996,
+                        415.37859432999994,
+                        630.8487440000001,
+                        1058.26025594,
+                    ]
+                ),
+                "overall_var_ms": np.array(
+                    [
+                        0.05788705936248584,
+                        1.4925203410200176,
+                        4.528082086111775,
+                        6.653484865339215,
+                        20.449219439226287,
+                        26.54773652052324,
+                        26.035814529433395,
+                    ]
+                ),
+                "converged_mean_ms": np.array([40.2, 90.2, 137.5, 263.2, 518.5, 715.0, 952.1]),
+                "converged_var_ms": np.array([0.0, 1.4, 0.1, 3.6, 26.4, 32.1, 0.0]),
             },
         },
     },
@@ -160,6 +195,54 @@ GAMES = {
                         0.8533594901095689,
                         0.0,
                         np.nan,
+                    ]
+                ),
+            },
+            "algames": {
+                "converged_rate": np.array([0.95, 0.92, 0.92, 0.89, 0.89, 0.87, 0.83]),
+                "optimal_rate": np.array([0.31, 0.12, 0.02, 0.0, 0.0, 0.0, 0.0]),
+                "overall_mean_ms": np.array(
+                    [
+                        27.017887759999997,
+                        64.40915927,
+                        137.03554300000002,
+                        242.49503834000004,
+                        419.82249399999995,
+                        679.44504242,
+                        1029.70871266,
+                    ]
+                ),
+                "overall_var_ms": np.array(
+                    [
+                        0.41078771436740186,
+                        0.5417592565899504,
+                        1.309067570047436,
+                        1.1353144382266127,
+                        4.0019021213135035,
+                        7.445649376988003,
+                        7.465922867720652,
+                    ]
+                ),
+                "converged_mean_ms": np.array(
+                    [
+                        26.64785664210526,
+                        64.16583408695654,
+                        137.51580116304348,
+                        243.11249110112362,
+                        420.7879936516854,
+                        677.0141421034482,
+                        1030.6997994457834,
+                    ]
+                ),
+                "converged_var_ms": np.array(
+                    [
+                        0.4293937311437692,
+                        0.5881178603984131,
+                        1.4136068871362073,
+                        1.2551182361533606,
+                        4.2416121262296,
+                        6.742123568981864,
+                        8.084505045045667,
                     ]
                 ),
             },
@@ -243,12 +326,13 @@ def plot_rates(game_key):
 
     width = 0.22
     centers = np.arange(len(CARS), dtype=float)
+    offset_center = (len(SCENARIOS) - 1) / 2.0
 
     for idx, (scenario_key, scenario_style) in enumerate(SCENARIOS.items()):
         series = game["series"][scenario_key]
         converged = series["converged_rate"]
         optimal = series["optimal_rate"]
-        x = centers + (idx - 1) * width
+        x = centers + (idx - offset_center) * width
 
         ax.bar(
             x,

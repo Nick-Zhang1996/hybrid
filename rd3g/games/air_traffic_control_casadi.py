@@ -282,7 +282,7 @@ class AirTrafficControlCasadi(CasadiGame):
 
     def visualize(self, u, x, show=True, save=False,
                   show_approach_weight_heatmap=None,
-                  show_step_cost_heatmap=(60, 0)):
+                  show_step_cost_heatmap=None):
         """Visualize trajectories and aircraft headings in a single frame.
 
         Args:
