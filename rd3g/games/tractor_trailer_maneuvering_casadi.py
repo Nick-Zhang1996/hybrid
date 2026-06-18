@@ -3,7 +3,6 @@ import os
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from math import radians
 
 import casadi as cas
 import matplotlib.pyplot as plt
@@ -75,11 +74,14 @@ def obstacle_kwargs(obstacles):
 
 
 def _default_obstacles():
-    """Left and right corridor boundaries as large obstacle boxes."""
+    """Inside and outside blocks defining a 90 degree left-turn corridor."""
     return [
-        Obstacle(x=-1.0, y=3.4, w=18.0, h=2.0, angle=0.0),
-        Obstacle(x=-1.0, y=-3.4, w=18.0, h=2.0, angle=0.0),
-        # Obstacle(x=-1.0, y=-3.4, w=5.0, h=0.5, angle=radians(10)),
+        # Outside boundary below the incoming straight.
+        Obstacle(x=-3.5, y=-4.2, w=12.0, h=2.0, angle=0.0),
+        # Outside boundary to the right of the outgoing straight.
+        Obstacle(x=4.2, y=3.5, w=2.0, h=12.0, angle=0.0),
+        # Inside corner of the turn.
+        Obstacle(x=-4.5, y=5.5, w=5.0, h=4.0, angle=0.0),
     ]
 
 
@@ -95,17 +97,19 @@ def _default_obstacle_angles():
     return obstacle_arrays(_default_obstacles())[2]
 
 
-def _default_side_by_side_states(agent_count):
-    """Return side-by-side start and target states in a straight corridor."""
+def _default_90_degree_turn_states(agent_count):
+    """Return side-by-side start and target states for a left 90 degree turn."""
     x0_vec = []
     target_vec = []
     for i in range(agent_count):
         queue_idx = i // 2
-        lane_y = -0.9 if i % 2 == 0 else 0.9
-        start_x = -3.0 - 1.2 * queue_idx
-        target_x = 1.0 - 1.2 * queue_idx
+        lane_offset = -1.1 if i % 2 == 0 else 1.1
+        start_x = -6.0 - 1.4 * queue_idx
+        target_y = 5.8 + 1.4 * queue_idx
+        target_x = -lane_offset
+        lane_y = lane_offset
         x0_vec.append(np.array([start_x, lane_y, 0.9, 0.0, 0.0]))
-        target_vec.append(np.array([target_x, lane_y, 0.9, 0.0, 0.0]))
+        target_vec.append(np.array([target_x, target_y, 0.7, np.pi / 2.0, 0.0]))
     return (
         np.vstack(x0_vec).T.copy(order='F'),
         np.vstack(target_vec).T.copy(order='F'),
@@ -148,7 +152,7 @@ class TractorTrailerManeuveringCasadiConfig(CasadiGameConfig):
     Ackermann steering angle.
     """
     T: int = 30
-    dt: float = 0.15
+    dt: float = 0.3
     N: int = 2
     n: int = 5
     m: int = 2
@@ -178,7 +182,7 @@ class TractorTrailerManeuveringCasadiConfig(CasadiGameConfig):
     articulation_max: float = float(np.deg2rad(70.0))
 
     # Smooth obstacle avoidance. obstacle_softmax_gain has units 1/m.
-    obstacle_count: int = 2
+    obstacle_count: int = 3
     obstacle_positions: Any = field(default_factory=_default_obstacle_positions)
     """Obstacle centers, dim: (2,obstacle_count)."""
     obstacle_sizes: Any = field(default_factory=_default_obstacle_sizes)
@@ -217,7 +221,7 @@ class TractorTrailerManeuveringCasadiConfig(CasadiGameConfig):
             self.obstacle_angles, 'obstacle_angles', self.obstacle_count)
 
         if self.x0 is None or self.target_x_ref is None:
-            default_x0, default_target = _default_side_by_side_states(self.N)
+            default_x0, default_target = _default_90_degree_turn_states(self.N)
             if self.x0 is None:
                 self.x0 = default_x0
             if self.target_x_ref is None:
@@ -304,9 +308,13 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
         )
 
     def initial_control_guess(self):
-        """Return a straight-driving control guess, shape (m*N,T)."""
+        """Return a gentle left-turn control guess, shape (m*N,T)."""
         gc = self.config
-        return np.zeros((gc.m * gc.N, gc.T), dtype=float, order='F')
+        u = np.zeros((gc.m * gc.N, gc.T), dtype=float, order='F')
+        steer = min(0.28, 0.5 * gc.steering_max)
+        for i in range(gc.N):
+            u[gc.m * i + 1, :] = steer
+        return u
 
     def _set_visual_bounds(self):
         pts = [self.config.x0[:2, :].T, self.config.target_x_ref[:2, :].T]
@@ -1023,7 +1031,7 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
 
 def create_random_game(tractor_count=2, horizon=30, variational_gne=False,
                        car_count=None, obstacles=None):
-    """Create the default side-by-side tractor-trailer game.
+    """Create the default 90 degree turn tractor-trailer game.
 
     The factory keeps the local naming convention used by other games; the
     default instance is deterministic rather than random.
