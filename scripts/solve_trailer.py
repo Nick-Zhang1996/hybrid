@@ -63,5 +63,6 @@ else:
 logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')
+game.inspect_h(sol.u, x=sol.x, solver=solver)
 solver.visualize(sol.u)
 solver.final()

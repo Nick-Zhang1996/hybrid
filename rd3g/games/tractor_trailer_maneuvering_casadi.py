@@ -3,6 +3,7 @@ import os
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+from math import radians
 
 import casadi as cas
 import matplotlib.pyplot as plt
@@ -78,6 +79,7 @@ def _default_obstacles():
     return [
         Obstacle(x=-1.0, y=3.4, w=18.0, h=2.0, angle=0.0),
         Obstacle(x=-1.0, y=-3.4, w=18.0, h=2.0, angle=0.0),
+        # Obstacle(x=-1.0, y=-3.4, w=5.0, h=0.5, angle=radians(10)),
     ]
 
 
@@ -183,7 +185,9 @@ class TractorTrailerManeuveringCasadiConfig(CasadiGameConfig):
     """Obstacle length/width, dim: (2,obstacle_count)."""
     obstacle_angles: Any = field(default_factory=_default_obstacle_angles)
     """Obstacle headings, dim: (obstacle_count,1)."""
-    obstacle_clearance: float = 0.15
+    obstacle_clearance: float = 0.05
+    obstacle_distance_scale: float = 1.0
+    """Distance scale for obstacle constraints after circle inflation."""
     obstacle_softmax_gain: float = 8.0
 
     # Costs.
@@ -235,7 +239,8 @@ class TractorTrailerManeuveringCasadiConfig(CasadiGameConfig):
         body_circle_count = self.tractor_circle_count + self.trailer_circle_count
         pair_count = self.N * (self.N - 1) // 2
         rows_per_vehicle_pair = body_circle_count**2
-        self_collision_rows = self.tractor_circle_count * self.trailer_circle_count
+        # Temporarily disabled: tractor-trailer self-collision constraints.
+        self_collision_rows = 0
         obstacle_rows = self.obstacle_count * body_circle_count
         bound_rows = 8
         if self.n_h == 0:
@@ -279,7 +284,8 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
 
     @property
     def _self_collision_rows(self):
-        return self.config.tractor_circle_count * self.config.trailer_circle_count
+        # Temporarily disabled: tractor-trailer self-collision constraints.
+        return 0
 
     @property
     def _obstacle_rows_per_agent(self):
@@ -576,10 +582,10 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
         return h_vec
 
     def agent_h(self, x_i, u_i, i_onehot):
-        """Per-agent self-collision, obstacle, state, and control constraints."""
+        """Per-agent obstacle, state, and control constraints."""
         del i_onehot
         h_val = cas.vertcat(
-            self.self_collision_h(x_i),
+            # Temporarily disabled: self.self_collision_h(x_i),
             self.obstacle_h(x_i),
             self.state_h(x_i),
             self.control_h(u_i),
@@ -663,6 +669,7 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
         obstacle_sizes = self.config.get_param('obstacle_sizes')
         obstacle_angles = self.config.get_param('obstacle_angles')
         obstacle_clearance = self.config.get_param('obstacle_clearance')
+        obstacle_distance_scale = self.config.get_param('obstacle_distance_scale')
         gain = self.config.get_param('obstacle_softmax_gain')
 
         for center, radius in self._body_circles(x_i):
@@ -685,8 +692,7 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
                 smooth_outside = (
                     cas.logsumexp(gain * signed_halfspace) - np.log(4.0)
                 ) / gain
-                scale = 0.5 * (half_l + half_w)
-                rows.append(-smooth_outside / scale)
+                rows.append(-smooth_outside / obstacle_distance_scale)
         if rows:
             h_val = cas.vertcat(*rows)
         else:
@@ -721,6 +727,298 @@ class TractorTrailerManeuveringCasadi(CasadiGame):
             (steering - steering_max) / steering_max,
             (-steering - steering_max) / steering_max,
         )
+
+    def _body_circle_label(self, circle_idx):
+        if circle_idx < self.config.tractor_circle_count:
+            return f'tractor circle {circle_idx}'
+        trailer_idx = circle_idx - self.config.tractor_circle_count
+        return f'trailer circle {trailer_idx}'
+
+    def _numeric_tractor_circle(self, x_i, circle_idx):
+        offset = (
+            self.config.tractor_length
+            * (circle_idx + 0.5)
+            / self.config.tractor_circle_count
+        )
+        heading = x_i[3]
+        center = x_i[:2] + offset * np.array([np.cos(heading), np.sin(heading)])
+        radius = 0.5 * self.config.tractor_width + self.config.collision_buffer
+        return center, radius
+
+    def _numeric_trailer_circle(self, x_i, circle_idx):
+        offset = (
+            -self.config.trailer_length
+            * (circle_idx + 0.5)
+            / self.config.trailer_circle_count
+        )
+        heading = x_i[3] - x_i[4]
+        center = x_i[:2] + offset * np.array([np.cos(heading), np.sin(heading)])
+        radius = 0.5 * self.config.trailer_width + self.config.collision_buffer
+        return center, radius
+
+    def _numeric_body_circles(self, x_i):
+        circles = []
+        for idx in range(self.config.tractor_circle_count):
+            circles.append((*self._numeric_tractor_circle(x_i, idx),
+                            self._body_circle_label(idx)))
+        for idx in range(self.config.trailer_circle_count):
+            body_idx = self.config.tractor_circle_count + idx
+            circles.append((*self._numeric_trailer_circle(x_i, idx),
+                            self._body_circle_label(body_idx)))
+        return circles
+
+    @staticmethod
+    def _circle_h_debug(circle_a, circle_b):
+        center_a, radius_a, _ = circle_a
+        center_b, radius_b, _ = circle_b
+        dist = float(np.linalg.norm(center_a - center_b))
+        required = float(radius_a + radius_b)
+        h_val = required**2 - dist**2
+        return h_val, dist, required
+
+    def _prepare_inspect_u(self, u):
+        gc = self.config
+        u_arr = np.asarray(u)
+        if u_arr.shape == (gc.m, gc.N, gc.T):
+            return u_arr.reshape((gc.m * gc.N, gc.T), order='F')
+        if u_arr.shape == (gc.m * gc.N, gc.T):
+            return np.asarray(u_arr, dtype=float, order='F')
+        raise ValueError(
+            f'u must have shape {(gc.m, gc.N, gc.T)} or '
+            f'{(gc.m * gc.N, gc.T)}, got {u_arr.shape}')
+
+    def _prepare_inspect_x(self, x):
+        gc = self.config
+        x_arr = np.asarray(x)
+        if x_arr.shape == (gc.n, gc.N, gc.T + 1):
+            x_arr = x_arr[:, :, 1:]
+        if x_arr.shape == (gc.n, gc.N, gc.T):
+            return x_arr.reshape((gc.n * gc.N, gc.T), order='F')
+        if x_arr.shape == (gc.n * gc.N, gc.T):
+            return np.asarray(x_arr, dtype=float, order='F')
+        raise ValueError(
+            f'x must have shape {(gc.n, gc.N, gc.T + 1)}, '
+            f'{(gc.n, gc.N, gc.T)}, or {(gc.n * gc.N, gc.T)}, got {x_arr.shape}')
+
+    def inspect_h(self, u, x=None, solver=None, tol=1e-6, log_level=logging.INFO):
+        """Log where positive inequality residuals h(x,u) > 0 come from.
+
+        Args:
+            u: Control trajectory, shape (m,N,T) or (m*N,T).
+            x: Optional state trajectory as (n,N,T+1), (n,N,T), or (n*N,T).
+            solver: Solver with h_casadi/rollout_casadi functions. Required if x is None.
+            tol: Only rows with positive violation above this tolerance get detailed logs.
+            log_level: Python logging level used for detail and summary lines.
+        """
+        gc = self.config
+        if solver is None:
+            raise ValueError('inspect_h requires a solver with h_casadi functions')
+
+        int_param_dm = cas.DM(gc.get_int_param_np())
+        double_param_dm = cas.DM(gc.get_double_param_np())
+        params_dm = [int_param_dm, double_param_dm]
+        u_flat = cas.DM(self._prepare_inspect_u(u))
+        if x is None:
+            x_flat = solver.rollout_casadi(gc.x0, u_flat, *params_dm)
+        else:
+            x_flat = cas.DM(self._prepare_inspect_x(x))
+        context_dm = solver.get_full_context_casadi(x_flat)
+        h_val = np.asarray(solver.h_casadi(
+            x_flat, u_flat, context_dm, *params_dm))
+        h_cols = 1 if gc.variational_gne else gc.N
+        h_val = h_val.reshape(gc.n_h, h_cols, order='F')
+        x_np = np.asarray(x_flat).reshape((gc.n * gc.N, gc.T), order='F')
+        u_np = np.asarray(u_flat).reshape((gc.m * gc.N, gc.T), order='F')
+
+        family_res = {
+            'collision_h': 0.0,
+            'self_collision_h': 0.0,
+            'obstacle_h': 0.0,
+            'state_h': 0.0,
+            'control_h': 0.0,
+        }
+        family_max = {name: 0.0 for name in family_res}
+        detail_count = 0
+        max_details = 80
+
+        def positive_res(rows, cols):
+            vals = h_val[rows, :][:, cols]
+            pos = np.clip(vals, a_min=0.0, a_max=None)
+            return float(np.linalg.norm(pos)), float(np.max(pos)) if pos.size else 0.0
+
+        def log_detail(message, *args):
+            nonlocal detail_count
+            if detail_count < max_details:
+                logger.log(log_level, message, *args)
+            detail_count += 1
+
+        row = 0
+        for k in range(gc.T):
+            xk_np = x_np[:, k].reshape((gc.n, gc.N), order='F')
+            uk_np = u_np[:, k].reshape((gc.m, gc.N), order='F')
+            for i in range(gc.N):
+                for j in range(i + 1, gc.N):
+                    rows = slice(row, row + self._rows_per_vehicle_pair)
+                    cols = [0] if gc.variational_gne else [i, j]
+                    res, max_res = positive_res(rows, cols)
+                    family_res['collision_h'] += res**2
+                    family_max['collision_h'] = max(
+                        family_max['collision_h'], max_res)
+                    if max_res > tol:
+                        local_vals = h_val[rows, :][:, cols]
+                        local_pos = np.clip(local_vals, a_min=0.0, a_max=None)
+                        local_idx = int(np.argmax(local_pos))
+                        row_idx = local_idx // len(cols)
+                        circle_i = row_idx // self._body_circle_count
+                        circle_j = row_idx % self._body_circle_count
+                        circle_i_val = self._numeric_body_circles(xk_np[:, i])[circle_i]
+                        circle_j_val = self._numeric_body_circles(xk_np[:, j])[circle_j]
+                        _, dist, required = self._circle_h_debug(
+                            circle_i_val, circle_j_val)
+                        log_detail(
+                            'h infeasible: collision_h k=%s agents=(%s,%s) '
+                            '%s vs %s h=%.6g = required_dist^2 %.6g - dist^2 %.6g; '
+                            'dist=%.6g required_dist=%.6g centers=%s,%s radii=(%.6g,%.6g)',
+                            k + 1, i, j, circle_i_val[2], circle_j_val[2],
+                            max_res, required**2, dist**2, dist, required,
+                            np.round(circle_i_val[0], 4).tolist(),
+                            np.round(circle_j_val[0], 4).tolist(),
+                            circle_i_val[1], circle_j_val[1])
+                    row += self._rows_per_vehicle_pair
+
+            for i in range(gc.N):
+                col = 0 if gc.variational_gne else i
+
+                if self._self_collision_rows > 0:
+                    rows = slice(row, row + self._self_collision_rows)
+                    res, max_res = positive_res(rows, [col])
+                    family_res['self_collision_h'] += res**2
+                    family_max['self_collision_h'] = max(
+                        family_max['self_collision_h'], max_res)
+                    if max_res > tol:
+                        local_pos = np.clip(h_val[rows, col], a_min=0.0, a_max=None)
+                        local_idx = int(np.argmax(local_pos))
+                        tractor_idx = local_idx // gc.trailer_circle_count
+                        trailer_idx = local_idx % gc.trailer_circle_count
+                        tractor_circle = (
+                            *self._numeric_tractor_circle(xk_np[:, i], tractor_idx),
+                            f'tractor circle {tractor_idx}',
+                        )
+                        trailer_circle = (
+                            *self._numeric_trailer_circle(xk_np[:, i], trailer_idx),
+                            f'trailer circle {trailer_idx}',
+                        )
+                        _, dist, required = self._circle_h_debug(
+                            tractor_circle, trailer_circle)
+                        log_detail(
+                            'h infeasible: self_collision_h k=%s agent=%s '
+                            'tractor circle %s vs trailer circle %s '
+                            'h=%.6g = required_dist^2 %.6g - dist^2 %.6g; '
+                            'dist=%.6g required_dist=%.6g centers=%s,%s radii=(%.6g,%.6g)',
+                            k + 1, i, tractor_idx, trailer_idx, max_res,
+                            required**2, dist**2, dist, required,
+                            np.round(tractor_circle[0], 4).tolist(),
+                            np.round(trailer_circle[0], 4).tolist(),
+                            tractor_circle[1], trailer_circle[1])
+                    row += self._self_collision_rows
+
+                rows = slice(row, row + self._obstacle_rows_per_agent)
+                res, max_res = positive_res(rows, [col])
+                family_res['obstacle_h'] += res**2
+                family_max['obstacle_h'] = max(family_max['obstacle_h'], max_res)
+                if max_res > tol:
+                    local_pos = np.clip(h_val[rows, col], a_min=0.0, a_max=None)
+                    local_idx = int(np.argmax(local_pos))
+                    body_idx = local_idx // max(gc.obstacle_count, 1)
+                    obstacle_idx = local_idx % max(gc.obstacle_count, 1)
+                    center, radius, body_label = self._numeric_body_circles(
+                        xk_np[:, i])[body_idx]
+                    obs_center = gc.obstacle_positions[:, obstacle_idx]
+                    obs_size = gc.obstacle_sizes[:, obstacle_idx]
+                    angle = gc.obstacle_angles[obstacle_idx, 0]
+                    delta = center - obs_center
+                    local_x = delta[0] * np.cos(angle) + delta[1] * np.sin(angle)
+                    local_y = -delta[0] * np.sin(angle) + delta[1] * np.cos(angle)
+                    half_l = 0.5 * obs_size[0] + radius + gc.obstacle_clearance
+                    half_w = 0.5 * obs_size[1] + radius + gc.obstacle_clearance
+                    log_detail(
+                        'h infeasible: obstacle_h k=%s agent=%s obstacle=%s %s '
+                        'h=%.6g; local=(%.6g,%.6g) inflated_half_extents=(%.6g,%.6g) '
+                        'circle_center=%s circle_radius=%.6g',
+                        k + 1, i, obstacle_idx, body_label, max_res,
+                        local_x, local_y, half_l, half_w,
+                        np.round(center, 4).tolist(), radius)
+                row += self._obstacle_rows_per_agent
+
+                rows = slice(row, row + 4)
+                res, max_res = positive_res(rows, [col])
+                family_res['state_h'] += res**2
+                family_max['state_h'] = max(family_max['state_h'], max_res)
+                if max_res > tol:
+                    state_labels = ['v_min', 'v_max', 'phi_max', 'phi_min']
+                    local_idx = int(np.argmax(np.clip(
+                        h_val[rows, col], a_min=0.0, a_max=None)))
+                    state_values = {
+                        'v_min': xk_np[2, i],
+                        'v_max': xk_np[2, i],
+                        'phi_max': xk_np[4, i],
+                        'phi_min': xk_np[4, i],
+                    }
+                    state_limits = {
+                        'v_min': gc.v_min,
+                        'v_max': gc.v_max,
+                        'phi_max': gc.articulation_max,
+                        'phi_min': -gc.articulation_max,
+                    }
+                    log_detail(
+                        'h infeasible: state_h k=%s agent=%s bound=%s '
+                        'h=%.6g value=%.6g limit=%.6g',
+                        k + 1, i, state_labels[local_idx], max_res,
+                        state_values[state_labels[local_idx]],
+                        state_limits[state_labels[local_idx]])
+                row += 4
+
+                rows = slice(row, row + 4)
+                res, max_res = positive_res(rows, [col])
+                family_res['control_h'] += res**2
+                family_max['control_h'] = max(family_max['control_h'], max_res)
+                if max_res > tol:
+                    control_labels = ['a_max', 'a_min', 'steering_max', 'steering_min']
+                    local_idx = int(np.argmax(np.clip(
+                        h_val[rows, col], a_min=0.0, a_max=None)))
+                    control_values = {
+                        'a_max': uk_np[0, i],
+                        'a_min': uk_np[0, i],
+                        'steering_max': uk_np[1, i],
+                        'steering_min': uk_np[1, i],
+                    }
+                    control_limits = {
+                        'a_max': gc.a_max,
+                        'a_min': -gc.a_max,
+                        'steering_max': gc.steering_max,
+                        'steering_min': -gc.steering_max,
+                    }
+                    log_detail(
+                        'h infeasible: control_h k=%s agent=%s bound=%s '
+                        'h=%.6g value=%.6g limit=%.6g',
+                        k + 1, i, control_labels[local_idx], max_res,
+                        control_values[control_labels[local_idx]],
+                        control_limits[control_labels[local_idx]])
+                row += 4
+
+        h_pos_res = float(np.sum(np.clip(h_val, a_min=0.0, a_max=None)**2))
+        if detail_count > max_details:
+            logger.log(log_level, 'h infeasible: suppressed %s additional detail rows',
+                       detail_count - max_details)
+        if h_pos_res <= tol**2:
+            logger.log(log_level, 'h infeasibility: no positive rows above tol=%s', tol)
+        logger.log(log_level, 'h_pos_res=%s, family_res=%s, family_max=%s',
+                   h_pos_res, family_res, family_max)
+        return {
+            'h_pos_res': h_pos_res,
+            'family_res': family_res,
+            'family_max': family_max,
+        }
 
 
 def create_random_game(tractor_count=2, horizon=30, variational_gne=False,
