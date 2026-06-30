@@ -17,11 +17,11 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(12)
-cpp = False
+np.random.seed()
+cpp = True
 variational_gne = True
-game = create_random_game(car_count=3, horizon=20, variational_gne=variational_gne)
-solver_name = 'algames'
+game = create_random_game(car_count=6, horizon=20, variational_gne=variational_gne)
+solver_name = 'interior_point'
 if solver_name == 'ilqgame':
     solver_config = ILQGameConfig(
         variational_gne=variational_gne,
@@ -40,7 +40,9 @@ elif solver_name == 'interior_point':
     solver_config = InteriorPointGameConfig(
         inertia_correction=False,
         variational_gne=variational_gne,
-        abs_split=True)
+        abs_split=True,
+        precondition_with_potential=False,
+    )
     solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
 elif solver_name == 'rd3g':
     solver_config = RD3GCasadiConfig(inertia_correction=False)
@@ -61,6 +63,6 @@ else:
 logger.info(f'{sol.iterations=}, {sol.elapsed_time=:.6f},'
             f'{sol.residual=:.6f} {sol.is_optimal=}, '
             f'{sol.has_converged=}')
-# solver.animate(sol.u, save_gif=False, save_snapshots=False)
 solver.visualize(sol.u)
+solver.animate(sol.u, save_gif=True, save_snapshots=True)
 solver.final()

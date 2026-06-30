@@ -34,7 +34,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     variational_gne: bool = False
     """ If True, use one shared multiplier per canonical constraint """
     track_width: float = 2.2
-    collision_radius: float = 2.0
+    collision_radius: float = 2.8  # 2.0
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
@@ -258,9 +258,32 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
                   ymin=self.visual_y_lim[0],
                   ymax=self.visual_y_lim[1],
                   colors='white')
-        # dotted line
-        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 20):
-            ax.vlines(x=0, ymin=i, ymax=i + 1, colors='white')
+
+        merge_start_y = 19.0
+        merge_end_y = 30.0
+
+        # Center lane divider that tapers into a lane-ending marking for the merge lane.
+        for i in np.linspace(self.visual_y_lim[0], self.visual_y_lim[1], 12):
+            ax.vlines(x=0, ymin=i, ymax=min(i + 1, self.visual_y_lim[1]), colors='white')
+        ax.plot([self.config.track_width, 0],
+                [merge_start_y, merge_end_y],
+                color='white',
+                linewidth=2.0)
+
+        # Merge sign: a simple angled arrow inside the right lane pointing into the main lane.
+        arrow_tail_x = self.config.track_width * 0.78
+        arrow_tail_y = merge_start_y - 3.0
+        arrow_dx = -self.config.track_width * 0.5
+        arrow_dy = 2.5
+        ax.arrow(arrow_tail_x,
+                 arrow_tail_y,
+                 arrow_dx,
+                 arrow_dy,
+                 color='white',
+                 width=0.04,
+                 head_width=0.35,
+                 head_length=0.7,
+                 length_includes_head=True)
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
@@ -275,40 +298,26 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         if save_gif:
             anim.save(gif_filename, writer='pillow')
             logger.info(f'Gif saved to {gif_filename}')
-        if show:
-            plt.show()
-        if show and save_snapshots:
-            logger.error(
-                'When show and save_snapshots are both on,'
-                ' matplotlib has weird problems, do one at a time')
         # NOTE save initial, middle, final snapshots
         if save_snapshots:
             from PIL import Image
             folder = os.path.join(BASEDIR, 'outputs', 'pics')
             os.makedirs(folder, exist_ok=True)
-            update(0)
-            fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
-            filename = os.path.join(folder, f'merge_{self.config.N}car_initial.png')
-            frame.save(filename)
-            logger.info(f'saved snapshots to {filename}')
 
-            update(self.config.T // 2)
-            fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
-            filename = os.path.join(folder, f'merge_{self.config.N}car_middle.png')
-            frame.save(filename)
-            logger.info(f'saved snapshots to {filename}')
+            def save_snapshot(frame_idx, suffix):
+                update(frame_idx)
+                fig.canvas.draw()
+                frame = Image.fromarray(np.asarray(fig.canvas.buffer_rgba()),
+                                        mode='RGBA')
+                filename = os.path.join(folder, f'merge_{self.config.N}car_{suffix}.png')
+                frame.save(filename)
+                logger.info(f'saved snapshots to {filename}')
 
-            update(self.config.T - 1)
-            fig.canvas.draw()
-            frame = Image.frombytes('RGB',
-                                    fig.canvas.get_width_height(), fig.canvas.tostring_argb())
-            filename = os.path.join(folder, f'merge_{self.config.N}car_final.png')
-            frame.save(filename)
-            logger.info(f'saved snapshots to {filename}')
+            save_snapshot(0, 'initial')
+            save_snapshot(self.config.T // 2, 'middle')
+            save_snapshot(self.config.T - 1, 'final')
+        if show:
+            plt.show()
         return
 
     def J(self, x_k, u_k_i, i_onehot):
@@ -442,9 +451,9 @@ def create_random_game(car_count=3, horizon=20, variational_gne=False):
     )
     x_pos_merge_lane = (
         2.7
-        + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
+        # + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
         + np.linspace(0, (merge_lane_n - 1) * 5.4, merge_lane_n)  # spacing
-        + np.random.random(merge_lane_n)  # individual random offset
+        + np.random.random(merge_lane_n)/2  # individual random offset
     )
     v_main_lane = 2.0 + np.random.random(main_lane_n)
     v_merge_lane = 2.0 + np.random.random(merge_lane_n)

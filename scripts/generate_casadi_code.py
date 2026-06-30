@@ -67,11 +67,11 @@ def codegen_racing(car_count, horizon, solvers=('ipm',)):
 
 if __name__ == "__main__":
     solvers = ['ipm', 'rd3g']
-    codegen_racing(8, 10)
+    # codegen_racing(8, 10)
     # codegen_racing(4, 10, solvers=solvers)
     for T in [20]:
         for i in range(2, 9):
             pass
-            # codegen_merge(i, T, solvers=solvers)
+            codegen_merge(i, T, solvers=solvers)
             # codegen_intersection(i, T, solvers=solvers)
             # codegen_racing(i, T, solvers=solvers)
