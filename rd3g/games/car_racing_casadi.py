@@ -179,6 +179,107 @@ class CarRacingCasadi(CasadiGame):
             plt.show()
         return ax
 
+    def visualize_rcp(self, u, x, show=True, save=False):
+        """Visualize trajectories with the BuzzRacer image renderer.
+
+        This creates a multiple-exposure photo on top of the track image, with
+        older car poses drawn more transparently than newer ones.
+
+        Args:
+            u: (m,N,T), optional for steering overlays
+            x: (n,N,T+1)
+        """
+        from buzzracer.common import BASEDIR as BUZZRACER_BASEDIR
+        from buzzracer.extensions.visualization import Visualization
+        import cv2
+
+        gc = self.config
+        if (not show) and (not save):
+            return None
+
+        if u is not None:
+            u = np.asarray(u)
+            assert u.shape == (gc.m, gc.N, gc.T)
+        x = np.asarray(x)
+        assert x.shape == (gc.n, gc.N, gc.T + 1)
+
+        track = self.track
+        cart_traj_vec = []
+        for i in range(gc.N):
+            cart_traj = []
+            for k in range(gc.T + 1):
+                curv = CurvilinearState(progress=x[0, i, k],
+                                        lateral_err=x[1, i, k],
+                                        heading_err=x[2, i, k],
+                                        v_forward=x[3, i, k],
+                                        v_sideway=x[4, i, k],
+                                        rel_omega=0.0)
+                cart_traj.append(track.curv_to_cart(curv))
+            cart_traj_vec.append(cart_traj)
+
+        base_resolution = track.config.resolution
+        track.config.resolution = 4 * base_resolution
+
+        renderer = Visualization.__new__(Visualization)
+        renderer.config = SimpleNamespace(car_graphics=True)
+        renderer.main = SimpleNamespace(track=track)
+        renderer.track = track
+
+        car_choices = [
+            CarConfig.porsche_18.value,
+            CarConfig.porsche_19.value,
+            CarConfig.audi_20.value,
+            CarConfig.mclaren_21.value,
+            CarConfig.mclaren_22.value,
+            CarConfig.lambo_13.value,
+            CarConfig.corvette_17.value,
+            CarConfig.audi_12.value,
+        ]
+        cars = []
+        for i in range(gc.N):
+            param = car_choices[i % len(car_choices)]
+            filename = os.path.join(BUZZRACER_BASEDIR, 'assets', param.rendering)
+            base_image = cv2.imread(filename, -1)
+            if base_image is None:
+                raise FileNotFoundError(f'Failed to load car image from {filename}')
+            if base_image.ndim == 3 and base_image.shape[2] == 3:
+                alpha = 255 * np.ones(base_image.shape[:2] + (1,), dtype=base_image.dtype)
+                base_image = np.concatenate([base_image, alpha], axis=2)
+            cars.append(SimpleNamespace(param=param,
+                                        steering=0.0,
+                                        state=cart_traj_vec[i][0],
+                                        image=base_image.copy(),
+                                        base_image=base_image))
+
+        try:
+            img = track.draw_track()
+            alpha_vec = np.linspace(0.15, 1.0, gc.T + 1)
+            for k, alpha in enumerate(alpha_vec):
+                for i, car in enumerate(cars):
+                    car.state = cart_traj_vec[i][k]
+                    car.steering = 0.0 if u is None else float(u[0, i, min(k, gc.T - 1)])
+                    car.image = car.base_image.copy()
+                    car.image[:, :, 3] = np.clip(
+                        car.image[:, :, 3].astype(float) * alpha, 0.0, 255.0).astype(np.uint8)
+                    img = renderer.draw_car(img, car)
+
+            if save:
+                filename = resolve_logname(prefix='racing_rcp', suffix='png')
+                cv2.imwrite(filename, img)
+                logger.info('saved figure to %s', filename)
+
+            if show:
+                display = cv2.cvtColor(
+                    img, cv2.COLOR_BGRA2RGBA if img.shape[2] == 4 else cv2.COLOR_BGR2RGB)
+                fig, ax = plt.subplots()
+                ax.imshow(display)
+                ax.set_axis_off()
+                plt.show()
+        finally:
+            track.config.resolution = base_resolution
+
+        return img
+
     def animate(self, u, x, show=True, save_gif=False, save_snapshots=False):
         """ Animate the game with given initial state (x0) and control (u).
         Args:
@@ -559,7 +660,10 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
     J_Qr = np.diag([0, 5.0, 1.0, 1.0, 0.1])
     J_R = np.eye(m) * 1.0
 
-    s_vec = np.random.uniform(low=0.5, high=4.0, size=N)
+    # NOTE for generating condensed game
+    s_low = 1.2  # original benchmark 0.5
+    s_high = 2.7  # original benchmark 4.0
+    s_vec = np.random.uniform(low=s_low, high=s_high, size=N)
     v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)
     # s represent the progress on frenet/curvilinear frame, it's like the x coordinate
@@ -578,7 +682,7 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
         if colliding_idx.size == 0:
             break
 
-        s_vec[colliding_idx] = np.random.uniform(low=0.5, high=4.0, size=colliding_idx.size)
+        s_vec[colliding_idx] = np.random.uniform(low=s_low, high=s_high, size=colliding_idx.size)
         left_width_vec[colliding_idx] = np.interp(
             s_vec[colliding_idx], track.data.s_vec, track.data.left_width_vec
         )
