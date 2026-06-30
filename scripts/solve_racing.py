@@ -28,7 +28,8 @@ if load:
     logger.info("Loading initial states from pickle file")
 
 np.random.seed()
-game = create_random_game(car_count=8, horizon=20, variational_gne=variational_gne)
+game = create_random_game(car_count=8, horizon=20,
+                          variational_gne=variational_gne, use_stanley_control_guess=True)
 
 gc = game.config
 # load from pickle

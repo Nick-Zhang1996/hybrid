@@ -26,6 +26,90 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+class _ShiftedRacelineTrack:
+    """Track-like wrapper used to build Stanley-seeded initial guesses."""
+
+    def __init__(self,
+                 r_vec,
+                 s_vec,
+                 phi_vec,
+                 curvature_vec,
+                 left_width_vec,
+                 right_width_vec,
+                 speed_vec):
+        self.r_vec = r_vec
+        self.s_vec = s_vec
+        self.phi_vec = phi_vec
+        self.curvature_vec = curvature_vec
+        self.left_width_vec = left_width_vec
+        self.right_width_vec = right_width_vec
+        self.speed_vec = speed_vec
+
+    @classmethod
+    def from_track(cls, track, requested_shift, boundary_buffer):
+        """Build a boundary-aware shifted copy of the track raceline."""
+        data = track.data
+        applied_shift = np.full_like(data.left_width_vec, requested_shift, dtype=float)
+        if requested_shift >= 0:
+            max_shift = np.maximum(data.left_width_vec - boundary_buffer, 0.0)
+            applied_shift = np.minimum(applied_shift, max_shift)
+        else:
+            max_shift = np.maximum(data.right_width_vec - boundary_buffer, 0.0)
+            applied_shift = -np.minimum(-applied_shift, max_shift)
+
+        lateral = np.column_stack((
+            np.cos(data.phi_vec + np.pi / 2.0),
+            np.sin(data.phi_vec + np.pi / 2.0)))
+        shifted_points = data.r_vec + lateral * applied_shift[:, np.newaxis]
+        tangent = np.roll(shifted_points, -1, axis=0) - shifted_points
+        shifted_heading = np.arctan2(tangent[:, 1], tangent[:, 0])
+        left_width = data.left_width_vec - applied_shift
+        right_width = data.right_width_vec + applied_shift
+
+        return cls(
+            r_vec=shifted_points,
+            s_vec=data.s_vec,
+            phi_vec=shifted_heading,
+            curvature_vec=data.curvature_vec,
+            left_width_vec=left_width,
+            right_width_vec=right_width,
+            speed_vec=data.speed_vec,
+        )
+
+    def local_trajectory(self, state):
+        """Mimic track.local_trajectory() on the shifted geometry."""
+        from buzzracer.tracks.track import LocalTrajOutput
+
+        x = state.x
+        y = state.y
+
+        dxx = self.r_vec[:, 0] - x
+        dyy = self.r_vec[:, 1] - y
+        index = int(np.argmin(dxx**2 + dyy**2))
+        point_count = len(self.r_vec)
+
+        dr = self.r_vec[(index + 1) % point_count] - self.r_vec[index]
+        dr_norm = np.linalg.norm(dr)
+        if dr_norm < 1e-9:
+            track_tangent = np.array([np.cos(self.phi_vec[index]), np.sin(self.phi_vec[index])])
+        else:
+            track_tangent = dr / dr_norm
+        track_to_car = (x - self.r_vec[index, 0], y - self.r_vec[index, 1])
+        offset = track_tangent[0] * track_to_car[1] - track_tangent[1] * track_to_car[0]
+        left_margin = self.left_width_vec[index] - offset
+        right_margin = self.right_width_vec[index] + offset
+        return LocalTrajOutput(
+            ref_point=self.r_vec[index],
+            lateral_err=offset,
+            raceline_dir=self.phi_vec[index],
+            curvature=self.curvature_vec[index],
+            v_target=self.speed_vec[index],
+            progress=self.s_vec[index],
+            left_margin=left_margin,
+            right_margin=right_margin,
+        )
+
+
 @dataclass(frozen=False)
 class CarRacingCasadiConfig(CasadiGameConfig):
     """ Base Class for game configuration. """
@@ -46,6 +130,12 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     """ Use two circles instead of one for collision"""
     bdry_margin: float = 0.05
     """ Margin to boundary, use in boundary constraints"""
+    use_stanley_control_guess: bool = False
+    """ If True, initial_control_guess() seeds steering with a Stanley rollout. """
+    stanley_guess_shift_margin: float = 0.04
+    """ Lateral shift for left/right Stanley seed racelines. """
+    stanley_guess_boundary_buffer: float = 1e-3
+    """ Keep shifted Stanley seed racelines inside the track boundary. """
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
@@ -131,6 +221,84 @@ class CarRacingCasadi(CasadiGame):
                 os.path.join(BASEDIR, 'rd3g', 'resources',
                              f'porsche_{color}.png')) for color in color_names
         ]
+
+    def initial_control_guess(self, use_stanley=None):
+        """Return a zero guess or Stanley-seeded steering guess, shape (m*N,T)."""
+        gc = self.config
+        if use_stanley is None:
+            use_stanley = gc.use_stanley_control_guess
+
+        u_ref = np.zeros((gc.m * gc.N, gc.T), dtype=float, order='F')
+        if not use_stanley:
+            return u_ref
+
+        from buzzracer.controllers.stanley_controller import (
+            StanleyController,
+            StanleyControllerConfig,
+            StanleyControllerState,
+        )
+        from buzzracer.sysid.kinematic_bicycle_model import KinematicBicycleModelCartesian
+        from buzzracer.types import Control
+
+        shifted_tracks = self._make_stanley_initial_guess_tracks()
+        u_ref_3d = u_ref.reshape((gc.m, gc.N, gc.T), order='F')
+        stanley_config = StanleyControllerConfig(SimpleNamespace(dt=gc.dt), self.car_param)
+        dummy_main_state = SimpleNamespace(car_target_v=np.zeros(gc.N, dtype=float))
+
+        for i in range(gc.N):
+            curv_state = np.array(gc.x0[:, i], dtype=float, copy=True)
+            curv_state[3] = np.clip(curv_state[3], a_min=0.5, a_max=None)
+            cart_state = self.track.curv_to_cart(CurvilinearState(
+                progress=curv_state[0],
+                lateral_err=curv_state[1],
+                heading_err=curv_state[2],
+                v_forward=curv_state[3],
+                v_sideway=curv_state[4],
+                rel_omega=0.0,
+            ))
+            stanley_state = StanleyControllerState(stanley_config)
+            ref_track = shifted_tracks[self._stanley_guess_track_name(curv_state)]
+            for k in range(gc.T):
+                ctrl, _, stanley_state, _ = StanleyController.control(
+                    cart_state,
+                    self.car_param,
+                    ref_track,
+                    stanley_config,
+                    stanley_state,
+                    dummy_main_state,
+                    i,
+                )
+                seed_ctrl = Control(ctrl.steering, 0.0)
+                u_ref_3d[:, i, k] = seed_ctrl.to_tuple()
+                cart_state = KinematicBicycleModelCartesian.advance_dynamics(
+                    cart_state,
+                    seed_ctrl,
+                    self.car_param,
+                    gc.dt,
+                    simple_throttle=True,
+                )
+
+        return u_ref
+
+    def _make_stanley_initial_guess_tracks(self):
+        """Create left/right shifted racelines for the Stanley seed."""
+        return {
+            'left_raceline': _ShiftedRacelineTrack.from_track(
+                self.track,
+                self.config.stanley_guess_shift_margin,
+                self.config.stanley_guess_boundary_buffer,
+            ),
+            'right_raceline': _ShiftedRacelineTrack.from_track(
+                self.track,
+                -self.config.stanley_guess_shift_margin,
+                self.config.stanley_guess_boundary_buffer,
+            ),
+        }
+
+    @staticmethod
+    def _stanley_guess_track_name(curv_state):
+        """Pick the seed raceline based on the current lateral offset."""
+        return 'left_raceline' if curv_state[1] >= 0.0 else 'right_raceline'
 
     def visualize(self, u, x, show=True, save=False):
         """ Visualize the game with given initial state (x0) and control (u) in a single frame.
@@ -646,7 +814,7 @@ class CarRacingCasadi(CasadiGame):
 
 
 def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
-                       variational_gne=True):
+                       variational_gne=True, use_stanley_control_guess=False):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig
     T = horizon
@@ -712,6 +880,7 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
         n_h=n_h,
         collision_radius=default.collision_radius,
         variational_gne=variational_gne,
+        use_stanley_control_guess=use_stanley_control_guess,
         x0=x0.copy(order='F'),
         target_x_ref=x_ref.copy(order='F'),
         J_Qr=J_Qr.copy(order='F'),
