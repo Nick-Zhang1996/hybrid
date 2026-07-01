@@ -79,11 +79,11 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
     logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
-    conv_var_vec = []
     optimal_mean_vec = []
-    optimal_var_vec = []
     time_mean_vec = []
     time_var_vec = []
+    converged_time_mean_vec = []
+    converged_time_var_vec = []
     for car_count in range(2, 9):
         converge_vec = []
         optimal_vec = []
@@ -135,6 +135,8 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
             1000 if converged_dt_arr.size else float('nan')
         converged_var_dt_ms = np.var(
             converged_dt_arr*1000).item() if converged_dt_arr.size else float('nan')
+        converged_time_mean_vec.append(converged_mean_dt_ms)
+        converged_time_var_vec.append(converged_var_dt_ms)
         time_mean_vec.append(mean_dt_ms)
         time_var_vec.append(var_dt_ms)
         conv_mean_vec.append(converge)
@@ -151,10 +153,12 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
     print(f'{solver_name=}, {cpp=}, {vne=}, {precond=}')
     print(f'{time_mean_vec=}')
     print(f'{time_var_vec=}')
+    print(f'{converged_time_mean_vec=}')
+    print(f'{converged_time_var_vec=}')
     print(f'{conv_mean_vec=}')
     print(f'{optimal_mean_vec=}')
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
-    # benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=False)

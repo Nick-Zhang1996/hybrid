@@ -199,5 +199,5 @@ def notify_done():
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
     notify_done()
