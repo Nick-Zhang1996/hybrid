@@ -16,7 +16,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-cpp = False
+cpp = True
 load = False
 variational_gne = True
 solver_name = 'interior_point'
@@ -28,8 +28,8 @@ if load:
     logger.info("Loading initial states from pickle file")
 
 np.random.seed()
-game = create_random_game(car_count=8, horizon=20,
-                          variational_gne=variational_gne, use_stanley_control_guess=True)
+game = create_random_game(car_count=4, horizon=20,
+                          variational_gne=variational_gne, use_stanley_control_guess=False)
 
 gc = game.config
 # load from pickle
@@ -62,10 +62,10 @@ else:
 text = "Solution Ready"
 talk(text)
 print(f'{sol.elapsed_time=}, {sol.residual=}, {sol.has_converged=}, {sol.is_optimal=}')
-# solver.visualize(u_ref, None)
+solver.visualize(sol.u, None)
 # game.inspect_h(sol.u, None, solver)
-u_vis = np.asarray(sol.u).reshape((solver.m, solver.N, solver.T), order='F')
-x_vis = solver._rollout_full_x(u_vis, None)
-solver.game.visualize_rcp(u_vis, x_vis)
+# u_vis = np.asarray(sol.u).reshape((solver.m, solver.N, solver.T), order='F')
+# x_vis = solver._rollout_full_x(u_vis, None)
+# solver.game.visualize_rcp(u_vis, x_vis)
 # if sol.residual < 1e-3:
 #     solver.animate(sol.u, None, save_gif=True)

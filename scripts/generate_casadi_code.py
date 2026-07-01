@@ -31,7 +31,7 @@ def solver_variants(solver_name):
     """Return supported variational_gne settings for a solver."""
     solver_name = normalize_solver_codegen_key(solver_name)
     if solver_name == 'ipm':
-        return [False, True]
+        return [True]
     if solver_name == 'rd3g':
         return [False]
     raise ValueError(f'Unsupported solver {solver_name!r}.')
@@ -66,12 +66,12 @@ def codegen_racing(car_count, horizon, solvers=('ipm',)):
 
 
 if __name__ == "__main__":
-    solvers = ['ipm', 'rd3g']
+    solvers = ['ipm']
     # codegen_racing(8, 10)
     # codegen_racing(4, 10, solvers=solvers)
     for T in [20]:
         for i in range(2, 9):
             pass
-            codegen_merge(i, T, solvers=solvers)
+            # codegen_merge(i, T, solvers=solvers)
             # codegen_intersection(i, T, solvers=solvers)
-            # codegen_racing(i, T, solvers=solvers)
+            codegen_racing(i, T, solvers=solvers)

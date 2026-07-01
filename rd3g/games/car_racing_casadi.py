@@ -813,7 +813,7 @@ class CarRacingCasadi(CasadiGame):
         return
 
 
-def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'),
+def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('survey_track'),
                        variational_gne=True, use_stanley_control_guess=False):
     """ Create a Car Racing Game instance with random initial states"""
     default = CarRacingCasadiConfig
@@ -828,9 +828,8 @@ def create_random_game(car_count=3, horizon=20, track=TrackFactory.build('saved'
     J_Qr = np.diag([0, 5.0, 1.0, 1.0, 0.1])
     J_R = np.eye(m) * 1.0
 
-    # NOTE for generating condensed game
-    s_low = 1.2  # original benchmark 0.5
-    s_high = 2.7  # original benchmark 4.0
+    s_low = 0.5  # original benchmark 0.5
+    s_high = 4.0  # original benchmark 4.0
     s_vec = np.random.uniform(low=s_low, high=s_high, size=N)
     v_vec = np.random.uniform(low=0.9, high=1.1, size=N)
     phi_vec = np.random.uniform(low=radians(-5), high=radians(5), size=N)

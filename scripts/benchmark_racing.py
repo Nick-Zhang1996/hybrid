@@ -76,7 +76,7 @@ def reset_solver_for_game(solver, game):
         solver.last_policy = None
 
 
-def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range(2, 9), horizon=10):
+def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range(2, 9), horizon=20):
     logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
@@ -93,14 +93,16 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
         optimal_vec = []
         dt_vec = []
         np.random.seed(0)
-        game = create_random_game(car_count=car_count, horizon=horizon, variational_gne=vne)
+        game = create_random_game(car_count=car_count, horizon=horizon,
+                                  variational_gne=vne, use_stanley_control_guess=True)
         solver = create_solver(solver_name, game, cpp, vne, precond)
         if cpp:
             solver.init_cpp_backend()
 
         for i in range(repeat_count):
             np.random.seed(i)
-            game = create_random_game(car_count=car_count, horizon=horizon, variational_gne=vne)
+            game = create_random_game(car_count=car_count, horizon=horizon,
+                                      variational_gne=vne, use_stanley_control_guess=True)
             reset_solver_for_game(solver, game)
             if cpp:
                 sol = solver.solve_cpp_backend()
@@ -185,5 +187,5 @@ def notify_done():
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    benchmark(solver_name='ipm', cpp=True, vne=True, precond=False)
     notify_done()
