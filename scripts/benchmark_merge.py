@@ -129,13 +129,12 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
 
         converge = np.mean(converge_arr).item()
         optimal = np.mean(optimal_vec).item()
-        median_dt_ms = np.median(dt_arr).item() * 1000
         mean_dt_ms = np.mean(dt_arr).item() * 1000
-        var_dt_ms = np.var(dt_arr).item() * 1000
+        var_dt_ms = np.var(dt_arr*1000).item()
         converged_mean_dt_ms = np.mean(converged_dt_arr).item() * \
             1000 if converged_dt_arr.size else float('nan')
-        converged_var_dt_ms = np.var(converged_dt_arr).item() * \
-            1000 if converged_dt_arr.size else float('nan')
+        converged_var_dt_ms = np.var(
+            converged_dt_arr*1000).item() if converged_dt_arr.size else float('nan')
         time_mean_vec.append(mean_dt_ms)
         time_var_vec.append(var_dt_ms)
         conv_mean_vec.append(converge)
@@ -157,5 +156,5 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
 
 
 if __name__ == '__main__':
-    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
-    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    # benchmark(solver_name='algames', cpp=False, vne=True, precond=False)

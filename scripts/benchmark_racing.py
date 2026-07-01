@@ -137,14 +137,26 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
         converge_arr = np.asarray(converge_vec, dtype=bool)
         dt_arr = np.asarray(dt_vec)
         converged_dt_arr = dt_arr[converge_arr]
+        # DEBUG: show histogram of runtime
+        if False:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            ax.hist(dt_arr * 1000, bins='auto', color='royalblue', edgecolor='black', alpha=0.8)
+            ax.set_title(f'{solver_name} {car_count} cars solve times')
+            ax.set_xlabel('dt (ms)')
+            ax.set_ylabel('count')
+            fig.tight_layout()
+            # fig.savefig(f'/tmp/racing_dt_hist_{solver_name}_{car_count}_cars.png')
+            plt.show()
+            plt.close(fig)
 
         median_dt_ms = np.median(dt_arr).item() * 1000
         mean_dt_ms = np.mean(dt_arr).item() * 1000
-        var_dt_ms = np.var(dt_arr).item() * 1000
+        var_dt_ms = np.var(dt_arr*1000).item()
         converged_mean_dt_ms = np.mean(converged_dt_arr).item() * \
             1000 if converged_dt_arr.size else float('nan')
-        converged_var_dt_ms = np.var(converged_dt_arr).item() * \
-            1000 if converged_dt_arr.size else float('nan')
+        converged_var_dt_ms = np.var(
+            converged_dt_arr*1000).item() if converged_dt_arr.size else float('nan')
         time_mean_vec.append(mean_dt_ms)
         time_var_vec.append(var_dt_ms)
         converged_time_mean_vec.append(converged_mean_dt_ms)
@@ -155,8 +167,8 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
         optimal_var_vec.append(np.var(optimal_vec).item())
         logger.info(
             f'{car_count} cars {converge=}, {optimal=}, {mean_dt_ms=:.1f}ms, '
-            f'{var_dt_ms=:.1f}ms, {converged_mean_dt_ms=:.1f}ms, '
-            f'{converged_var_dt_ms=:.1f}ms')
+            f'{var_dt_ms=:.3f}ms, {converged_mean_dt_ms=:.1f}ms, '
+            f'{converged_var_dt_ms=:.3f}ms')
 
     # Report mean and covariance of optimal results, used as param for initial guess
     # stacked_u = np.hstack([val.reshape(game.m, game.N*game.T, order='F') for val in good_u_vec])
@@ -187,5 +199,5 @@ def notify_done():
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='ipm', cpp=True, vne=True, precond=False)
+    benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
     notify_done()

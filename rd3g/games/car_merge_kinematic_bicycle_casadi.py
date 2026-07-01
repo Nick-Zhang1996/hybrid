@@ -34,7 +34,7 @@ class CarMergeKinematicBicycleCasadiConfig(CasadiGameConfig):
     variational_gne: bool = False
     """ If True, use one shared multiplier per canonical constraint """
     track_width: float = 2.2
-    collision_radius: float = 2.8  # 2.0
+    collision_radius: float = 2.0
 
     x0: Any = None
     """ Initial state for all agents, dim: (n,N)"""
@@ -451,9 +451,9 @@ def create_random_game(car_count=3, horizon=20, variational_gne=False):
     )
     x_pos_merge_lane = (
         2.7
-        # + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
+        + (np.random.random() - 0.5) * 2 * 2.5  # overall offset
         + np.linspace(0, (merge_lane_n - 1) * 5.4, merge_lane_n)  # spacing
-        + np.random.random(merge_lane_n)/2  # individual random offset
+        + np.random.random(merge_lane_n)  # individual random offset
     )
     v_main_lane = 2.0 + np.random.random(main_lane_n)
     v_merge_lane = 2.0 + np.random.random(merge_lane_n)
