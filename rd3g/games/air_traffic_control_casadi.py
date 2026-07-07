@@ -716,7 +716,7 @@ def create_random_game(aircraft_count=3, horizon=20, variational_gne=False,
         psi_r = default.runway_headings[runway_idx, 0]
         # Keep aircraft close to the runway threshold while staggering any queue
         # assigned to the same runway enough to satisfy the 200 m separation rule.
-        d_long = -(np.random.uniform(1000.0, 2000.0) +
+        d_long = -(np.random.uniform(800.0, 1800.0) +
                    queue_idx * (default.D_min + 100.0))
         d_lat = np.random.uniform(-150.0, 150.0)
         long_axis = np.array([np.cos(psi_r), np.sin(psi_r)])

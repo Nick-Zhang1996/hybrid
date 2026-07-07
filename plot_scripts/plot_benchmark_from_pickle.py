@@ -115,7 +115,131 @@ def finish_figure(fig: plt.Figure, show: bool) -> None:
     plt.close(fig)
 
 
-def load_benchmark_data(input_path: Path) -> tuple[np.ndarray, list[dict]]:
+def load_benchmark_data_from_dict():
+    payload = {
+        "cars": np.array([2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
+        "configs": [
+            {
+                "label": "RD3G CasADi",
+                "solver_name": "rd3g_casadi",
+                "cpp_backend": True,
+                "variational_gne": False,
+                "precondition_with_potential": False,
+                "abs_split": False,
+                "runtime_mean": np.array(
+                    [
+                        21.23422265,
+                        41.04959607,
+                        130.13955832,
+                        198.57183218,
+                        372.90915728,
+                        544.27784204,
+                        794.6225071,
+                    ]
+                ),
+                "runtime_var": np.array(
+                    [
+                        0.33081408,
+                        1.05534607,
+                        1.82564078,
+                        5.01293425,
+                        12.21476415,
+                        27.26317549,
+                        55.33613507,
+                    ]
+                ),
+                "conv_mean": np.array([0.85, 0.84, 0.545, 0.57, 0.295, 0.295, 0.265]),
+                "optimal_mean": np.array([0.83, 0.835, 0.52, 0.54, 0.275, 0.26, 0.25]),
+            },
+            {
+                "label": "IPM",
+                "solver_name": "ipm",
+                "cpp_backend": True,
+                "variational_gne": True,
+                "precondition_with_potential": False,
+                "abs_split": False,
+                "runtime_mean": np.array(
+                    [
+                        7.51147866,
+                        14.44433331,
+                        32.26020575,
+                        53.59736919,
+                        75.63190818,
+                        101.74676299,
+                        176.33383274,
+                    ]
+                ),
+                "runtime_var": np.array(
+                    [
+                        0.00475935,
+                        0.01780061,
+                        0.16490496,
+                        0.45922826,
+                        0.79869468,
+                        1.27611464,
+                        3.5031053,
+                    ]
+                ),
+                "conv_mean": np.array([0.875, 0.895, 0.625, 0.595, 0.475, 0.49, 0.34]),
+                "optimal_mean": np.array([0.695, 0.68, 0.24, 0.26, 0.095, 0.085, 0.055]),
+            },
+            {
+                "label": "IPM + Potential Surgery",
+                "solver_name": "ipm",
+                "cpp_backend": True,
+                "variational_gne": True,
+                "precondition_with_potential": False,
+                "abs_split": True,
+                "runtime_mean": np.array(
+                    [
+                        12.63206244,
+                        24.58972931,
+                        56.40876532,
+                        80.31849623,
+                        126.63870454,
+                        174.80059624,
+                        260.89293122,
+                    ]
+                ),
+                "runtime_var": np.array(
+                    [
+                        0.03937789,
+                        0.13742143,
+                        0.34329401,
+                        0.71430816,
+                        0.81410159,
+                        1.45177264,
+                        3.90065661,
+                    ]
+                ),
+                "conv_mean": np.array([0.785, 0.77, 0.545, 0.535, 0.32, 0.33, 0.37]),
+                "optimal_mean": np.array([0.785, 0.77, 0.545, 0.535, 0.32, 0.33, 0.37]),
+            },
+        ],
+        "metadata": {"runs": 200, "horizon": 20},
+    }
+
+    cars = np.asarray(payload["cars"], dtype=float)
+    configs = []
+    for index, raw_config in enumerate(payload["configs"]):
+        config = dict(raw_config)
+        config["optimality_ratio"] = np.divide(
+            config["optimal_mean"],
+            config["conv_mean"],
+            out=np.zeros_like(config["optimal_mean"], dtype=float),
+            where=config["conv_mean"] > 0.0,
+        )
+        style = STYLE_BY_LABEL.get(
+            config["label"],
+            FALLBACK_STYLES[index % len(FALLBACK_STYLES)],
+        )
+        config.update(style)
+        configs.append(config)
+
+    return cars, configs
+
+
+def load_benchmark_data_from_pickle(input_path: Path) -> tuple[np.ndarray, list[dict]]:
     """Load the saved benchmark arrays and add plot styling."""
     with input_path.open("rb") as file:
         payload = pickle.load(file)
@@ -207,7 +331,7 @@ def main() -> None:
     output_prefix = args.output_prefix or input_path.stem
 
     set_ieee_style()
-    cars, configs = load_benchmark_data(input_path)
+    cars, configs = load_benchmark_data_from_dict()
     plot_runtime(cars, configs, output_prefix, args.show)
     plot_rate(
         cars,

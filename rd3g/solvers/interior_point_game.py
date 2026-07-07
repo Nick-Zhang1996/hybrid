@@ -944,7 +944,7 @@ class InteriorPointGame(BaseSolver):
                     s_pos = np.sum(D_S > 0)
                     s_neg = np.sum(D_S < 0)
                     s_zero = len(D_S) - s_pos - s_neg
-                # Instead of checking p(inv(S)A) < 1, we can equivalently check S+A inv(S) A > 0
+                    # Instead of checking p(inv(S)A) < 1, we can equivalently check S+A inv(S) A > 0
                     logger.info(
                         'Spectral radius check: '
                         f'rho(inv(S)A)={spectral_radius:.6g}, '

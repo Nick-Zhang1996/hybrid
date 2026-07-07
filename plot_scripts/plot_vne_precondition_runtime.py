@@ -11,17 +11,17 @@ SCENARIOS = {
     #     "marker": "o",
     #     "linestyle": "-",
     # },
-    "without PDO-Split": {
-        "label": "without PDO-Split",
-        "color": "#8a5a00",
-        "marker": "s",
+    # "without PDO-Split": {
+    #     "label": "without PDO-Split",
+    #     "color": "#8a5a00",
+    #     "marker": "s",
+    #     "linestyle": "--",
+    # },
+    "rd3g": {
+        "label": "RD3G",
+        "color": "#222222",
+        "marker": "o",
         "linestyle": "--",
-    },
-    "with PDO-Split": {
-        "label": "with PDO-Split",
-        "color": "#0f766e",
-        "marker": "^",
-        "linestyle": "-",
     },
     "ilqgame": {
         "label": "iLQGame",
@@ -34,6 +34,12 @@ SCENARIOS = {
         "color": "#b91c1c",
         "marker": "X",
         "linestyle": "-.",
+    },
+    "PDO-Split": {
+        "label": "PDO-Split",
+        "color": "#0f766e",
+        "marker": "^",
+        "linestyle": "-",
     },
 }
 
@@ -49,13 +55,21 @@ GAMES = {
             #     "converged_mean_ms": np.array([7.0, 12.9, 28.9, 53.3, 48.2, 65.9, 96.8]),
             #     "converged_var_ms": np.array([0.0, 0.0, 0.0, 0.0, 0.1, 0.2, 0.8]),
             # },
-            "without PDO-Split": {
+            "PDO-Split": {
                 "converged_rate": np.array([0.86, 0.88, 0.66, 0.50, 0.56, 0.50, 0.30]),
                 "optimal_rate": np.array([0.74, 0.88, 0.66, 0.50, 0.56, 0.50, 0.30]),
                 "overall_mean_ms": np.array([12.043766975402832, 23.11375141143799, 56.08804702758789, 76.98510408401489, 124.15194511413574, 170.32540798187256, 229.68162536621094]),
                 "overall_var_ms": np.array([33.70589055587061, 116.8487030957976, 342.5112015666855, 651.1064964902914, 761.7493507689231, 1335.0465035846582, 2795.2710108244446]),
                 "converged_mean_ms": np.array([9.7, 18.3, 40.6, 56.8, 89.2, 120.1, 168.2]),
                 "converged_var_ms": np.array([7.7, 24.2, 135.6, 231.4, 472.2, 1035.4, 1522.9]),
+            },
+            "rd3g": {
+                "converged_rate": np.array([0.81, 0.89, 0.53, 0.55, 0.27, 0.32, 0.28]),
+                "optimal_rate": np.array([0.81, 0.88, 0.5, 0.55, 0.26, 0.28, 0.27]),
+                "overall_mean_ms": np.array([20.310323238372803, 35.96055030822754, 99.36886548995972, 142.38977670669556, 223.3168387413025, 279.4550395011902, 390.073983669281]),
+                "overall_var_ms": np.array([317.8028101820644, 865.6070989405633, 1162.0416497099257, 1623.2909212845864, 4041.2309159993306, 7221.258995733586, 16860.36886469725]),
+                "converged_mean_ms": np.array([14.774946518886237, 30.455624119619305, 84.74168237650169, 128.9092497392134, 207.21218321058484, 242.3539236187935, 378.81284952163696]),
+                "converged_var_ms": np.array([199.3033972759219, 685.8694034275914, 1160.7605345982915, 1724.3061014548878, 3500.731972913843, 8920.316940867979, 14157.877315644233]),
             },
             "with PDO-Split": {
                 "converged_rate": np.array([0.86, 0.88, 0.66, 0.50, 0.56, 0.50, 0.30]),
@@ -104,7 +118,7 @@ GAMES = {
                         273.19421016999996,
                         407.19855172,
                         648.9726904300001,
-                        1107.30742397,
+                        np.nan,  # 1107.30742397,
                     ]
                 ),
                 "overall_var_ms": np.array(
@@ -115,11 +129,13 @@ GAMES = {
                         4697.550621599723,
                         20467.543315854466,
                         30068.628265965486,
-                        30514.186615400744,
+                        np.nan,  # 30514.186615400744,
                     ]
                 ),
-                "converged_mean_ms": np.array([41.91985978125, 87.31832784745762, 169.4469608571429, 272.6242022727272, 507.875706, 776.49892825, 1150.3694440000002]),
-                "converged_var_ms": np.array([319.66240747378043, 1196.8321036656055, 3475.5849548736546, 5320.568058046142, 26985.743048077646, 40099.57931078943, 0.0]),
+                # 1150.3694440000002
+                "converged_mean_ms": np.array([41.91985978125, 87.31832784745762, 169.4469608571429, 272.6242022727272, 507.875706, 776.49892825, np.nan]),
+                # 0.0
+                "converged_var_ms": np.array([319.66240747378043, 1196.8321036656055, 3475.5849548736546, 5320.568058046142, 26985.743048077646, 40099.57931078943, np.nan]),
             },
         },
     },
@@ -134,16 +150,24 @@ GAMES = {
             #     "converged_mean_ms": np.array([13.0, 44.6, 227.3, 655.0, 153.9, 225.2, 302.0]),
             #     "converged_var_ms": np.array([0.0, 0.2, 6.7, 57.1, 1.5, 0.2, 0.3]),
             # },
-            "without PDO-Split": {
-                "converged_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, 0.09]),
-                "optimal_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, 0.09]),
-                "overall_mean_ms": np.array([12.256879806518555, 33.801796436309814, 69.87300395965576, 113.65606784820557, 196.7015838623047, 302.7076244354248, 479.8362326622009]),
-                "overall_var_ms": np.array([10.512554047954836, 34.435045881190256, 519.6672941096721, 600.1236934088182, 3412.4275750515603, 8148.398154041843, 19645.44732871838]),
-                "converged_mean_ms": np.array([12.078584943498885, 36.563304754403916, 86.29893660545349, 149.90892012914023, 271.041239009184, 436.7823600769043, 824.3863317701552]),
-                "converged_var_ms": np.array([11.80600606319934, 39.38504722116478, 485.875486692997, 463.1084861534716, 4226.868115511434, 4210.3826920272995, 44968.09609025761]),
+            # "without PDO-Split": {
+            #     "converged_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, 0.09]),
+            #     "optimal_rate": np.array([0.70, 0.36, 0.32, 0.26, 0.18, 0.10, 0.09]),
+            #     "overall_mean_ms": np.array([12.256879806518555, 33.801796436309814, 69.87300395965576, 113.65606784820557, 196.7015838623047, 302.7076244354248, 479.8362326622009]),
+            #     "overall_var_ms": np.array([10.512554047954836, 34.435045881190256, 519.6672941096721, 600.1236934088182, 3412.4275750515603, 8148.398154041843, 19645.44732871838]),
+            #     "converged_mean_ms": np.array([12.078584943498885, 36.563304754403916, 86.29893660545349, 149.90892012914023, 271.041239009184, 436.7823600769043, 824.3863317701552]),
+            #     "converged_var_ms": np.array([11.80600606319934, 39.38504722116478, 485.875486692997, 463.1084861534716, 4226.868115511434, 4210.3826920272995, 44968.09609025761]),
 
+            # },
+            "rd3g": {
+                "converged_rate": np.array([0.69, 0.39, 0.41, 0.24, 0.17, 0.08, 0.09]),
+                "optimal_rate": np.array([0.69, 0.39, 0.41, 0.24, 0.17, 0.07, 0.09]),
+                "overall_mean_ms": np.array([11.124329566955566, 29.4661808013916, 63.7111234664917, 109.2027473449707, 182.3928451538086, 295.6836795806885, 478.42753171920776]),
+                "overall_var_ms": np.array([12.594514252418776, 41.87983688357235, 100.28102371777545, 328.2219442308815, 2555.2848715277823, 2628.7098878618963, 8957.492904748387]),
+                "converged_mean_ms": np.array([10.523595671722855, 29.87206899202787, 70.42077111034858, 132.21648335456848, 236.41382946687585, 405.84060549736023, 698.5148853725858]),
+                "converged_var_ms": np.array([3.356977555269103, 15.484893386055996, 82.90944466994762, 337.6653946215076, 2841.048401793572, 1381.736035845016, 7244.126206978482]),
             },
-            "with PDO-Split": {
+            "PDO-Split": {
                 "converged_rate": np.array([0.68, 0.38, 0.26, 0.26, 0.20, 0.10, 0.04]),
                 "optimal_rate": np.array([0.68, 0.38, 0.26, 0.26, 0.20, 0.10, 0.04]),
                 "overall_mean_ms": np.array([9.931654930114746, 35.39132356643677, 78.18204641342163, 157.92293071746826, 287.123007774353, 504.5762801170349, 790.569634437561]),
@@ -183,7 +207,7 @@ GAMES = {
                         205.8,
                         450.9,
                         725.5,
-                        1108.7,
+                        np.nan,  # 1108.7,
                         np.nan,
                     ]
                 ),
@@ -194,7 +218,7 @@ GAMES = {
                         1242.848,
                         5054.949,
                         23705.635,
-                        2.067,
+                        np.nan,  # 2.067,
                         np.nan,
                     ]
                 ),
@@ -296,23 +320,33 @@ def plot_runtime(game_key, runtime_key, variance_key, title_suffix):
     game = GAMES[game_key]
     fig, ax = plt.subplots()
 
-    for scenario_key, scenario_style in SCENARIOS.items():
+    scenario_items = [
+        (scenario_key, scenario_style)
+        for scenario_key, scenario_style in SCENARIOS.items()
+        if scenario_key in game["series"]
+    ]
+    for scenario_key, scenario_style in scenario_items:
         series = game["series"][scenario_key]
         mean = series[runtime_key]
         runtime_std = np.sqrt(np.clip(series[variance_key], a_min=0.0, a_max=None))
         x, y, yerr = _valid_xy(CARS, mean, runtime_std)
-        ax.errorbar(
+        ax.plot(
             x,
             y,
-            yerr=yerr,
             label=scenario_style["label"],
             color=scenario_style["color"],
             linestyle=scenario_style["linestyle"],
             marker=scenario_style["marker"],
-            capsize=3,
-            elinewidth=0.9,
             markerfacecolor="white",
             markeredgewidth=1.4,
+        )
+        ax.fill_between(
+            x,
+            np.clip(y - yerr, a_min=0.0, a_max=None),
+            y + yerr,
+            color=scenario_style["color"],
+            alpha=0.14,
+            linewidth=0.0,
         )
 
     ax.set_title(f"{game['title']}: {title_suffix}")
@@ -326,11 +360,16 @@ def plot_rates(game_key):
     game = GAMES[game_key]
     fig, ax = plt.subplots()
 
-    width = 0.22
+    scenario_items = [
+        (scenario_key, scenario_style)
+        for scenario_key, scenario_style in SCENARIOS.items()
+        if scenario_key in game["series"]
+    ]
+    width = min(0.22, 0.8 / len(scenario_items))
     centers = np.arange(len(CARS), dtype=float)
-    offset_center = (len(SCENARIOS) - 1) / 2.0
+    offset_center = (len(scenario_items) - 1) / 2.0
 
-    for idx, (scenario_key, scenario_style) in enumerate(SCENARIOS.items()):
+    for idx, (scenario_key, scenario_style) in enumerate(scenario_items):
         series = game["series"][scenario_key]
         converged = series["converged_rate"]
         optimal = series["optimal_rate"]

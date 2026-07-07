@@ -208,7 +208,7 @@ class RD3GCasadiConfig(BaseSolverConfig):
     # Apply inertia correction to each agent KKT
     inertia_correction: bool = True
     # Remove empty rows and columns from the KKT problem
-    reduce_kkt_system: bool = False
+    reduce_kkt_system: bool = True
     # Remove inactive h rows and associated mu columns before checking K_i inertia
     keep_only_active_constraints_in_ki: bool = True
     # Rollout control to get new state trajectory at the start of each step
@@ -478,8 +478,8 @@ class RD3GCasadi(BaseSolver):
         gc = self.game.config
         params_np = [gc.get_int_param_np(), gc.get_double_param_np()]
         # FIXME this is specific to car merge game
-        logger.info('Solving game with 10 random restarts')
-        logger.warning("Using sample u specific to car merging game")
+        # logger.info('Solving game with 10 random restarts')
+        # logger.warning("Using sample u specific to car merging game")
         u_mean = np.array([-0.02230492, -0.00410712])
         u_cov = np.array([[0.10592138, 0.00403225], [0.00403225, 0.00832558]])
 

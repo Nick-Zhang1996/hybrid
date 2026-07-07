@@ -130,7 +130,7 @@ class CarRacingCasadiConfig(CasadiGameConfig):
     """ Use two circles instead of one for collision"""
     bdry_margin: float = 0.05
     """ Margin to boundary, use in boundary constraints"""
-    use_stanley_control_guess: bool = False
+    use_stanley_control_guess: bool = True
     """ If True, initial_control_guess() seeds steering with a Stanley rollout. """
     stanley_guess_shift_margin: float = 0.04
     """ Lateral shift for left/right Stanley seed racelines. """
@@ -599,8 +599,7 @@ class CarRacingCasadi(CasadiGame):
         J_R = self.config.get_param('J_R')
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
-
-        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i
+        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i  # - 1.0*( 2*x_k_i[0] - cas.sum2(x_k[0, :]))
         return val
 
     def Jfi(self, x_T, i_onehot):

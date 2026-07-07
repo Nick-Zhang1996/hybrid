@@ -11,7 +11,7 @@ from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.INFO)
 logger = logging.getLogger('rd3g.solvers.ilqgame')
 logger.setLevel(logging.ERROR)
 
@@ -25,7 +25,7 @@ def create_solver(solver_name, game, cpp, vne, precond):
             inertia_correction=False,
             variational_gne=vne,
             precondition_with_potential=precond,
-            abs_split=True)
+            abs_split=False)
         return InteriorPointGame(solver_config, game, cpp_only=cpp)
     if solver_name == 'rd3g':
         if vne:
@@ -76,6 +76,14 @@ def reset_solver_for_game(solver, game):
         solver.last_policy = None
 
 
+def solve_with_initial_guess(solver, cpp, u_ref):
+    if cpp:
+        return solver.solve_cpp_backend(u_ref)
+    if isinstance(solver, AlgamesJulia):
+        return solver.solve()
+    return solver.solve(u_ref)
+
+
 def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range(2, 9), horizon=20):
     logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
@@ -94,7 +102,7 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
         dt_vec = []
         np.random.seed(0)
         game = create_random_game(car_count=car_count, horizon=horizon,
-                                  variational_gne=vne, use_stanley_control_guess=True)
+                                  variational_gne=vne)
         solver = create_solver(solver_name, game, cpp, vne, precond)
         if cpp:
             solver.init_cpp_backend()
@@ -102,12 +110,10 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, car_counts=range
         for i in range(repeat_count):
             np.random.seed(i)
             game = create_random_game(car_count=car_count, horizon=horizon,
-                                      variational_gne=vne, use_stanley_control_guess=True)
+                                      variational_gne=vne)
             reset_solver_for_game(solver, game)
-            if cpp:
-                sol = solver.solve_cpp_backend()
-            else:
-                sol = solver.solve()
+            u_ref = game.initial_control_guess()
+            sol = solve_with_initial_guess(solver, cpp, u_ref)
             # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
             # solver.final()
@@ -199,5 +205,9 @@ def notify_done():
 
 
 if __name__ == '__main__':
-    benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    benchmark(solver_name='ipm', cpp=True, vne=True, precond=False)
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=False)
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    # benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    # benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=False)
     notify_done()

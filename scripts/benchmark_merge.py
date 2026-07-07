@@ -10,7 +10,7 @@ from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('rd3g.solvers.interior_point_game')
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.INFO)
 logger = logging.getLogger('rd3g.solvers.ilqgame')
 logger.setLevel(logging.ERROR)
 
@@ -99,9 +99,9 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
             reset_solver_for_game(solver, game)
             if cpp:
                 sol = solver.solve_cpp_backend()
+                # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
             else:
                 sol = solver.solve()
-            # sol = solver.solve_cpp_backend_rand_restart(restarts=10)
 
             # solver.final()
             converge_vec.append(sol.has_converged)
@@ -160,5 +160,9 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100):
 
 
 if __name__ == '__main__':
+    benchmark(solver_name='rd3g', cpp=True, vne=False, precond=False)
     # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
-    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=False)
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=False)
+    # benchmark(solver_name='ipm', cpp=True, vne=True, precond=True)
+    # benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    # benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=False)

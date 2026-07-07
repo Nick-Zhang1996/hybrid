@@ -337,8 +337,8 @@ class CarMergeKinematicBicycleCasadi(CasadiGame):
         x_k_i = x_k @ i_onehot  # dim: n,1
         dx = x_k_i - target_x_ref @ i_onehot
         M = np.array([[1, 0, 0, 0]], order='F')  # matrix to pick out x coord
-
-        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i  # + M @ x_k_i - cas.sum(M @ x_k)
+        val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i + M @ x_k_i - cas.sum(M @ x_k)
+        # val = dx.T @ J_Qr @ dx + u_k_i.T @ J_R @ u_k_i  # - 0.1*( 2*x_k_i[0] - cas.sum2(x_k[0, :]))
         return val
 
     def Jfi(self, x_T, i_onehot):

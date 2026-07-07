@@ -69,6 +69,7 @@ if __name__ == "__main__":
     solvers = ['ipm']
     # codegen_racing(8, 10)
     # codegen_racing(4, 10, solvers=solvers)
+    # codegen_merge(20, 20, solvers=solvers)
     for T in [20]:
         for i in range(2, 9):
             pass

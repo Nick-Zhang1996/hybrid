@@ -7,6 +7,7 @@ import numpy as np
 from rd3g.utilities.util import talk
 from rd3g.games.car_racing_casadi import create_random_game
 from rd3g.solvers.interior_point_game import InteriorPointGame, InteriorPointGameConfig
+from rd3g.solvers.rd3g_casadi import RD3GCasadi, RD3GCasadiConfig
 from rd3g.solvers.algames_julia import AlgamesJulia, AlgamesJuliaConfig
 
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,11 @@ if solver_name == 'interior_point':
     solver_config = InteriorPointGameConfig(
         inertia_correction=False, iterations=20, variational_gne=variational_gne, precondition_with_potential=True)
     solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
+elif solver_name == 'rd3g':
+    if variational_gne:
+        raise ValueError('rd3g_casadi does not support variational_gne=True')
+    solver_config = RD3GCasadiConfig(inertia_correction=False)
+    solver = RD3GCasadi(solver_config, game, cpp_only=cpp)
 elif solver_name == 'algames':
     solver_config = AlgamesJuliaConfig(iterations=20)
     solver = AlgamesJulia(solver_config, game)

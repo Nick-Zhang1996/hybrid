@@ -99,9 +99,7 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, plot_iterations=
     logger.info(f'Benchmarking {solver_name}')
     good_u_vec = []
     conv_mean_vec = []
-    conv_var_vec = []
     optimal_mean_vec = []
-    optimal_var_vec = []
     time_mean_vec = []
     time_var_vec = []
     converged_time_mean_vec = []
@@ -157,9 +155,8 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, plot_iterations=
 
         converge = np.mean(converge_arr).item()
         optimal = np.mean(optimal_vec).item()
-        median_dt_ms = np.median(dt_arr).item() * 1000
         mean_dt_ms = np.mean(dt_arr).item() * 1000
-        var_dt_ms = np.var(dt_arr).item() * 1000
+        var_dt_ms = np.var(dt_arr*1000).item()
         converged_mean_dt_ms = np.mean(converged_dt_arr).item() * \
             1000 if converged_dt_arr.size else float('nan')
         converged_var_dt_ms = np.var(converged_dt_arr).item() * \
@@ -170,11 +167,9 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, plot_iterations=
         converged_time_var_vec.append(converged_var_dt_ms)
         conv_mean_vec.append(converge)
         optimal_mean_vec.append(optimal)
-        conv_var_vec.append(np.var(converge_vec).item())
-        optimal_var_vec.append(np.var(optimal_vec).item())
         logger.info(
             f'{car_count} cars {converge=}, {optimal=}, {mean_dt_ms=:.1f}ms, '
-            f'{var_dt_ms=:.1f}ms, {converged_mean_dt_ms=:.1f}ms, '
+            f'{var_dt_ms=:.3f}ms, {converged_mean_dt_ms=:.1f}ms, '
             f'{converged_var_dt_ms=:.1f}ms')
 
     # Report mean and covariance of optimal results, used as param for initial guess
@@ -188,9 +183,7 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, plot_iterations=
     print(f'{converged_time_mean_vec=}')
     print(f'{converged_time_var_vec=}')
     print(f'{conv_mean_vec=}')
-    print(f'{conv_var_vec=}')
     print(f'{optimal_mean_vec=}')
-    print(f'{optimal_var_vec=}')
 
     if plot_iterations:
         plot_iteration_histogram(sol_vec)
@@ -198,3 +191,4 @@ def benchmark(solver_name, cpp, vne, precond, repeat_count=100, plot_iterations=
 
 if __name__ == '__main__':
     benchmark(solver_name='algames', cpp=False, vne=True, precond=False)
+    benchmark(solver_name='ilqgame', cpp=False, vne=True, precond=False)
