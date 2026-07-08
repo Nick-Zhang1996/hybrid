@@ -16,6 +16,65 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def create_multi_valley_fun(targets: list[float], width_fraction: float = 0.18,
+                            beta: float = 50.0, amplitude: float = 1.0):
+    """Create an unbounded, scale-normalized CasADi cost with valleys at targets.
+
+    Args:
+        targets: Target values where the returned function should have valleys.
+        width_fraction: Dimensionless valley width, relative to the target span.
+        beta: Exponential soft-min sharpness. Larger values select one valley harder.
+        amplitude: Multiplies the returned cost.
+    """
+    targets_np = np.asarray(targets, dtype=float).reshape(-1)
+    if targets_np.size == 0:
+        raise ValueError('targets must contain at least one value')
+    if not np.all(np.isfinite(targets_np)):
+        raise ValueError('targets must be finite')
+    if width_fraction <= 0.0:
+        raise ValueError('width_fraction must be positive')
+    if beta <= 0.0:
+        raise ValueError('beta must be positive')
+    if amplitude <= 0.0:
+        raise ValueError('amplitude must be positive')
+
+    target_span = float(np.max(targets_np) - np.min(targets_np))
+    target_magnitude = float(np.max(np.abs(targets_np)))
+    scale = max(target_span, target_magnitude, 1.0)
+
+    val = cas.SX.sym('val')
+    valley_terms = []
+    for target in targets_np:
+        normalized_error = (val - target) / (scale * width_fraction)
+        valley_terms.append(normalized_error**2)
+
+    valley_vec = cas.vertcat(*valley_terms)
+    softmin = -(1.0 / beta) * cas.logsumexp(-beta * valley_vec)
+    return cas.Function('multi_valley_fun', [val], [amplitude * softmin],
+                        ['val'], ['cost'])
+
+
+def _multi_valley_cost_np(values, targets, width_fraction: float = 0.12,
+                          beta: float = 30.0, amplitude: float = 1.0):
+    """Numpy equivalent of create_multi_valley_fun() for visualization grids."""
+    targets_np = np.asarray(targets, dtype=float).reshape(-1)
+    target_span = float(np.max(targets_np) - np.min(targets_np))
+    target_magnitude = float(np.max(np.abs(targets_np)))
+    scale = max(target_span, target_magnitude, 1.0)
+    values = np.asarray(values)
+
+    valley_terms = []
+    for target in targets_np:
+        normalized_error = (values - target) / (scale * width_fraction)
+        valley_terms.append(normalized_error**2)
+
+    valley_arr = np.stack(valley_terms, axis=0)
+    terms = -beta * valley_arr
+    max_term = np.max(terms, axis=0)
+    logsumexp = max_term + np.log(np.sum(np.exp(terms - max_term), axis=0))
+    return amplitude * (-(1.0 / beta) * logsumexp)
+
+
 @dataclass(frozen=False)
 class AirTrafficControlCasadiConfig(CasadiGameConfig):
     """Base class for the air traffic control game configuration.
@@ -44,7 +103,7 @@ class AirTrafficControlCasadiConfig(CasadiGameConfig):
     # Airport model. Columns in runway_positions are runway thresholds [x_R, y_R].
     runway_count: int = 2
     runway_positions: Any = field(
-        default_factory=lambda: np.array([[0.0, 0.0], [0.0, 500.0]], dtype=float)
+        default_factory=lambda: np.array([[0.0, 0.0], [0.0, 300.0]], dtype=float)
     )
     # The TeX writes "-20 deg = 0.35 rad"; use the signed angle from -20 deg.
     runway_headings: Any = field(
@@ -123,6 +182,12 @@ class AirTrafficControlCasadi(CasadiGame):
 
     def __init__(self, config: AirTrafficControlCasadiConfig):
         super().__init__(config)
+        self._runway_heading_cost_fun = create_multi_valley_fun(
+            config.runway_headings[:, 0].tolist()
+        )
+        self._runway_lateral_cost_fun = create_multi_valley_fun(
+            [0.0],
+        )
         self.color_vec = [
             'tab:purple', 'tab:orange', 'tab:red', 'tab:green',
             'tab:blue', 'tab:pink', 'tab:cyan', 'black'
@@ -249,27 +314,31 @@ class AirTrafficControlCasadi(CasadiGame):
             raise ValueError(
                 'show_step_cost_heatmap must be a tuple of (v, psi)'
             ) from exc
-        del speed, heading  # The current stage cost depends only on position and control.
+        del speed
 
         x_vec = np.linspace(*self.visual_x_lim, 220)
         y_vec = np.linspace(*self.visual_y_lim, 220)
         grid_x, grid_y = np.meshgrid(x_vec, y_vec)
 
-        softmin_terms = []
+        lateral_costs = []
         for runway_idx in range(self.config.runway_count):
             p = self.config.runway_positions[:, runway_idx]
+            psi_r = self.config.runway_headings[runway_idx, 0]
             dx = grid_x - p[0]
             dy = grid_y - p[1]
-            distance_sq = (
-                dx**2 + self.config.distance_y_weight * dy**2
-            ) / (self.config.distance_cost_scale**2)
-            W = self._approach_weight_np(grid_x, grid_y, runway_idx)
-            softmin_terms.append(-self.config.beta * distance_sq * (1.0 - W))
+            d_lat = -dx * np.sin(psi_r) + dy * np.cos(psi_r)
+            lateral_cost = _multi_valley_cost_np(
+                d_lat / self.config.rho_lat, [0.0], width_fraction=1.0)
+            lateral_costs.append(lateral_cost)
 
-        terms = np.stack(softmin_terms, axis=0)
+        lateral_cost_arr = np.stack(lateral_costs, axis=0)
+        terms = -self.config.beta * lateral_cost_arr
         max_term = np.max(terms, axis=0)
         logsumexp = max_term + np.log(np.sum(np.exp(terms - max_term), axis=0))
-        step_cost = -(1.0 / self.config.beta) * logsumexp
+        lateral_destination_cost = -(1.0 / self.config.beta) * logsumexp
+        heading_destination_cost = _multi_valley_cost_np(
+            heading, self.config.runway_headings[:, 0])
+        step_cost = lateral_destination_cost + heading_destination_cost
 
         im = ax.imshow(step_cost,
                        extent=[*self.visual_x_lim, *self.visual_y_lim],
@@ -282,7 +351,7 @@ class AirTrafficControlCasadi(CasadiGame):
 
     def visualize(self, u, x, show=True, save=False,
                   show_approach_weight_heatmap=None,
-                  show_step_cost_heatmap=None):
+                  show_step_cost_heatmap=(80, 0)):
         """Visualize trajectories and aircraft headings in a single frame.
 
         Args:
@@ -466,6 +535,20 @@ class AirTrafficControlCasadi(CasadiGame):
         distance_cost_scale = self.config.get_param('distance_cost_scale')
         return (dx**2 + distance_y_weight * dy**2) / (distance_cost_scale**2)
 
+    def lateral_destination_cost(self, x_i):
+        """Soft-min lateral alignment cost across runway centerlines."""
+        beta = self.config.get_param('beta')
+        rho_lat = self.config.get_param('rho_lat')
+
+        lateral_costs = []
+        for runway_idx in range(self.config.runway_count):
+            _, d_lat = self.runway_coordinates(x_i, runway_idx)
+            lateral_cost = self._runway_lateral_cost_fun(d_lat / rho_lat)
+            lateral_costs.append(lateral_cost)
+
+        lateral_cost_vec = cas.vertcat(*lateral_costs)
+        return -(1.0 / beta) * cas.logsumexp(-beta * lateral_cost_vec)
+
     def J(self, x_k, u_k_i, i_onehot):
         """Stage cost for one aircraft.
 
@@ -478,14 +561,9 @@ class AirTrafficControlCasadi(CasadiGame):
         assert i_onehot.shape == (self.config.N, 1)
 
         x_k_i = x_k @ i_onehot
-        beta = self.config.get_param('beta')
-        softmin_terms = []
-        for runway_idx in range(self.config.runway_count):
-            distance_sq = self.runway_distance_sq(x_k_i, runway_idx)
-            W = self.approach_weight(x_k_i, runway_idx)
-            softmin_terms.append(-beta * distance_sq * (1.0 - W))
-
-        destination_cost = -(1.0 / beta) * cas.logsumexp(cas.vertcat(*softmin_terms))
+        heading_cost = self._runway_heading_cost_fun(x_k_i[3, 0])
+        lateral_cost = self.lateral_destination_cost(x_k_i)
+        destination_cost = heading_cost + lateral_cost
         J_R = self.config.get_param('J_R')
         a_max = self.config.get_param('a_max')
         omega_max = self.config.get_param('omega_max')

@@ -12,7 +12,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(123421)
+np.random.seed(2)
 cpp = False
 variational_gne = True
 
