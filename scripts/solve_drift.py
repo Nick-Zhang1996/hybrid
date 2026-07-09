@@ -43,6 +43,7 @@ elif solver_name == 'interior_point':
         inertia_correction=False,
         variational_gne=variational_gne,
         abs_split=False,
+        precondition_with_potential=True,
     )
     solver = InteriorPointGame(solver_config, game, cpp_only=cpp)
 else:

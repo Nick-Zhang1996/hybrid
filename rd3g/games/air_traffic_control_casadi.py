@@ -351,26 +351,39 @@ class AirTrafficControlCasadi(CasadiGame):
 
     def visualize(self, u, x, show=True, save=False,
                   show_approach_weight_heatmap=None,
-                  show_step_cost_heatmap=(80, 0)):
-        """Visualize trajectories and aircraft headings in a single frame.
+                  show_step_cost_heatmap=None):
+        """Visualize trajectories and aircraft multi-exposure in one frame.
 
         Args:
             u: (m,N,T)
             x: (n,N,T+1)
             show_approach_weight_heatmap: None for no heatmap, otherwise runway index.
             show_step_cost_heatmap: None for no heatmap, otherwise a tuple (v, psi).
+
+        Aircraft sprites are overlaid along the horizon with later states more opaque.
         """
         n = self.config.n
         m = self.config.m
         T = self.config.T
         N = self.config.N
 
+        # Publication figure tuning knobs.
+        aircraft_visual_length = 200.0  # meters
+        aircraft_min_alpha = 0.18
+        aircraft_alpha_prominence_power = 2.0
+        runway_visual_scale = 1.5
+        aircraft_sprite_path = os.path.join(
+            BASEDIR, 'rd3g', 'resources', 'aircraft_topdown.png')
+        trajectory_color = '#56B4E9'
+        trajectory_alpha = 0.72
+        save_dpi = 600
+
         if (not show) and (not save):
             return None
         assert u.shape == (m, N, T)
         assert x.shape == (n, N, T + 1)
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(7.2, 6.0), constrained_layout=True)
         ax.set_facecolor((54 / 255, 69 / 255, 79 / 255))
         if (show_approach_weight_heatmap is not None and
                 show_step_cost_heatmap is not None):
@@ -384,33 +397,84 @@ class AirTrafficControlCasadi(CasadiGame):
         if show_step_cost_heatmap is not None:
             im = self._draw_step_cost_heatmap(ax, show_step_cost_heatmap)
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label='step cost')
-        self._draw_runways(ax)
 
-        arrow_len = self.config.aircraft_visual_length
+        for runway_idx in range(self.config.runway_count):
+            p = self.config.runway_positions[:, runway_idx]
+            psi = self.config.runway_headings[runway_idx, 0]
+            long_axis = np.array([np.cos(psi), np.sin(psi)])
+            lat_axis = np.array([-np.sin(psi), np.cos(psi)])
+            half_width = runway_visual_scale * self.config.delta_y
+            length = runway_visual_scale * self.config.runway_visual_length
+            polygon = np.vstack([
+                p - half_width * lat_axis,
+                p + half_width * lat_axis,
+                p + length * long_axis + half_width * lat_axis,
+                p + length * long_axis - half_width * lat_axis,
+            ])
+            ax.fill(polygon[:, 0], polygon[:, 1], color='dimgray',
+                    edgecolor='white', linewidth=1.5, zorder=1)
+            end = p + length * long_axis
+            ax.plot([p[0], end[0]], [p[1], end[1]], '--', color='white',
+                    linewidth=1.0, zorder=2)
+            threshold = np.vstack(
+                [p - half_width * lat_axis, p + half_width * lat_axis])
+            ax.plot(threshold[:, 0], threshold[:, 1], color='white',
+                    linewidth=2.0, zorder=2)
+
+        if aircraft_alpha_prominence_power <= 0:
+            raise ValueError('aircraft_alpha_prominence_power must be positive')
+        if not 0 <= aircraft_min_alpha <= 1:
+            raise ValueError('aircraft_min_alpha must be in [0, 1]')
+        from matplotlib.transforms import (  # pylint: disable=import-outside-toplevel
+            Affine2D,
+        )
+        sprite = plt.imread(aircraft_sprite_path)
+        weights = np.arange(1, T + 2, dtype=float) ** aircraft_alpha_prominence_power
+        aircraft_alphas = aircraft_min_alpha + (1 - aircraft_min_alpha) * weights / weights[-1]
         for i in range(N):
-            color = self.color_vec[i % len(self.color_vec)]
-            ax.plot(x[0, i, :], x[1, i, :], '*-', color=color, zorder=3)
-            ax.quiver(
-                x[0, i, -1],
-                x[1, i, -1],
-                arrow_len * np.cos(x[3, i, -1]),
-                arrow_len * np.sin(x[3, i, -1]),
-                angles='xy',
-                scale_units='xy',
-                scale=1.0,
-                color=color,
-                width=0.006,
-                zorder=4,
+            ax.plot(
+                x[0, i, :],
+                x[1, i, :],
+                color=trajectory_color,
+                alpha=trajectory_alpha,
+                linewidth=2.2,
+                solid_capstyle='round',
+                solid_joinstyle='round',
+                antialiased=True,
+                zorder=3,
             )
+            for k, alpha in enumerate(aircraft_alphas):
+                pos_x = x[0, i, k]
+                pos_y = x[1, i, k]
+                heading = x[3, i, k]
+                half_length = aircraft_visual_length / 2.0
+                half_width = half_length * sprite.shape[0] / sprite.shape[1]
+                transform = (
+                    Affine2D().rotate_around(pos_x, pos_y, heading) + ax.transData
+                )
+                ax.imshow(
+                    sprite,
+                    extent=[
+                        pos_x - half_length, pos_x + half_length,
+                        pos_y - half_width, pos_y + half_width,
+                    ],
+                    transform=transform,
+                    interpolation='none',
+                    alpha=alpha,
+                    resample=False,
+                    zorder=4 + alpha,
+                )
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
         ax.set_ylim(*self.visual_y_lim)
         ax.set_xlabel('x [m]')
         ax.set_ylabel('y [m]')
+        ax.tick_params(direction='in', top=True, right=True)
+        ax.grid(color='white', linewidth=0.5, alpha=0.08)
         if save:
             filename = resolve_logname(suffix='png')
-            fig.savefig(filename)
+            fig.savefig(filename, dpi=save_dpi, bbox_inches='tight')
             logger.info('saved figure to %s', filename)
         if show:
             plt.show()
@@ -563,7 +627,9 @@ class AirTrafficControlCasadi(CasadiGame):
         x_k_i = x_k @ i_onehot
         heading_cost = self._runway_heading_cost_fun(x_k_i[3, 0])
         lateral_cost = self.lateral_destination_cost(x_k_i)
-        destination_cost = heading_cost + lateral_cost
+
+        destination_cost = heading_cost + 0.1*lateral_cost
+
         J_R = self.config.get_param('J_R')
         a_max = self.config.get_param('a_max')
         omega_max = self.config.get_param('omega_max')
@@ -801,7 +867,7 @@ def create_random_game(aircraft_count=3, horizon=20, variational_gne=False,
         lat_axis = np.array([-np.sin(psi_r), np.cos(psi_r)])
         pos = p + d_long * long_axis + d_lat * lat_axis
         speed = np.random.uniform(75.0, 95.0)
-        heading = psi_r + np.pi/180.0*np.random.uniform(-40, 40)
+        heading = psi_r + np.pi/180.0*np.random.uniform(-20, 20)
         return np.array([pos[0], pos[1], speed, heading])
 
     x0_vec = []

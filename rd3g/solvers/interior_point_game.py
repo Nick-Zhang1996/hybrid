@@ -291,7 +291,7 @@ class InteriorPointGameConfig(BaseSolverConfig):
     """ Rollout control to get new state trajectory at the start of each solver iter """
     precondition_with_potential: bool = False
     """ Precondition the game KKT with a potential KKT to speed up computing"""
-    check_spectral_radius: bool = False
+    check_spectral_radius: bool = True
     """ Check Spectral radius of inv(S)A in a numerically efficient way to ensure convergence"""
     variational_gne: bool = True
     """ If True, use one shared multiplier per canonical constraint """
