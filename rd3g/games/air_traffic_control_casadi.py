@@ -352,7 +352,7 @@ class AirTrafficControlCasadi(CasadiGame):
     def visualize(self, u, x, show=True, save=False,
                   show_approach_weight_heatmap=None,
                   show_step_cost_heatmap=None):
-        """Visualize trajectories and aircraft multi-exposure in one frame.
+        """Visualize trajectories and aircraft headings in a single frame.
 
         Args:
             u: (m,N,T)
@@ -360,7 +360,7 @@ class AirTrafficControlCasadi(CasadiGame):
             show_approach_weight_heatmap: None for no heatmap, otherwise runway index.
             show_step_cost_heatmap: None for no heatmap, otherwise a tuple (v, psi).
 
-        Aircraft sprites are overlaid along the horizon with later states more opaque.
+        Aircraft sprites use the heading at the locally configured horizon step.
         """
         n = self.config.n
         m = self.config.m
@@ -368,9 +368,8 @@ class AirTrafficControlCasadi(CasadiGame):
         N = self.config.N
 
         # Publication figure tuning knobs.
+        aircraft_visual_step = 3
         aircraft_visual_length = 200.0  # meters
-        aircraft_min_alpha = 0.18
-        aircraft_alpha_prominence_power = 2.0
         runway_visual_scale = 1.5
         aircraft_sprite_path = os.path.join(
             BASEDIR, 'rd3g', 'resources', 'aircraft_topdown.png')
@@ -421,16 +420,14 @@ class AirTrafficControlCasadi(CasadiGame):
             ax.plot(threshold[:, 0], threshold[:, 1], color='white',
                     linewidth=2.0, zorder=2)
 
-        if aircraft_alpha_prominence_power <= 0:
-            raise ValueError('aircraft_alpha_prominence_power must be positive')
-        if not 0 <= aircraft_min_alpha <= 1:
-            raise ValueError('aircraft_min_alpha must be in [0, 1]')
+        if not 0 <= aircraft_visual_step <= T:
+            raise ValueError(
+                f'aircraft_visual_step must be in [0, {T}], '
+                f'got {aircraft_visual_step}')
         from matplotlib.transforms import (  # pylint: disable=import-outside-toplevel
             Affine2D,
         )
         sprite = plt.imread(aircraft_sprite_path)
-        weights = np.arange(1, T + 2, dtype=float) ** aircraft_alpha_prominence_power
-        aircraft_alphas = aircraft_min_alpha + (1 - aircraft_min_alpha) * weights / weights[-1]
         for i in range(N):
             ax.plot(
                 x[0, i, :],
@@ -443,27 +440,25 @@ class AirTrafficControlCasadi(CasadiGame):
                 antialiased=True,
                 zorder=3,
             )
-            for k, alpha in enumerate(aircraft_alphas):
-                pos_x = x[0, i, k]
-                pos_y = x[1, i, k]
-                heading = x[3, i, k]
-                half_length = aircraft_visual_length / 2.0
-                half_width = half_length * sprite.shape[0] / sprite.shape[1]
-                transform = (
-                    Affine2D().rotate_around(pos_x, pos_y, heading) + ax.transData
-                )
-                ax.imshow(
-                    sprite,
-                    extent=[
-                        pos_x - half_length, pos_x + half_length,
-                        pos_y - half_width, pos_y + half_width,
-                    ],
-                    transform=transform,
-                    interpolation='none',
-                    alpha=alpha,
-                    resample=False,
-                    zorder=4 + alpha,
-                )
+            pos_x = x[0, i, aircraft_visual_step]
+            pos_y = x[1, i, aircraft_visual_step]
+            heading = x[3, i, aircraft_visual_step]
+            half_length = aircraft_visual_length / 2.0
+            half_width = half_length * sprite.shape[0] / sprite.shape[1]
+            transform = (
+                Affine2D().rotate_around(pos_x, pos_y, heading) + ax.transData
+            )
+            ax.imshow(
+                sprite,
+                extent=[
+                    pos_x - half_length, pos_x + half_length,
+                    pos_y - half_width, pos_y + half_width,
+                ],
+                transform=transform,
+                interpolation='none',
+                resample=False,
+                zorder=5,
+            )
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
