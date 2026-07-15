@@ -130,7 +130,7 @@ class CarDriftCasadi(CasadiGame):
         radius = self.config.skidpad_radius
         self.visual_x_lim = [-2.0, 2.0 * radius + 2.0]
         self.visual_y_lim = [-2.0, 2.0 * radius + 2.0]
-        self.car_scale = 0.004 / 2
+        self.car_scale = 0.004 / 2 * 0.85
         color_names = ['orange', 'blue']
         self.car_img_vec = [
             mpimg.imread(

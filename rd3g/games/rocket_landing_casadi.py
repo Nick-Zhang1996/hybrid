@@ -47,9 +47,9 @@ class RocketLandingCasadiConfig(CasadiGameConfig):
     x0: Any = field(
         default_factory=lambda: np.array(
             [
-                [-10.0, 1.0],
-                [0.0, 0.0],
-                [radians(5.0), 0.0],
+                [-10.0, -3.0],
+                [0.0, -0.5],
+                [radians(10.0), 0.0],
                 [-0.3, 0.0],
                 [0.0, 0.0],
                 [0.0, 0.0],
@@ -80,7 +80,7 @@ class RocketLandingCasadiConfig(CasadiGameConfig):
         default_factory=lambda: np.ones((2, 1), dtype=float, order='F') * 1e-2
     )
     r_ship_diag: Any = field(
-        default_factory=lambda: np.ones((2, 1), dtype=float, order='F') * 1e-2
+        default_factory=lambda: 10*np.ones((2, 1), dtype=float, order='F') * 1e-2
     )
     terminal_weight: float = 20.0
 
@@ -165,7 +165,7 @@ class RocketLandingCasadi(CasadiGame):
         assert x.shape == (gc.n, gc.N, gc.T + 1)
 
         fig, ax = plt.subplots()
-        # ax.set_facecolor((54 / 255, 69 / 255, 79 / 255))
+        ax.set_facecolor((54 / 255, 69 / 255, 79 / 255))
         ax.hlines(y=0, xmin=self.visual_x_lim[0], xmax=self.visual_x_lim[1],
                   colors='white', linewidth=1.5)
 

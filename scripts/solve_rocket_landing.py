@@ -15,7 +15,7 @@ logger.setLevel(logging.DEBUG)
 logger = logging.getLogger('main')
 logger.setLevel(logging.INFO)
 
-np.random.seed(12)
+np.random.seed(1)
 cpp = False
 variational_gne = True
 solver_name = 'interior_point'

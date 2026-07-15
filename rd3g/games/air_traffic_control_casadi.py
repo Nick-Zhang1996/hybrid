@@ -352,7 +352,7 @@ class AirTrafficControlCasadi(CasadiGame):
     def visualize(self, u, x, show=True, save=False,
                   show_approach_weight_heatmap=None,
                   show_step_cost_heatmap=None):
-        """Visualize trajectories and aircraft headings in a single frame.
+        """Visualize trajectories and aircraft multi-exposure in one frame.
 
         Args:
             u: (m,N,T)
@@ -360,7 +360,7 @@ class AirTrafficControlCasadi(CasadiGame):
             show_approach_weight_heatmap: None for no heatmap, otherwise runway index.
             show_step_cost_heatmap: None for no heatmap, otherwise a tuple (v, psi).
 
-        Aircraft sprites use the heading at the locally configured horizon step.
+        Aircraft sprites are overlaid along the horizon with later states more opaque.
         """
         n = self.config.n
         m = self.config.m
@@ -368,12 +368,18 @@ class AirTrafficControlCasadi(CasadiGame):
         N = self.config.N
 
         # Publication figure tuning knobs.
-        aircraft_visual_step = 3
         aircraft_visual_length = 200.0  # meters
+        aircraft_exposure_step_skip = 3
+        aircraft_min_alpha = 0.18
+        aircraft_alpha_prominence_power = 2.0
+        aircraft_tint_alpha = 0.55
+        aircraft_colors = [
+            '#56B4E9', '#E69F00', '#009E73', '#D55E00',
+            '#CC79A7', '#0072B2', '#F0E442', '#999999',
+        ]
         runway_visual_scale = 1.5
         aircraft_sprite_path = os.path.join(
             BASEDIR, 'rd3g', 'resources', 'aircraft_topdown.png')
-        trajectory_color = '#56B4E9'
         trajectory_alpha = 0.72
         save_dpi = 600
 
@@ -420,19 +426,33 @@ class AirTrafficControlCasadi(CasadiGame):
             ax.plot(threshold[:, 0], threshold[:, 1], color='white',
                     linewidth=2.0, zorder=2)
 
-        if not 0 <= aircraft_visual_step <= T:
-            raise ValueError(
-                f'aircraft_visual_step must be in [0, {T}], '
-                f'got {aircraft_visual_step}')
+        if aircraft_exposure_step_skip <= 0:
+            raise ValueError('aircraft_exposure_step_skip must be positive')
+        if aircraft_alpha_prominence_power <= 0:
+            raise ValueError('aircraft_alpha_prominence_power must be positive')
+        if not 0 <= aircraft_min_alpha <= 1:
+            raise ValueError('aircraft_min_alpha must be in [0, 1]')
+        if not 0 <= aircraft_tint_alpha <= 1:
+            raise ValueError('aircraft_tint_alpha must be in [0, 1]')
         from matplotlib.transforms import (  # pylint: disable=import-outside-toplevel
             Affine2D,
         )
+        from matplotlib.colors import to_rgba  # pylint: disable=import-outside-toplevel
         sprite = plt.imread(aircraft_sprite_path)
+        exposure_steps = np.arange(0, T + 1, aircraft_exposure_step_skip)
+        weights = (
+            np.arange(1, len(exposure_steps) + 1, dtype=float)
+            ** aircraft_alpha_prominence_power
+        )
+        aircraft_alphas = (
+            aircraft_min_alpha + (1 - aircraft_min_alpha) * weights / weights[-1]
+        )
         for i in range(N):
+            color = aircraft_colors[i % len(aircraft_colors)]
             ax.plot(
                 x[0, i, :],
                 x[1, i, :],
-                color=trajectory_color,
+                color=color,
                 alpha=trajectory_alpha,
                 linewidth=2.2,
                 solid_capstyle='round',
@@ -440,25 +460,33 @@ class AirTrafficControlCasadi(CasadiGame):
                 antialiased=True,
                 zorder=3,
             )
-            pos_x = x[0, i, aircraft_visual_step]
-            pos_y = x[1, i, aircraft_visual_step]
-            heading = x[3, i, aircraft_visual_step]
-            half_length = aircraft_visual_length / 2.0
-            half_width = half_length * sprite.shape[0] / sprite.shape[1]
-            transform = (
-                Affine2D().rotate_around(pos_x, pos_y, heading) + ax.transData
+            color_rgb = np.array(to_rgba(color)[:3])
+            tinted_sprite = np.array(sprite, copy=True)
+            tinted_sprite[..., :3] = (
+                (1 - aircraft_tint_alpha) * tinted_sprite[..., :3]
+                + aircraft_tint_alpha * color_rgb
             )
-            ax.imshow(
-                sprite,
-                extent=[
-                    pos_x - half_length, pos_x + half_length,
-                    pos_y - half_width, pos_y + half_width,
-                ],
-                transform=transform,
-                interpolation='none',
-                resample=False,
-                zorder=5,
-            )
+            for k, alpha in zip(exposure_steps, aircraft_alphas):
+                pos_x = x[0, i, k]
+                pos_y = x[1, i, k]
+                heading = x[3, i, k]
+                half_length = aircraft_visual_length / 2.0
+                half_width = half_length * sprite.shape[0] / sprite.shape[1]
+                transform = (
+                    Affine2D().rotate_around(pos_x, pos_y, heading) + ax.transData
+                )
+                ax.imshow(
+                    tinted_sprite,
+                    extent=[
+                        pos_x - half_length, pos_x + half_length,
+                        pos_y - half_width, pos_y + half_width,
+                    ],
+                    transform=transform,
+                    interpolation='none',
+                    alpha=alpha,
+                    resample=False,
+                    zorder=4 + alpha,
+                )
 
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(*self.visual_x_lim)
